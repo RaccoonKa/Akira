@@ -14,11 +14,26 @@ datas = []
 binaries = []
 hiddenimports = []
 
-for pkg in ['vosk', 'mediapipe', 'face_recognition', 'face_recognition_models', 'dlib']:
-    pkg_datas, pkg_binaries, pkg_hidden = collect_all(pkg)
-    datas += pkg_datas
-    binaries += pkg_binaries
-    hiddenimports += pkg_hidden
+critical_packages = [
+    'vosk',
+    'mediapipe',
+    'face_recognition',
+    'face_recognition_models',
+    'dlib',
+    'onnxruntime',
+    'piper',
+    'piper_phonemize',
+    'soundcard'
+]
+
+for pkg in critical_packages:
+    try:
+        pkg_datas, pkg_binaries, pkg_hidden = collect_all(pkg)
+        datas += pkg_datas
+        binaries += pkg_binaries
+        hiddenimports += pkg_hidden
+    except Exception:
+        pass
 
 vpn_templates = os.path.join(base_dir, 'services', 'vpn', 'templates')
 if os.path.exists(vpn_templates):
@@ -34,6 +49,10 @@ personal_data_path = os.path.join(base_dir, 'personal_data')
 if os.path.exists(personal_data_path):
     datas.append((personal_data_path, 'personal_data'))
 
+dict_json_path = os.path.join(base_dir, 'core', 'utils', 'pronunciation_dict.json')
+if os.path.exists(dict_json_path):
+    datas.append((dict_json_path, os.path.join('core', 'utils')))
+
 datas += collect_data_files('transformers')
 datas += collect_data_files('torch')
 datas += collect_data_files('certifi')
@@ -43,9 +62,9 @@ hiddenimports += [
     'pkg_resources',
     'setuptools',
     'scipy.signal',
+    'scipy.special',
     'sounddevice',
     'soundfile',
-    'soundcard',
     'cffi',
     'torch',
     'comtypes',
@@ -99,7 +118,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=False,
+    console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

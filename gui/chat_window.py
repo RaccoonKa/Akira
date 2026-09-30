@@ -1112,7 +1112,8 @@ class MainWindow(QWidget):
 
     def on_update_found(self, new_ver: str, changelog: str, download_url: str):
         self.settings_panel.set_update_available(new_ver, changelog, download_url)
-        self.update_badge_btn.setText(f"✨ v{new_ver} доступна!")
+        self.update_badge_btn.setText(f"✨ v{new_ver}")
+        self.update_badge_btn.setToolTip(f"Доступна новая версия v{new_ver}!\nНажми, чтобы перейти в настройки.")
         self.update_badge_btn.show()
 
     def open_settings_for_update(self):
@@ -1236,14 +1237,6 @@ class MainWindow(QWidget):
         title_btns_layout.setContentsMargins(0, 0, 0, 0)
         title_btns_layout.setSpacing(6)
 
-        self.update_badge_btn = QPushButton("✨ v3.0.0 доступна!")
-        self.update_badge_btn.setObjectName("UpdateNotificationBadge")
-        self.update_badge_btn.setFont(QFont(self.font_family, 10, QFont.Weight.Bold))
-        self.update_badge_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.update_badge_btn.clicked.connect(self.open_settings_for_update)
-        self.update_badge_btn.hide()
-        title_btns_layout.addWidget(self.update_badge_btn)
-
         self.exit_btn = QPushButton("⏻")
         self.exit_btn.setObjectName("ExitBtn")
         self.exit_btn.setFixedWidth(30)
@@ -1291,6 +1284,14 @@ class MainWindow(QWidget):
             "Выключить разговор шепотом" if self.is_whisper_mode else "Включить разговор только шепотом")
         self.whisper_btn.clicked.connect(self.toggle_whisper_mode)
         title_btns_layout.addWidget(self.whisper_btn)
+
+        self.update_badge_btn = QPushButton("✨ v3.0.0")
+        self.update_badge_btn.setObjectName("UpdateNotificationBadge")
+        self.update_badge_btn.setFont(QFont(self.font_family, 10, QFont.Weight.Bold))
+        self.update_badge_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.update_badge_btn.clicked.connect(self.open_settings_for_update)
+        self.update_badge_btn.hide()
+        title_btns_layout.addWidget(self.update_badge_btn)
 
         title_bar.addWidget(self.title_btns_widget)
         title_bar.addStretch()

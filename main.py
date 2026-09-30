@@ -20,7 +20,6 @@ def _safe_getsource(obj):
 
 inspect.getsource = _safe_getsource
 
-
 import os
 import sys
 
