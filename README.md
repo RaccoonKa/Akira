@@ -1,6 +1,6 @@
-# 🧪 Astra: Research Laboratory
+# 🧪 Akira: Research Laboratory
 
-This is my research sandbox — the heart of the **"Astra"** voice assistant development.  
+This is my research sandbox — the heart of the **"Akira"** voice assistant development.  
 Here I experiment with architectures, train models to understand user intents, extract entities from speech, and recognize emotions.
 
 This branch contains all the scripts that turn raw data into the assistant's *"brains"*.
@@ -132,18 +132,9 @@ Huge thanks to **Sberbank** for providing:
 
 ---
 
-### 🎙️ Silero
+# 🧪 Акира: Лаборатория Исследований
 
-Special thanks to the **Silero** team for:
-
-- **Speech synthesis models** and **voice models** that have become an integral part of the "Astra" voice assistant.
-- High-quality and natural-sounding synthesis, available even for local use, which allows Astra to sound lively and human-like.
-
----
-
-# 🧪 Астра: Лаборатория Исследований
-
-Это моя исследовательская песочница — сердце разработки голосового ассистента **«Астра»**.  
+Это моя исследовательская песочница — сердце разработки голосового ассистента **«Акира»**.  
 Здесь я экспериментирую с архитектурами, обучаю модели понимать намерения пользователя, выделять сущности в речи и распознавать эмоции.
 
 В этой ветке живут все скрипты, которые превращают сырые данные в *"мозги"* ассистента.
@@ -284,14 +275,5 @@ ml_research/
 
 - **Датасета** для обучения моделей распознавания эмоций и намерений — качественные размеченные данные стали фундаментом для всей исследовательской работы.
 - **Модели Wav2Vec2 Russian** — мощного трансформера, который я использую как **Teacher-модель** в процессе дистилляции знаний. Благодаря этой модели моя лёгкая CRNN-архитектура перенимает глубокие паттерны речи, сохраняя при этом высокую скорость работы.
-
----
-
-### 🎙️ Silero
-
-Отдельное спасибо команде **Silero** за:
-
-- **Модели синтеза речи** и **голосовые модели**, которые стали неотъемлемой частью голосового ассистента «Астра».  
-- Высококачественный и естественный синтез, доступный даже для локального использования, что позволяет Астре звучать живо и человечно.
 
 ---
