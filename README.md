@@ -1,20 +1,20 @@
 ## EN version 
 ---
 
-# Astra TTS — Speech Synthesis Models
+# Akira TTS — Speech Synthesis Models
 
-A repository with custom speech synthesis models for the **Astra** voice assistant based on the **VITS** architecture of the **Piper TTS** framework.
+A repository with custom speech synthesis models for the **Akira** voice assistant based on the **VITS** architecture of the **Piper TTS** framework.
 
 The project implements two specialized models obtained by transfer learning (fine-tuning) on top of a base Russian-language checkpoint
 `ru_RU-irina-medium`:
-1. **Astra Voice (Main voice):** clear, confident assistant speech for everyday communication and voicing responses.
-2. **Astra Whisper:** a muted, quiet voice for night mode and private notifications.
+1. **Akira Voice (Main voice):** clear, confident assistant speech for everyday communication and voicing responses.
+2. **Akira Whisper:** a muted, quiet voice for night mode and private notifications.
 
 ---
 
 # Model Characteristics Comparison
 
-| Parameter | Astra Voice (Main) | Astra Whisper |
+| Parameter | Akira Voice (Main) | Akira Whisper |
 | :--- | :--- | :--- |
 | **Base checkpoint** | `ru_RU-irina-medium` | `ru_RU-irina-medium` |
 | **Delivery style** | Clear conversational timbre | Intimate quiet whisper |
@@ -26,7 +26,7 @@ The project implements two specialized models obtained by transfer learning (fin
 
 ---
 
-# Model 1: Astra Voice (Main voice)
+# Model 1: Akira Voice (Main voice)
 
 The model is trained on a cleaned dataset of conversational speech without parasitic sounds, sighs, and interjections.
 
@@ -42,14 +42,14 @@ For the main voice, dynamics and ringing articulation are important:
 
 ### 3. Quick start (CLI):
 ```bash
-echo "Astra's voice module has been successfully activated." | piper \
+echo "Akira's voice module has been successfully activated." | piper \
   --model exported/astra_voice_raw.onnx \
   --output_file test_voice.wav
 ```
 
 ---
 
-# Model 2: Astra Whispering Voice (Whisper)
+# Model 2: Akira Whispering Voice (Whisper)
 
 # Data preparation and training
 
@@ -97,7 +97,7 @@ The interface is available at `http://localhost:6006`.
 
 # Export to ONNX for the assistant
 
-After training is complete, the final checkpoint is exported to a lightweight ONNX graph for integration into the main Astra project:
+After training is complete, the final checkpoint is exported to a lightweight ONNX graph for integration into the main Akira project:
 
 ```bash
 python3 -m piper_train.export_onnx \
@@ -146,19 +146,19 @@ echo "Hello, Svetozar! I can now speak in a whisper." | piper \
 ## RU версия
 ---
 
-# Astra TTS — Модели синтеза речи
+# Akira TTS — Модели синтеза речи
 
-Репозиторий с кастомными моделями синтеза речи для голосового ассистента **Астра** на базе архитектуры **VITS** фреймворка **Piper TTS**.
+Репозиторий с кастомными моделями синтеза речи для голосового ассистента **Акира** на базе архитектуры **VITS** фреймворка **Piper TTS**.
 
 В проекте реализованы две специализированные модели, полученные методом трансферного обучения (дообучения) поверх базового русскоязычного чекпоинта `ru_RU-irina-medium`:
-1. **Astra Voice (Основной голос):** чистая, уверенная речь ассистента для ежедневного общения и озвучивания ответов.
-2. **Astra Whisper (Шёпот):** приглушённый тихий голос для ночного режима и приватных уведомлений.
+1. **Akira Voice (Основной голос):** чистая, уверенная речь ассистента для ежедневного общения и озвучивания ответов.
+2. **Akira Whisper (Шёпот):** приглушённый тихий голос для ночного режима и приватных уведомлений.
 
 ---
 
 # Сравнение характеристик моделей
 
-| Параметр | Astra Voice (Основной) | Astra Whisper (Шёпот) |
+| Параметр | Akira Voice (Основной) | Akira Whisper (Шёпот) |
 | :--- | :--- | :--- |
 | **Базовый чекпоинт** | `ru_RU-irina-medium` | `ru_RU-irina-medium` |
 | **Стиль подачи** | Чёткий разговорный тембр | Интимный тихий шёпот |
@@ -170,7 +170,7 @@ echo "Hello, Svetozar! I can now speak in a whisper." | piper \
 
 ---
 
-# Модель 1: Astra Voice (Основной голос)
+# Модель 1: Akira Voice (Основной голос)
 
 Модель натренирована на вычищенном датасете разговорной речи без паразитных звуков, вздохов и междометий.
 
@@ -186,14 +186,14 @@ echo "Hello, Svetozar! I can now speak in a whisper." | piper \
 
 ### 3. Быстрый запуск (CLI):
 ```bash
-echo "Голосовой модуль Астры успешно активирован." | piper \
+echo "Голосовой модуль Акиры успешно активирован." | piper \
   --model exported/astra_voice_raw.onnx \
   --output_file test_voice.wav
 ```
 
 ---
 
-# Модель 2: Astra Whispering Voice (Шёпот)
+# Модель 2: Akira Whispering Voice (Шёпот)
 
 # Подготовка данных и обучение
 
@@ -241,7 +241,7 @@ tensorboard --logdir training_dir
 
 # Экспорт в ONNX для ассистента
 
-После завершения обучения финальный чекпоинт экспортируется в легковесный ONNX-граф для интеграции в основной проект Астры:
+После завершения обучения финальный чекпоинт экспортируется в легковесный ONNX-граф для интеграции в основной проект Акиры:
 
 ```bash
 python3 -m piper_train.export_onnx \
