@@ -1,9 +1,9 @@
 ## EN version
 ---
 
-# 🎙️ ASTRA Voiceprint (TinyECAPA)
+# 🎙️ Akira Voiceprint (TinyECAPA)
 
-An ultra-lightweight voice biometrics and open-set speaker verification engine running in real time. Designed specifically for the **Astra** voice assistant.
+An ultra-lightweight voice biometrics and open-set speaker verification engine running in real time. Designed specifically for the **Akira** voice assistant.
 
 The model compresses the incoming audio signal into a compact 192-dimensional timbre vector (voiceprint). Verification is based on computing the cosine similarity between the current audio and the user's dynamic reference.
 
@@ -62,9 +62,9 @@ ASTRA_voiceprint/
 ## RU версия
 ---
 
-# 🎙️ ASTRA Voiceprint (TinyECAPA)
+# 🎙️ Akira Voiceprint (TinyECAPA)
 
-Ультралёгкий движок голосовой биометрии и открытой верификации диктора (Open-Set Speaker Verification) в реальном времени. Разработан специально для голосового ассистента **Astra**.
+Ультралёгкий движок голосовой биометрии и открытой верификации диктора (Open-Set Speaker Verification) в реальном времени. Разработан специально для голосового ассистента **Akira**.
 
 Модель сжимает входящий аудиосигнал в компактный 192-мерный вектор тембра (voiceprint). Верификация строится на вычислении косинусного сходства между текущим аудио и динамическим эталоном пользователя.
 
