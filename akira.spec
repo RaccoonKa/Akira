@@ -23,7 +23,8 @@ critical_packages = [
     'onnxruntime',
     'piper',
     'piper_phonemize',
-    'soundcard'
+    'soundcard',
+    'websockets'
 ]
 
 for pkg in critical_packages:
@@ -45,6 +46,10 @@ if os.path.exists(os.path.join(base_dir, 'assets')):
 if os.path.exists(os.path.join(base_dir, 'optimized_models')):
     datas.append((os.path.join(base_dir, 'optimized_models'), 'optimized_models'))
 
+games_dir = os.path.join(base_dir, 'core', 'games')
+if os.path.exists(games_dir):
+    datas.append((games_dir, os.path.join('core', 'games')))
+
 # Упаковываем только шаблон конфига, исключая локальные ключи и фото
 config_template = os.path.join(base_dir, 'personal_data', 'configs', 'config.template.json')
 if os.path.exists(config_template):
@@ -57,6 +62,7 @@ if os.path.exists(dict_json_path):
 datas += collect_data_files('transformers')
 datas += collect_data_files('torch')
 datas += collect_data_files('certifi')
+datas += collect_data_files('soundfile')
 
 hiddenimports += [
     'pkg_resources',
@@ -69,7 +75,6 @@ hiddenimports += [
     'torch',
     'comtypes',
     'pycaw',
-    'websockets',
     'librosa',
     'certifi',
     'requests',
@@ -78,7 +83,8 @@ hiddenimports += [
     'cv2',
     'pyautogui',
     'psutil',
-    'PIL'
+    'PIL',
+    'PyQt6.QtSvg'
 ]
 
 hiddenimports += collect_submodules('core')
@@ -120,7 +126,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=os.path.join(base_dir, 'assets', 'icon', 'ico', 'icon_round.ico')
+    icon=os.path.join(base_dir, 'assets', 'icon', 'ico', 'akira_icon.ico')
 )
 
 coll = COLLECT(

@@ -21,6 +21,40 @@ FAST_PASS_WORDS = {
     "расскажи", "умеешь", "делаешь", "дела", "привет", "кто", "что", "как", "зачем", "почему"
 }
 
+ALLOWED_PREFIXES = {
+    "эй", "ну", "а", "слушай", "привет", "здравствуй", "хей", "так", "ок", "ладно"
+}
+
+QUERY_WORDS = {
+    "кто", "что", "как", "почему", "зачем", "когда", "где", "куда", "откуда",
+    "сколько", "какой", "какая", "какое", "какие", "каком", "какую", "каких",
+    "расскажи", "объясни", "подскажи", "посоветуй", "помоги", "скажи", "переведи",
+    "знаешь", "умеешь", "можешь", "бывает", "правда", "верно", "смысл", "думаешь"
+}
+
+COMMAND_ROOTS = [
+    "включ", "выключ", "открой", "закрой", "запуст", "постав", "сделай",
+    "переключ", "выруб", "вруб", "прибав", "убав", "заблокируй", "залочь",
+    "покажи", "смени", "найди", "заведи", "потуши", "зажги", "сыграй",
+    "перемотай", "напомни", "пауз", "стоп", "продолжи", "удали", "отмени", "сбрось"
+]
+
+SYSTEM_TARGETS = {
+    "погода", "погоду", "погоде", "градус", "градусов", "температура", "прогноз",
+    "музыка", "музыку", "музыке", "трек", "трека", "треку", "песня", "песню", "песни",
+    "громкость", "тише", "громче", "звук", "звука", "запрет", "обход", "компьютер",
+    "пк", "комп", "дискорд", "впн", "vpn", "свет", "люстра", "люстру", "лампа", "лампу",
+    "розетка", "розетку", "яркость", "ютуб", "спотифай", "таймер", "будильник",
+    "напоминание", "фильм", "сериал", "кино", "видео", "игра", "игры", "города", "данетки"
+}
+
+CHAT_WORDS = {
+    "привет", "здравствуй", "доброе", "добрый", "спокойной", "пока", "до",
+    "спасибо", "благодарю", "молодец", "умница", "красотка", "красавица",
+    "дура", "тупая", "дурак", "тупой", "люблю", "нравишься", "скучаю",
+    "дела", "делишки", "настроение", "жизнь", "создатель", "автор", "свят", "светозар"
+}
+
 
 class STTThread(QThread):
     text_recognized = pyqtSignal(str, bytes)
@@ -81,17 +115,54 @@ class STTThread(QThread):
 
         self.audio_queue.put(boosted.tobytes())
 
-    def _contains_wake_word(self, text):
+    def _is_wake_word(self, word: str) -> bool:
+        clean = re.sub(r'[^\w]', '', word.lower())
+        if not clean:
+            return False
+        if clean in self.wake_words:
+            return True
+        if clean.startswith(("акир", "окир", "акыр")):
+            return True
+        if clean in ["пакира", "макира", "окира", "покура", "кира", "киру", "киры", "киро", "аки"]:
+            return True
+        return False
+
+    def _contains_wake_word(self, text: str):
         words = text.lower().split()
-        for i, word in enumerate(words):
-            clean_word = re.sub(r'[^\w]', '', word)
-            if clean_word in self.wake_words:
-                return True, i
-            if clean_word.startswith(("акир", "окир", "акыр", "аки", "оки")):
-                return True, i
-            if clean_word in ["пакира", "макира", "окира", "акира", "покура", "про киру"]:
-                return True, i
+        if not words:
+            return False, -1
+
+        if self._is_wake_word(words[0]):
+            return True, 0
+
+        if len(words) > 1:
+            clean_first = re.sub(r'[^\w]', '', words[0])
+            if clean_first in ALLOWED_PREFIXES and self._is_wake_word(words[1]):
+                return True, 1
+
         return False, -1
+
+    def _is_likely_command(self, text: str) -> bool:
+        words = text.lower().split()
+        if not words:
+            return False
+
+        if len(words) <= 7:
+            return True
+
+        clean_words = [re.sub(r'[^\w]', '', w) for w in words]
+        word_set = set(clean_words)
+
+        if word_set & QUERY_WORDS:
+            return True
+        if word_set & SYSTEM_TARGETS:
+            return True
+        if word_set & CHAT_WORDS:
+            return True
+        if any(any(root in w for root in COMMAND_ROOTS) for w in clean_words):
+            return True
+
+        return False
 
     def trigger_manual_listen(self):
         self.manual_trigger_flag = True
@@ -208,6 +279,13 @@ class STTThread(QThread):
                         words = text.split()
                         raw_command = " ".join(words[wake_idx + 1:]).strip()
                         if raw_command:
+                            if not self._is_likely_command(raw_command):
+                                print(f"[STT Фильтр шума]: Отклонена фраза без структуры команды: '{raw_command}'", flush=True)
+                                ym_manager.unduck(100)
+                                self.listening_state_changed.emit(False)
+                                active_mode = False
+                                continue
+
                             ym_manager.duck()
                             command = self._smart_correct(raw_command)
                             self.text_recognized.emit(command, phrase_audio)
@@ -220,6 +298,13 @@ class STTThread(QThread):
                             ym_manager.duck()
                             self.listening_state_changed.emit(True)
                     elif active_mode:
+                        if not self._is_likely_command(text):
+                            print(f"[STT Фильтр шума]: В активном режиме отклонена фраза без структуры команды: '{text}'", flush=True)
+                            ym_manager.unduck(100)
+                            self.listening_state_changed.emit(False)
+                            active_mode = False
+                            continue
+
                         command = self._smart_correct(text)
                         self.text_recognized.emit(command, phrase_audio)
                         active_mode = False

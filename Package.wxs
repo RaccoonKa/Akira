@@ -39,7 +39,7 @@
       </Component>
     </StandardDirectory>
 
-    <Icon Id="AppIcon.ico" SourceFile="assets\icon\ico\icon_round.ico" />
+    <Icon Id="AppIcon.ico" SourceFile="assets\icon\ico\akira_icon.ico" />
     <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
 
     <ComponentGroup Id="ProductComponents">
@@ -59,9 +59,16 @@
                   Impersonate="no"
                   Return="ignore" />
 
+    <CustomAction Id="RemoveDefenderExclusion"
+                  Directory="System64Folder"
+                  ExeCommand="WindowsPowerShell\v1.0\powershell.exe -WindowStyle Hidden -Command &quot;Remove-MpPreference -ExclusionPath '[INSTALLFOLDER]' -ErrorAction SilentlyContinue&quot;"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore" />
+
     <InstallExecuteSequence>
-      <Custom Action="AddDefenderExclusion" After="InstallFiles" Condition="NOT Installed"
-       powershell.exe -WindowStyle Hidden -Command "Remove-MpPreference -ExclusionPath '[INSTALLFOLDER]' -ErrorAction SilentlyContinue"/>
+      <Custom Action="AddDefenderExclusion" After="InstallFiles" Condition="NOT Installed" />
+      <Custom Action="RemoveDefenderExclusion" Before="RemoveFiles" Condition="Installed AND (REMOVE=&quot;ALL&quot;)" />
     </InstallExecuteSequence>
   </Package>
 </Wix>

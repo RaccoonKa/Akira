@@ -716,6 +716,20 @@ class CommandParser:
                 "is_whisper": is_whisper
             }
 
+        dl_triggers = [
+            "выключи когда скачается", "выключи как скачается", "выключи после закачки",
+            "выключи после загрузки", "докачай и выключи", "выключи после установки",
+            "выключи когда скончается", "выключи как скатится", "выключи как скачет ца",
+            "выключи как скачаеца", "выключи после заката чки", "выключи после качки",
+            "выключи после погрузки", "выключи после закрутки", "дока чай и выключи"
+        ]
+        if any(t in text_low for t in dl_triggers):
+            from services.telegram.telegram_bot import start_download_watcher_local
+            start_download_watcher_local()
+            ans = "Поставила ПК на сторожевой режим! Как только закачка и запись на диск утихнут, я пришлю тебе пуш в Telegram и выключу компьютер ⏳"
+            return {"user_display": user_display, "chat": ans, "voice": ans, "emotion": "happy",
+                    "is_whisper": is_whisper}
+
         if self.reminder_manager.is_ringing:
             stop_triggers = ["стоп", "хватит", "выключи", "заткнись", "отключи", "тихо", "молчи", "выруби"]
             snooze_triggers = ["отложи", "еще пять минут", "ещё пять минут", "позже", "дай поспать", "перенеси"]
