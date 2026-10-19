@@ -1,7 +1,7 @@
-# 🌟 Astra — AI Voice Assistant & Desktop Copilot
+# 🌟 Akira — AI Voice Assistant & Desktop Copilot
 
 <p align="center">
-  <img src="assets/icon/png/icon_round.png" alt="Astra Logo" width="128"/>
+  <img src="assets/icon/png/akira_icon.png" alt="Astra Logo" width="128"/>
 </p>
 
 <p align="center">
@@ -25,9 +25,9 @@
 
 ## 📌 About the Project
 
-**Astra** is a modular desktop assistant designed for full voice and gesture control over your PC, multimedia, and smart devices.
+**Akira** is a modular desktop assistant designed for full voice and gesture control over your PC, multimedia, and smart devices.
 
-Unlike standard cloud-based solutions, Astra uses a **hybrid architecture**: critical tasks (STT, intent classification NLU, gestures, Face ID, emotion recognition) are performed **locally using ONNX models**, while generative dialogue and heavy document processing are delegated to the neural network intelligence of the **GigaChat API**.
+Unlike standard cloud-based solutions, Akira uses a **hybrid architecture**: critical tasks (STT, intent classification NLU, gestures, Face ID, emotion recognition) are performed **locally using ONNX models**, while generative dialogue and heavy document processing are delegated to the neural network intelligence of the **GigaChat API**.
 
 ---
 
@@ -65,7 +65,7 @@ Unlike standard cloud-based solutions, Astra uses a **hybrid architecture**: cri
 
 ## 🗣️ Example Voice Commands
 
-Astra understands natural speech without the need to memorize rigid phrases:
+Akira understands natural speech without the need to memorize rigid phrases:
 
 | Category | Example Commands |
 | :--- | :--- |
@@ -127,9 +127,9 @@ This project is distributed under the [CC BY-NC 4.0](https://creativecommons.org
 
 ## 📌 О проекте
 
-**Astra** — это модульный десктопный ассистент, предназначенный для полноценного голосового и жестового управления вашим ПК, мультимедиа и умными устройствами.
+**Akira** — это модульный десктопный ассистент, предназначенный для полноценного голосового и жестового управления вашим ПК, мультимедиа и умными устройствами.
 
-В отличие от стандартных облачных решений, Astra использует **гибридную архитектуру**: критические задачи (STT, классификация интентов NLU, жесты, Face ID, распознавание эмоций) выполняются **локально с использованием ONNX-моделей**, а генеративные диалоги и обработка тяжёлых документов делегируются нейросетевому интеллекту **GigaChat API**.
+В отличие от стандартных облачных решений, Akira использует **гибридную архитектуру**: критические задачи (STT, классификация интентов NLU, жесты, Face ID, распознавание эмоций) выполняются **локально с использованием ONNX-моделей**, а генеративные диалоги и обработка тяжёлых документов делегируются нейросетевому интеллекту **GigaChat API**.
 
 ---
 
@@ -167,7 +167,7 @@ This project is distributed under the [CC BY-NC 4.0](https://creativecommons.org
 
 ## 🗣️ Примеры голосовых команд
 
-Astra понимает естественную речь без необходимости заучивать жёсткие фразы:
+Akira понимает естественную речь без необходимости заучивать жёсткие фразы:
 
 | Категория | Примеры команд |
 | :--- | :--- |
