@@ -1,9 +1,9 @@
 ## EN version
 ---
 
-# 🎭 Astra Text Emotions
+# 🎭 Akira Text Emotions
 
-A lightweight module for emotion recognition and sentiment analysis of Russian-language chat text for the **Astra** personal assistant.
+A lightweight module for emotion recognition and sentiment analysis of Russian-language chat text for the **Akira** personal assistant.
 
 Built on top of a fine-tuned **`cointegrated/rubert-tiny2`** model with subsequent quantization to **INT8 ONNX** for ultra-fast CPU inference without using GPU resources.
 
@@ -40,8 +40,8 @@ astra_text_emotions/
 │   └── custom_emotions.json     # Custom Astra dialogue utterances
 ├── models/
 │   ├── rubert-tiny2/            # Original pretrained encoder
-│   └── astra_text_emotions/     # Trained model and quantized ONNX
-│       └── astra_text_emotions_int8.onnx
+│   └── aki_text_emotions/     # Trained model and quantized ONNX
+│       └── aki_text_emotions_int8.onnx
 ├── prepare_train/
 │   ├── download_assets.py       # Downloading weights and dataset
 │   └── generate_wordclouds.py   # Generating word clouds by category
@@ -63,7 +63,7 @@ astra_text_emotions/
 ### 💬 Real Dialogue Testing
 
 <p align="center">
-  <img src="results/results_dialog.png" alt="Dialogue with Astra" width="600"/>
+  <img src="results/results_dialog.png" alt="Dialogue with Akira" width="600"/>
 </p>
 
 ---
@@ -100,9 +100,9 @@ astra_text_emotions/
 ## RU версия
 ---
 
-# 🎭 Astra Text Emotions
+# 🎭 Akira Text Emotions
 
-Легковесный модуль распознавания эмоций и тональности русскоязычного текста в чате для персонального ассистента **Astra**. 
+Легковесный модуль распознавания эмоций и тональности русскоязычного текста в чате для персонального ассистента **Akira**. 
 
 Построен на базе дообученной модели **`cointegrated/rubert-tiny2`** с последующим квантованием в **INT8 ONNX** для сверхбыстрого инференса на CPU без использования GPU-ресурсов.
 
@@ -139,8 +139,8 @@ astra_text_emotions/
 │   └── custom_emotions.json     # Пользовательские диалоговые реплики Астры
 ├── models/
 │   ├── rubert-tiny2/            # Исходный предобученный энкодер
-│   └── astra_text_emotions/     # Обученная модель и квантованный ONNX
-│       └── astra_text_emotions_int8.onnx
+│   └── aki_text_emotions/     # Обученная модель и квантованный ONNX
+│       └── aki_text_emotions_int8.onnx
 ├── prepare_train/
 │   ├── download_assets.py       # Загрузка весов и датасета
 │   └── generate_wordclouds.py   # Генерация облаков слов по категориям
@@ -162,7 +162,7 @@ astra_text_emotions/
 ### 💬 Тестирование в реальном диалоге
 
 <p align="center">
-  <img src="results/results_dialog.png" alt="Диалог с Астрой" width="600"/>
+  <img src="results/results_dialog.png" alt="Диалог с Акирой" width="600"/>
 </p>
 
 ---
