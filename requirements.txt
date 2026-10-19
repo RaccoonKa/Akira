@@ -6,20 +6,22 @@ qrcode>=7.4.2
 
 # Нейросети, распознавание и синтез речи
 torch>=2.1.0
-transformers>=4.35.0
 optimum[onnxruntime]>=1.14.0
 onnxruntime>=1.16.0
 rapidocr_onnxruntime>=1.3.0
 mediapipe>=0.10.0
 face_recognition>=1.3.0
 librosa>=0.10.0
+scikit-learn==1.4.2
+transformers==4.41.2
+
 
 # Звук и мультимедиа
 sounddevice>=0.4.6
 soundfile>=0.12.1
 soundcard>=0.4.6
-scipy>=1.11.0
-numpy>=1.24.0
+scipy==1.13.0
+numpy==1.26.4
 python-vlc>=3.0.20123
 
 # Системные модули Windows
@@ -40,5 +42,5 @@ yandex-music>=2.1.1
 google-api-python-client>=2.100.0
 google-auth-oauthlib>=1.1.0
 
-# Полезные команды для сборки: wix build -acceptEula wix7 Package.wxs -o Astra_v2.0.0_Setup.msi
-# pyinstaller astra.spec --noconfirm --clean
+# Полезные команды для сборки: wix build -acceptEula wix7 Package.wxs -o Akira_v4.0.0_Setup.msi
+# pyinstaller akira.spec --noconfirm --clean

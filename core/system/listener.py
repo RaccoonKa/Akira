@@ -12,12 +12,15 @@ class SpeechListener:
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
         cfg = load_config()
-        assistant_name = cfg.get("assistant_name", "астра").lower()
+        assistant_name = cfg.get("assistant_name", "акира").lower()
 
         self.wake_words = {
             assistant_name,
-            "астр", "астро", "астру", "астры", "остра", "остру",
-            "быстро", "автора", "пастра", "астрал", "австралия"
+            "акир", "акира", "акиру", "акиры", "акире",
+            "окиро", "окиру", "окиры", "акиро",
+            "акыра", "акыру", "акыры", "акиира", "акирра",
+            "кира", "киру", "киры", "киро",
+            "аки", "акирка", "акирочка"
         }
 
         model_path = os.path.join(base_dir, "optimized_models", "model_vosk")
@@ -61,7 +64,7 @@ class SpeechListener:
                 channels=1,
                 callback=self._audio_callback
         ):
-            print("[INFO]: Vosk запущен! Произнеси 'Астра'...")
+            print("[INFO]: Vosk запущен! Произнеси 'Акира'...")
 
             active_mode = False
 
@@ -104,7 +107,7 @@ if __name__ == "__main__":
 
     def handle_command(text):
         response = parser.process_command(text)
-        print(f"[ОТВЕТ АСТРЫ]: {response}\n")
+        print(f"[ОТВЕТ АКИРЫ]: {response}\n")
 
     listener = SpeechListener()
     listener.listen_loop(handle_command)

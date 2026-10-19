@@ -2,6 +2,7 @@ import asyncio
 import base64
 import io
 import json
+import os
 import subprocess
 import sys
 import time
@@ -19,6 +20,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.append(str(ROOT_DIR))
 
 from core.nlp.command_parser import CommandParser
+from core.system.actions import SystemActions
 from core.utils.config import get_user_data_path, load_config, save_config
 
 SERVER_HOST = "185.79.139.120:8000"
@@ -27,6 +29,9 @@ PAIRING_PATH = Path(get_user_data_path("pairing_session.json"))
 main_window_instance = None
 command_parser_instance = None
 active_ws_client = None
+pending_token_registration = None
+outgoing_queue = None
+
 
 def get_device_uuid() -> str:
     cfg = load_config()
@@ -37,11 +42,15 @@ def get_device_uuid() -> str:
         save_config(cfg)
     return dev_id
 
+
 def get_command_parser():
-    global command_parser_instance
+    global command_parser_instance, main_window_instance
+    if main_window_instance and getattr(main_window_instance, "command_parser", None):
+        return main_window_instance.command_parser
     if command_parser_instance is None:
         command_parser_instance = CommandParser()
     return command_parser_instance
+
 
 def get_hardware_status() -> str:
     cpu_usage = psutil.cpu_percent(interval=0.3)
@@ -76,13 +85,17 @@ def get_hardware_status() -> str:
 
     gpu_info = "Недоступно"
     try:
+        flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
         cmd = "nvidia-smi --query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits"
-        out = subprocess.check_output(cmd, shell=True, text=True).strip()
+        out = subprocess.check_output(cmd, shell=True, text=True, creationflags=flags).strip()
         if out:
             parts = [p.strip() for p in out.split(",")]
             if len(parts) >= 5:
                 gpu_name, temp, util, mem_used, mem_total = parts[0], parts[1], parts[2], parts[3], parts[4]
-                gpu_info = f"{gpu_name}\n   Температура: {temp}°C | Нагрузка: {util}%\n   VRAM: {int(mem_used)} МБ / {int(mem_total)} МБ"
+                gpu_info = (
+                    f"{gpu_name}\n   Температура: {temp}°C | Нагрузка: {util}%\n"
+                    f"   VRAM: {int(mem_used)} МБ / {int(mem_total)} МБ"
+                )
     except Exception:
         pass
 
@@ -94,11 +107,17 @@ def get_hardware_status() -> str:
         f"{disks_str}"
     )
 
+
 def take_screenshot_base64() -> str:
-    shot = pyautogui.screenshot()
-    buf = io.BytesIO()
-    shot.save(buf, format="PNG")
-    return base64.b64encode(buf.getvalue()).decode("utf-8")
+    try:
+        shot = pyautogui.screenshot()
+        buf = io.BytesIO()
+        shot.save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue()).decode("utf-8")
+    except Exception as e:
+        print(f"[Screenshot Error]: {e}")
+        return ""
+
 
 def take_webcam_base64() -> str:
     global main_window_instance
@@ -116,27 +135,31 @@ def take_webcam_base64() -> str:
             frame = frame_read
 
     if frame is not None:
-        _, buffer = cv2.imencode(".png", frame)
-        return base64.b64encode(buffer.tobytes()).decode("utf-8")
+        success, buffer = cv2.imencode(".png", frame)
+        if success and buffer is not None:
+            return base64.b64encode(buffer.tobytes()).decode("utf-8")
     return ""
 
+
+def _enqueue_message(payload: dict):
+    global active_ws_client, outgoing_queue
+    if active_ws_client and active_ws_client.loop and active_ws_client.loop.is_running() and outgoing_queue:
+        active_ws_client.loop.call_soon_threadsafe(outgoing_queue.put_nowait, json.dumps(payload))
+
+
 def register_pairing_token(token: str, expires_at: float):
-    global active_ws_client
-    if active_ws_client and active_ws_client.ws and active_ws_client.loop and active_ws_client.loop.is_running():
-        payload = {"action": "register_token", "token": token, "expires_at": expires_at}
-        asyncio.run_coroutine_threadsafe(active_ws_client.ws.send(json.dumps(payload)), active_ws_client.loop)
+    global pending_token_registration
+    pending_token_registration = {"token": token, "expires_at": expires_at}
+    _enqueue_message({"action": "register_token", "token": token, "expires_at": expires_at})
+
 
 def send_alert_to_server(base64_img: str, caption: str):
-    global active_ws_client
-    if active_ws_client and active_ws_client.ws and active_ws_client.loop and active_ws_client.loop.is_running():
-        payload = {"action": "security_alert", "image_base64": base64_img, "caption": caption}
-        asyncio.run_coroutine_threadsafe(active_ws_client.ws.send(json.dumps(payload)), active_ws_client.loop)
+    _enqueue_message({"action": "security_alert", "image_base64": base64_img, "caption": caption})
+
 
 def send_text_to_server(text: str):
-    global active_ws_client
-    if active_ws_client and active_ws_client.ws and active_ws_client.loop and active_ws_client.loop.is_running():
-        payload = {"action": "text_notification", "text": text}
-        asyncio.run_coroutine_threadsafe(active_ws_client.ws.send(json.dumps(payload)), active_ws_client.loop)
+    _enqueue_message({"action": "text_notification", "text": text})
+
 
 class TelegramBotThread(QThread):
     def __init__(self, parent=None):
@@ -159,14 +182,30 @@ class TelegramBotThread(QThread):
             self.loop.close()
 
     async def _client_loop(self):
+        global pending_token_registration, outgoing_queue
         device_id = get_device_uuid()
         ws_url = f"ws://{SERVER_HOST}/ws/{device_id}"
+        outgoing_queue = asyncio.Queue()
 
         while self._running:
             try:
-                async with websockets.connect(ws_url, ping_interval=20, ping_timeout=20) as ws:
+                async with websockets.connect(
+                    ws_url,
+                    ping_interval=30,
+                    ping_timeout=15,
+                    close_timeout=10
+                ) as ws:
                     self.ws = ws
-                    if PAIRING_PATH.exists():
+                    print(f"[TelegramBot]: Связь с сервером установлена (UUID: {device_id})", flush=True)
+
+                    # Регистрация отложенного токена из памяти или сессионного файла
+                    if pending_token_registration and time.time() < pending_token_registration.get("expires_at", 0):
+                        await ws.send(json.dumps({
+                            "action": "register_token",
+                            "token": pending_token_registration["token"],
+                            "expires_at": pending_token_registration["expires_at"]
+                        }))
+                    elif PAIRING_PATH.exists():
                         try:
                             with open(PAIRING_PATH, "r", encoding="utf-8") as f:
                                 sess = json.load(f)
@@ -179,18 +218,51 @@ class TelegramBotThread(QThread):
                         except Exception:
                             pass
 
-                    while self._running:
-                        msg_text = await ws.recv()
-                        data = json.loads(msg_text)
-                        await self._handle_server_message(data)
+                    async def sender_task():
+                        while self._running and ws.open:
+                            try:
+                                msg = await outgoing_queue.get()
+                                await ws.send(msg)
+                                outgoing_queue.task_done()
+                            except asyncio.CancelledError:
+                                break
+                            except Exception:
+                                break
 
-            except (websockets.ConnectionClosed, OSError):
+                    async def receiver_task():
+                        while self._running and ws.open:
+                            try:
+                                msg_text = await ws.recv()
+                                data = json.loads(msg_text)
+                                if data.get("status") == "token_registered":
+                                    continue
+                                asyncio.create_task(self._handle_server_message(data))
+                            except asyncio.CancelledError:
+                                break
+                            except Exception:
+                                break
+
+                    t_send = asyncio.create_task(sender_task())
+                    t_recv = asyncio.create_task(receiver_task())
+
+                    done, pending = await asyncio.wait(
+                        [t_send, t_recv],
+                        return_when=asyncio.FIRST_COMPLETED
+                    )
+                    for p in pending:
+                        p.cancel()
+
+            except (websockets.ConnectionClosed, OSError) as e:
                 self.ws = None
-                if not self._running: break
+                print(f"[TelegramBot Disconnected]: {e}, повтор через 3с...", flush=True)
+                if not self._running:
+                    break
                 await asyncio.sleep(3)
-            except Exception:
+            except Exception as e:
                 self.ws = None
-                if not self._running: break
+                print(f"[TelegramBot Error]: {e}, повтор через 3с...", flush=True)
+                if not self._running:
+                    break
                 await asyncio.sleep(3)
 
     async def _handle_server_message(self, data: dict):
@@ -202,16 +274,22 @@ class TelegramBotThread(QThread):
             user_id = data.get("user_id")
             user_name = data.get("user_name")
             cfg = load_config()
-            if "api_keys" not in cfg: cfg["api_keys"] = {}
+            if "api_keys" not in cfg:
+                cfg["api_keys"] = {}
             cfg["api_keys"]["telegram_admin_id"] = user_id
             cfg["user_name"] = user_name
             save_config(cfg)
+
+            os.makedirs(PAIRING_PATH.parent, exist_ok=True)
             session_data = {"status": "paired", "user_id": user_id, "user_name": user_name}
             with open(PAIRING_PATH, "w", encoding="utf-8") as f:
                 json.dump(session_data, f, ensure_ascii=False, indent=4)
+            print(f"[TelegramBot]: ПК успешно привязан к {user_name} ({user_id})!", flush=True)
             return
 
         resp_payload = {}
+        flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
         if action == "screenshot":
             base64_img = await self.loop.run_in_executor(None, take_screenshot_base64)
             resp_payload = {"image_base64": base64_img}
@@ -222,13 +300,15 @@ class TelegramBotThread(QThread):
             st = await self.loop.run_in_executor(None, get_hardware_status)
             resp_payload = {"text": st}
         elif action == "lock":
-            subprocess.run("rundll32.exe user32.dll,LockWorkStation", shell=True)
+            if main_window_instance and getattr(main_window_instance, "presence_manager", None):
+                main_window_instance.presence_manager.set_manual_absence(grace_period=10)
+            SystemActions.lock_screen()
             resp_payload = {"text": "Заблокировала твой ПК 🔒"}
         elif action == "restart":
-            subprocess.run("shutdown /r /t 5", shell=True)
+            subprocess.run("shutdown /r /t 5", shell=True, creationflags=flags)
             resp_payload = {"text": "Перезагружаю компьютер... 🔄"}
         elif action == "shutdown":
-            subprocess.run("shutdown /s /t 5", shell=True)
+            subprocess.run("shutdown /s /t 5", shell=True, creationflags=flags)
             resp_payload = {"text": "Выключаю ПК. До связи! 👋"}
         elif action == "chat":
             text = payload.get("text", "")
@@ -240,9 +320,9 @@ class TelegramBotThread(QThread):
                 reply_text = str(result)
             resp_payload = {"text": reply_text}
 
-        if req_id and self.ws:
+        if req_id:
             answer = {"req_id": req_id, "payload": resp_payload}
-            await self.ws.send(json.dumps(answer))
+            _enqueue_message(answer)
 
     def stop(self):
         self._running = False

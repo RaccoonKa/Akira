@@ -45,9 +45,10 @@ if os.path.exists(os.path.join(base_dir, 'assets')):
 if os.path.exists(os.path.join(base_dir, 'optimized_models')):
     datas.append((os.path.join(base_dir, 'optimized_models'), 'optimized_models'))
 
-personal_data_path = os.path.join(base_dir, 'personal_data')
-if os.path.exists(personal_data_path):
-    datas.append((personal_data_path, 'personal_data'))
+# Упаковываем только шаблон конфига, исключая локальные ключи и фото
+config_template = os.path.join(base_dir, 'personal_data', 'configs', 'config.template.json')
+if os.path.exists(config_template):
+    datas.append((config_template, os.path.join('personal_data', 'configs')))
 
 dict_json_path = os.path.join(base_dir, 'core', 'utils', 'pronunciation_dict.json')
 if os.path.exists(dict_json_path):
@@ -56,7 +57,6 @@ if os.path.exists(dict_json_path):
 datas += collect_data_files('transformers')
 datas += collect_data_files('torch')
 datas += collect_data_files('certifi')
-datas += collect_data_files('matplotlib')
 
 hiddenimports += [
     'pkg_resources',
@@ -75,14 +75,10 @@ hiddenimports += [
     'requests',
     'qrcode',
     'packaging',
-    'googleapiclient',
-    'google_auth_oauthlib',
-    'google.oauth2.credentials',
     'cv2',
     'pyautogui',
     'psutil',
-    'PIL',
-    'matplotlib'
+    'PIL'
 ]
 
 hiddenimports += collect_submodules('core')
@@ -99,7 +95,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['tkinter', 'notebook', 'IPython'],
+    excludes=['tkinter', 'notebook', 'IPython', 'matplotlib', 'pytest', 'unittest'],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
@@ -113,12 +109,12 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='Astra',
+    name='Akira',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=True,
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
@@ -135,5 +131,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name='Astra'
+    name='Akira'
 )

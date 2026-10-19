@@ -20,7 +20,7 @@ class VolumeDucker:
                 process = session.Process
                 if process:
                     name = process.name().lower()
-                    if process.pid == current_pid or "astra" in name or "python" in name or "pycharm" in name:
+                    if process.pid == current_pid or "akira" in name or "python" in name or "pycharm" in name:
                         continue
 
                     volume = session._ctl.QueryInterface(ISimpleAudioVolume)

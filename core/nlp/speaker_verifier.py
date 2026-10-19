@@ -65,11 +65,17 @@ class SpeakerVerifier:
         if model_path is None:
             model_path = get_resource_path("optimized_models", "voiceprint", "tiny_ecapa.onnx")
 
+        self.model_path = model_path
         self.session = None
         self.input_name = None
         self.input_shape = None
 
-        if os.path.exists(model_path):
+        self.profiles = self._load_profiles()
+
+    def _ensure_session(self):
+        if self.session is not None:
+            return True
+        if os.path.exists(self.model_path):
             try:
                 session_options = ort.SessionOptions()
                 session_options.intra_op_num_threads = 2
@@ -78,17 +84,18 @@ class SpeakerVerifier:
                 session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
                 self.session = ort.InferenceSession(
-                    model_path,
+                    self.model_path,
                     sess_options=session_options,
                     providers=["CPUExecutionProvider"]
                 )
                 self.input_name = self.session.get_inputs()[0].name
                 self.input_shape = self.session.get_inputs()[0].shape
-                print(f"[SpeakerVerifier]: ECAPA загружена (вход: {self.input_name}, форма: {self.input_shape})", flush=True)
+                print(f"[SpeakerVerifier]: ECAPA загружена (вход: {self.input_name}, форма: {self.input_shape})",
+                      flush=True)
+                return True
             except Exception as e:
                 print(f"[SpeakerVerifier Init Error]: {e}", flush=True)
-
-        self.profiles = self._load_profiles()
+        return False
 
     def _load_profiles(self):
         if os.path.exists(self.profiles_path):
@@ -143,7 +150,7 @@ class SpeakerVerifier:
         return samples
 
     def extract_embedding(self, audio_data) -> np.ndarray:
-        if self.session is None:
+        if not self._ensure_session():
             return None
 
         samples = self._prep_audio(audio_data)

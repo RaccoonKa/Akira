@@ -19,11 +19,11 @@ if getattr(sys, 'frozen', False):
 else:
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-MAIN_VOICE_ONNX = get_resource_path("optimized_models", "voice_tts", "astra_voice_int8.onnx")
-MAIN_VOICE_JSON = get_resource_path("optimized_models", "voice_tts", "astra_voice_int8.onnx.json")
+MAIN_VOICE_ONNX = get_resource_path("optimized_models", "voice_tts", "aki_voice_int8.onnx")
+MAIN_VOICE_JSON = get_resource_path("optimized_models", "voice_tts", "aki_voice_int8.onnx.json")
 
-WHISPER_VOICE_ONNX = get_resource_path("optimized_models", "whisper_tts", "astra_whisper_int8.onnx")
-WHISPER_VOICE_JSON = get_resource_path("optimized_models", "whisper_tts", "astra_whisper_int8.onnx.json")
+WHISPER_VOICE_ONNX = get_resource_path("optimized_models", "whisper_tts", "aki_whisper_int8.onnx")
+WHISPER_VOICE_JSON = get_resource_path("optimized_models", "whisper_tts", "aki_whisper_int8.onnx.json")
 
 DICT_FILE_PATH = get_resource_path("core", "utils", "pronunciation_dict.json")
 CUSTOM_DICTIONARY = {}
@@ -132,6 +132,7 @@ class TTSThread(QThread):
         self.cached_greeting_audio = None
         self.cached_greeting_sr = 22050
         self.warmup_text = "готов"
+        self._audio_queue = None
 
     def _init_models(self):
         if self.main_voice is None and os.path.exists(MAIN_VOICE_ONNX):
@@ -217,6 +218,7 @@ class TTSThread(QThread):
         silence_padding = np.zeros(int(sample_rate * 0.15), dtype=np.int16).tobytes()
 
         audio_queue = queue.Queue(maxsize=300)
+        self._audio_queue = audio_queue
 
         def producer():
             for idx, sentence in enumerate(sentences):
@@ -242,13 +244,13 @@ class TTSThread(QThread):
             with sd.RawOutputStream(samplerate=sample_rate, channels=1, dtype='int16') as stream:
                 while not self._stopped:
                     try:
-                        chunk_bytes = audio_queue.get(timeout=0.1)
+                        chunk_bytes = audio_queue.get(timeout=0.06)
                     except queue.Empty:
                         if not producer_thread.is_alive():
                             break
                         continue
 
-                    if chunk_bytes is None:
+                    if chunk_bytes is None or self._stopped:
                         break
 
                     if abs(vol_factor - 1.0) > 0.01:
@@ -261,15 +263,20 @@ class TTSThread(QThread):
                 if not self._stopped:
                     stream.write(silence_padding)
         finally:
+            self._audio_queue = None
             ym_manager.unduck()
             self.speaking_finished.emit()
 
     def stop(self):
         self._stopped = True
-        try:
-            sd.stop()
-        except Exception:
-            pass
+        if self._audio_queue:
+            try:
+                while not self._audio_queue.empty():
+                    self._audio_queue.get_nowait()
+                self._audio_queue.put(None)
+            except Exception:
+                pass
+
         ym_manager.unduck()
         if self.isRunning():
             self.wait(200)
@@ -306,12 +313,12 @@ class TTSThread(QThread):
     def run(self):
         self._stopped = False
         try:
-            if not self.main_voice or not self.whisper_voice:
+            if self.main_voice is None or self.whisper_voice is None:
                 self._init_models()
 
             if self._is_warmup:
                 cleaned_warmup = self._clean_text_for_tts(self.warmup_text)
-                for v in [self.main_voice, self.whisper_voice]:
+                for v in (self.main_voice, self.whisper_voice):
                     if v and cleaned_warmup:
                         for _ in v.synthesize(cleaned_warmup):
                             break

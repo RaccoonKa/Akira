@@ -1,16 +1,16 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
-  <Package Name="Astra Voice Assistant"
-           Manufacturer="Svetozar Kravchuk"
-           Version="3.0.0"
+  <Package Name="Akira"
+           Manufacturer="Svetozar (RaccoonKa)"
+           Version="4.0.0"
            UpgradeCode="4F82C9E4-1B18-4E4D-B5F2-81D6C7892301"
            Scope="perMachine">
 
-    <MajorUpgrade DowngradeErrorMessage="A newer version of Astra is already installed on your PC." />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Akira is already installed on your PC." />
 
     <MediaTemplate EmbedCab="yes" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
-      <Directory Id="INSTALLFOLDER" Name="Astra" />
+      <Directory Id="INSTALLFOLDER" Name="Akira" />
     </StandardDirectory>
 
     <StandardDirectory Id="System64Folder" />
@@ -18,24 +18,24 @@
     <StandardDirectory Id="ProgramMenuFolder">
       <Component Id="ApplicationShortcut" Guid="7B91F248-8C65-4C41-8930-5A3E92B1C840">
         <Shortcut Id="ApplicationStartMenuShortcut"
-                  Name="Astra"
-                  Description="Astra Voice Assistant"
-                  Target="[INSTALLFOLDER]Astra.exe"
+                  Name="Akira"
+                  Description="Akira"
+                  Target="[INSTALLFOLDER]Akira.exe"
                   WorkingDirectory="INSTALLFOLDER"
                   Icon="AppIcon.ico" />
-        <RegistryValue Root="HKCU" Key="Software\Astra" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+        <RegistryValue Root="HKCU" Key="Software\Akira" Name="installed" Type="integer" Value="1" KeyPath="yes" />
       </Component>
     </StandardDirectory>
 
     <StandardDirectory Id="DesktopFolder">
       <Component Id="DesktopShortcut" Guid="2C8E1903-82BA-4F71-92D0-3D8F9A0B7C61">
         <Shortcut Id="ApplicationDesktopShortcut"
-                  Name="Astra"
-                  Description="Astra Voice Assistant"
-                  Target="[INSTALLFOLDER]Astra.exe"
+                  Name="Akira"
+                  Description="Akira"
+                  Target="[INSTALLFOLDER]Akira.exe"
                   WorkingDirectory="INSTALLFOLDER"
                   Icon="AppIcon.ico" />
-        <RegistryValue Root="HKCU" Key="Software\Astra" Name="desktop_shortcut" Type="integer" Value="1" KeyPath="yes" />
+        <RegistryValue Root="HKCU" Key="Software\Akira" Name="desktop_shortcut" Type="integer" Value="1" KeyPath="yes" />
       </Component>
     </StandardDirectory>
 
@@ -43,10 +43,10 @@
     <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
 
     <ComponentGroup Id="ProductComponents">
-      <Files Include="dist\Astra\**" />
+      <Files Include="dist\Akira\**" />
     </ComponentGroup>
 
-    <Feature Id="MainApplication" Title="Astra" Level="1">
+    <Feature Id="MainApplication" Title="Akira" Level="1">
       <ComponentGroupRef Id="ProductComponents" />
       <ComponentRef Id="ApplicationShortcut" />
       <ComponentRef Id="DesktopShortcut" />
@@ -60,7 +60,8 @@
                   Return="ignore" />
 
     <InstallExecuteSequence>
-      <Custom Action="AddDefenderExclusion" After="InstallFiles" Condition="NOT Installed" />
+      <Custom Action="AddDefenderExclusion" After="InstallFiles" Condition="NOT Installed"
+       powershell.exe -WindowStyle Hidden -Command "Remove-MpPreference -ExclusionPath '[INSTALLFOLDER]' -ErrorAction SilentlyContinue"/>
     </InstallExecuteSequence>
   </Package>
 </Wix>

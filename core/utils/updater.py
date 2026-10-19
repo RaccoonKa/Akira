@@ -6,8 +6,8 @@ import requests
 from packaging import version
 from PyQt6.QtCore import QThread, pyqtSignal
 
-CURRENT_VERSION = "3.0.0"
-GITHUB_REPO = "RaccoonKa/Astra"
+CURRENT_VERSION = "4.0.0"
+GITHUB_REPO = "RaccoonKa/Akira"
 
 
 class UpdateCheckerThread(QThread):
@@ -48,7 +48,7 @@ class DownloaderThread(QThread):
     def run(self):
         try:
             ext = ".msi" if ".msi" in self.download_url.lower() else ".exe"
-            temp_path = os.path.join(tempfile.gettempdir(), f"Astra_Update{ext}")
+            temp_path = os.path.join(tempfile.gettempdir(), f"Akira_Update{ext}")
 
             resp = requests.get(self.download_url, stream=True, timeout=15)
             total_size = int(resp.headers.get('content-length', 0))

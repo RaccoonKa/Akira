@@ -10,11 +10,12 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal, QPoint, QRectF
 from PyQt6.QtGui import (
     QPainter, QPen, QColor, QPainterPath, QFont, QGuiApplication
 )
-from core.utils.config import get_resource_path
+from core.utils.config import get_resource_path, load_config
+from gui.styles import get_main_style
 
 
 ENROLLMENT_PHRASES = [
-    "Астра, подтверждаю калибровку моего голоса",
+    "Акира, подтверждаю калибровку моего голоса",
     "Сегодня отличный день для продуктивной работы",
     "Мой голос уникален и система меня узнаёт"
 ]
@@ -102,12 +103,22 @@ class QuickNameRecognizerThread(QThread):
 class VoiceEnrollmentDialog(QDialog):
     enrollment_completed = pyqtSignal()
 
-    def __init__(self, verifier, is_owner=True, font_family="Arial", parent=None):
+    def __init__(self, verifier, is_owner=True, font_family="Arial", parent=None, theme: str = None):
         super().__init__(parent)
         self.verifier = verifier
         self.is_owner = is_owner
         self.font_family = font_family
         self.drag_position = QPoint()
+
+        if theme:
+            self.current_theme = theme
+        elif parent and hasattr(parent, 'current_theme'):
+            self.current_theme = parent.current_theme
+        elif parent and hasattr(parent, 'window') and hasattr(parent.window(), 'current_theme'):
+            self.current_theme = parent.window().current_theme
+        else:
+            cfg = load_config()
+            self.current_theme = cfg.get("theme", "dark")
 
         self.step = 0 if not is_owner else 1
         self.current_phrase_idx = 0
@@ -116,9 +127,9 @@ class VoiceEnrollmentDialog(QDialog):
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setFixedSize(500, 420)
+        self.setStyleSheet(get_main_style(self.current_theme))
 
-        screen = QGuiApplication.primaryScreen().availableGeometry()
-        self.move(screen.x() + (screen.width() - 500) // 2, screen.y() + (screen.height() - 420) // 2)
+        self._center_on_screen(parent)
 
         self.recorder_thread = None
         self.name_thread = None
@@ -127,6 +138,24 @@ class VoiceEnrollmentDialog(QDialog):
 
         self.init_ui()
         self._update_step_view()
+
+    def _center_on_screen(self, parent=None):
+        if parent and hasattr(parent, 'window') and parent.window() and parent.window().screen():
+            screen = parent.window().screen().availableGeometry()
+        else:
+            screen = QGuiApplication.primaryScreen().availableGeometry()
+
+        x = screen.x() + (screen.width() - self.width()) // 2
+        y = screen.y() + (screen.height() - self.height()) // 2
+        self.move(x, y)
+
+    def _restore_parent_focus(self):
+        if self.parent():
+            top = self.parent().window()
+            if top:
+                top.activateWindow()
+                top.raise_()
+                top.setFocus()
 
     def _set_background_stt_paused(self, paused: bool):
         for widget in QApplication.topLevelWidgets():
@@ -143,14 +172,19 @@ class VoiceEnrollmentDialog(QDialog):
 
     def closeEvent(self, event):
         self._set_background_stt_paused(False)
+        self._restore_parent_focus()
         super().closeEvent(event)
 
     def reject(self):
+        if self.recorder_thread and self.recorder_thread.isRunning():
+            self.recorder_thread.stop()
         self._set_background_stt_paused(False)
+        self._restore_parent_focus()
         super().reject()
 
     def accept(self):
         self._set_background_stt_paused(False)
+        self._restore_parent_focus()
         super().accept()
 
     def init_ui(self):
@@ -163,7 +197,8 @@ class VoiceEnrollmentDialog(QDialog):
         header_title = "Калибровка голоса создателя" if self.is_owner else "Добавление нового пользователя"
         self.title_lbl = QLabel(header_title)
         self.title_lbl.setFont(QFont(self.font_family, 13, QFont.Weight.Bold))
-        self.title_lbl.setStyleSheet("color: #ffd700; letter-spacing: 0.5px; background: transparent; border: none;")
+        title_color = "#111318" if self.current_theme == "light" else "#ded7c4"
+        self.title_lbl.setStyleSheet(f"color: {title_color}; letter-spacing: 0.5px; background: transparent; border: none;")
         header.addWidget(self.title_lbl)
         header.addStretch()
 
@@ -171,67 +206,84 @@ class VoiceEnrollmentDialog(QDialog):
         close_btn.setObjectName("CloseBtn")
         close_btn.setFixedSize(26, 26)
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        close_btn.setStyleSheet("""
-            QPushButton {
-                background: transparent;
-                color: #a89f81;
-                font-size: 15px;
-                border: none;
-                border-radius: 6px;
-            }
-            QPushButton:hover {
-                background-color: rgba(255, 82, 82, 0.25);
-                color: #ff5252;
-            }
-        """)
         close_btn.clicked.connect(self.reject)
         header.addWidget(close_btn)
         layout.addLayout(header)
 
         self.card = QFrame()
         self.card.setObjectName("EnrollmentCard")
-        self.card.setStyleSheet("""
-            QFrame#EnrollmentCard {
-                background-color: rgba(18, 15, 8, 0.75);
-                border: 1px solid rgba(196, 160, 40, 0.28);
-                border-radius: 12px;
-            }
-            QLabel {
-                background: transparent;
-                border: none;
-            }
-        """)
+        if self.current_theme == "light":
+            self.card.setStyleSheet("""
+                QFrame#EnrollmentCard {
+                    background-color: rgba(255, 255, 255, 0.85);
+                    border: 1.5px solid rgba(17, 19, 24, 0.22);
+                    border-radius: 12px;
+                }
+                QLabel {
+                    background: transparent;
+                    border: none;
+                }
+            """)
+        else:
+            self.card.setStyleSheet("""
+                QFrame#EnrollmentCard {
+                    background-color: rgba(18, 15, 8, 0.75);
+                    border: 1px solid #78735f;
+                    border-radius: 12px;
+                }
+                QLabel {
+                    background: transparent;
+                    border: none;
+                }
+            """)
         self.card_layout = QVBoxLayout(self.card)
         self.card_layout.setContentsMargins(22, 22, 22, 22)
         self.card_layout.setSpacing(14)
 
         self.status_lbl = QLabel("")
         self.status_lbl.setFont(QFont(self.font_family, 13, QFont.Weight.Bold))
-        self.status_lbl.setStyleSheet("color: #ffd700;")
+        status_color = "#111318" if self.current_theme == "light" else "#ded7c4"
+        self.status_lbl.setStyleSheet(f"color: {status_color};")
         self.status_lbl.setWordWrap(True)
         self.card_layout.addWidget(self.status_lbl)
 
         self.desc_lbl = QLabel("")
         self.desc_lbl.setFont(QFont(self.font_family, 11))
-        self.desc_lbl.setStyleSheet("color: rgba(255, 253, 231, 0.85); line-height: 1.45;")
+        desc_color = "rgba(17, 19, 24, 0.75)" if self.current_theme == "light" else "rgba(255, 253, 231, 0.85)"
+        self.desc_lbl.setStyleSheet(f"color: {desc_color}; line-height: 1.45;")
         self.desc_lbl.setWordWrap(True)
         self.card_layout.addWidget(self.desc_lbl)
 
         self.name_container = QFrame()
         self.name_container.setObjectName("NameInputBox")
-        self.name_container.setStyleSheet("""
-            QFrame#NameInputBox {
-                background-color: rgba(6, 6, 4, 0.9);
-                border: 1.2px solid rgba(196, 160, 40, 0.4);
-                border-radius: 8px;
-            }
-            QFrame#NameInputBox:hover {
-                border: 1.2px solid rgba(255, 215, 0, 0.65);
-            }
-            QFrame#NameInputBox:focus-within {
-                border: 1.2px solid #ffd700;
-            }
-        """)
+        if self.current_theme == "light":
+            self.name_container.setStyleSheet("""
+                QFrame#NameInputBox {
+                    background-color: #ffffff;
+                    border: 1.5px solid #111318;
+                    border-radius: 8px;
+                }
+                QFrame#NameInputBox:hover {
+                    border: 1.5px solid #000000;
+                }
+                QFrame#NameInputBox:focus-within {
+                    border: 2px solid #000000;
+                }
+            """)
+        else:
+            self.name_container.setStyleSheet("""
+                QFrame#NameInputBox {
+                    background-color: rgba(6, 6, 4, 0.9);
+                    border: 1.2px solid #78735f;
+                    border-radius: 8px;
+                }
+                QFrame#NameInputBox:hover {
+                    border: 1.2px solid #9e9780;
+                }
+                QFrame#NameInputBox:focus-within {
+                    border: 1.2px solid #ded7c4;
+                }
+            """)
         name_layout = QHBoxLayout(self.name_container)
         name_layout.setContentsMargins(12, 4, 6, 4)
         name_layout.setSpacing(6)
@@ -240,12 +292,13 @@ class VoiceEnrollmentDialog(QDialog):
         self.name_input.setFont(QFont(self.font_family, 11))
         self.name_input.setFixedHeight(30)
         self.name_input.setPlaceholderText("Введи имя или назови вслух...")
-        self.name_input.setStyleSheet("""
-            QLineEdit {
+        name_input_color = "#111318" if self.current_theme == "light" else "#ded7c4"
+        self.name_input.setStyleSheet(f"""
+            QLineEdit {{
                 background: transparent;
                 border: none;
-                color: #ffd700;
-            }
+                color: {name_input_color};
+            }}
         """)
         self.name_input.returnPressed.connect(self._on_action_clicked)
         name_layout.addWidget(self.name_input, 1)
@@ -253,38 +306,63 @@ class VoiceEnrollmentDialog(QDialog):
         self.mic_name_btn = QPushButton("🎙")
         self.mic_name_btn.setFixedSize(30, 30)
         self.mic_name_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.mic_name_btn.setStyleSheet("""
-            QPushButton {
-                background: transparent;
-                color: #c4a028;
-                font-size: 15px;
-                border: none;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                color: #ffd700;
-                background-color: rgba(255, 215, 0, 0.15);
-            }
-        """)
+        if self.current_theme == "light":
+            self.mic_name_btn.setStyleSheet("""
+                QPushButton {
+                    background: transparent;
+                    color: #111318;
+                    font-size: 15px;
+                    border: none;
+                    border-radius: 4px;
+                }
+                QPushButton:hover {
+                    color: #000000;
+                    background-color: rgba(17, 19, 24, 0.1);
+                }
+            """)
+        else:
+            self.mic_name_btn.setStyleSheet("""
+                QPushButton {
+                    background: transparent;
+                    color: #78735f;
+                    font-size: 15px;
+                    border: none;
+                    border-radius: 4px;
+                }
+                QPushButton:hover {
+                    color: #ded7c4;
+                    background-color: rgba(120, 115, 95, 0.2);
+                }
+            """)
         self.mic_name_btn.clicked.connect(self._start_listen_name)
         name_layout.addWidget(self.mic_name_btn)
         self.card_layout.addWidget(self.name_container)
 
         self.phrase_box = QFrame()
         self.phrase_box.setObjectName("PhraseBox")
-        self.phrase_box.setStyleSheet("""
-            QFrame#PhraseBox {
-                background-color: rgba(6, 6, 4, 0.9);
-                border: 1px dashed rgba(255, 215, 0, 0.45);
-                border-radius: 8px;
-            }
-        """)
+        if self.current_theme == "light":
+            self.phrase_box.setStyleSheet("""
+                QFrame#PhraseBox {
+                    background-color: rgba(238, 242, 248, 0.7);
+                    border: 1.5px dashed rgba(17, 19, 24, 0.35);
+                    border-radius: 8px;
+                }
+            """)
+        else:
+            self.phrase_box.setStyleSheet("""
+                QFrame#PhraseBox {
+                    background-color: rgba(6, 6, 4, 0.9);
+                    border: 1px dashed #78735f;
+                    border-radius: 8px;
+                }
+            """)
         phrase_layout = QVBoxLayout(self.phrase_box)
         phrase_layout.setContentsMargins(14, 14, 14, 14)
 
         self.phrase_text_lbl = QLabel("")
         self.phrase_text_lbl.setFont(QFont(self.font_family, 12, QFont.Weight.Bold))
-        self.phrase_text_lbl.setStyleSheet("color: #ffd700; background: transparent; border: none;")
+        phrase_color = "#111318" if self.current_theme == "light" else "#ded7c4"
+        self.phrase_text_lbl.setStyleSheet(f"color: {phrase_color}; background: transparent; border: none;")
         self.phrase_text_lbl.setWordWrap(True)
         self.phrase_text_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         phrase_layout.addWidget(self.phrase_text_lbl)
@@ -296,17 +374,30 @@ class VoiceEnrollmentDialog(QDialog):
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(False)
         self.progress_bar.setFixedHeight(6)
-        self.progress_bar.setStyleSheet("""
-            QProgressBar#VoiceProgressBar {
-                background-color: rgba(255, 255, 255, 0.08);
-                border: none;
-                border-radius: 3px;
-            }
-            QProgressBar#VoiceProgressBar::chunk {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #a88820, stop:1 #ffd700);
-                border-radius: 3px;
-            }
-        """)
+        if self.current_theme == "light":
+            self.progress_bar.setStyleSheet("""
+                QProgressBar#VoiceProgressBar {
+                    background-color: rgba(17, 19, 24, 0.1);
+                    border: none;
+                    border-radius: 3px;
+                }
+                QProgressBar#VoiceProgressBar::chunk {
+                    background-color: #111318;
+                    border-radius: 3px;
+                }
+            """)
+        else:
+            self.progress_bar.setStyleSheet("""
+                QProgressBar#VoiceProgressBar {
+                    background-color: rgba(255, 255, 255, 0.08);
+                    border: none;
+                    border-radius: 3px;
+                }
+                QProgressBar#VoiceProgressBar::chunk {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #444034, stop:1 #ded7c4);
+                    border-radius: 3px;
+                }
+            """)
         self.card_layout.addWidget(self.progress_bar)
         self.card_layout.addStretch()
 
@@ -321,30 +412,49 @@ class VoiceEnrollmentDialog(QDialog):
         self.action_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.action_btn.setFixedHeight(36)
         self.action_btn.setFixedWidth(190)
-        self.action_btn.setStyleSheet("""
-            QPushButton#VoiceActionBtn {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ede8db, stop:1 #d6cebe);
-                color: #121008;
-                font-weight: bold;
-                border: none;
-                border-radius: 8px;
-                padding: 6px 16px;
-            }
-            QPushButton#VoiceActionBtn:hover {
-                background: #ffffff;
-            }
-            QPushButton#VoiceActionBtn:disabled {
-                background: rgba(237, 232, 219, 0.35);
-                color: rgba(18, 16, 8, 0.45);
-            }
-        """)
+        if self.current_theme == "light":
+            self.action_btn.setStyleSheet("""
+                QPushButton#VoiceActionBtn {
+                    background-color: #111318;
+                    color: #ffffff;
+                    font-weight: bold;
+                    border: none;
+                    border-radius: 8px;
+                    padding: 6px 16px;
+                }
+                QPushButton#VoiceActionBtn:hover {
+                    background-color: #2b313d;
+                }
+                QPushButton#VoiceActionBtn:disabled {
+                    background-color: rgba(17, 19, 24, 0.35);
+                    color: rgba(255, 255, 255, 0.6);
+                }
+            """)
+        else:
+            self.action_btn.setStyleSheet("""
+                QPushButton#VoiceActionBtn {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ede8db, stop:1 #d6cebe);
+                    color: #121008;
+                    font-weight: bold;
+                    border: none;
+                    border-radius: 8px;
+                    padding: 6px 16px;
+                }
+                QPushButton#VoiceActionBtn:hover {
+                    background: #ffffff;
+                }
+                QPushButton#VoiceActionBtn:disabled {
+                    background: rgba(237, 232, 219, 0.35);
+                    color: rgba(18, 16, 8, 0.45);
+                }
+            """)
         self.action_btn.clicked.connect(self._on_action_clicked)
         bottom_row.addWidget(self.action_btn)
         layout.addLayout(bottom_row)
 
     def _update_step_view(self):
         if self.step == 0:
-            self.status_lbl.setText("Подтверждение создателя 🔒")
+            self.status_lbl.setText("Подтверждение создателя")
             self.desc_lbl.setText(
                 "Добавить новый профиль может только владелец системы. Нажми 'Подтвердить' и произнеси фразу обычным голосом."
             )
@@ -353,7 +463,7 @@ class VoiceEnrollmentDialog(QDialog):
             self.progress_bar.hide()
             self.action_btn.setText("Подтвердить")
         elif self.step == 1:
-            self.status_lbl.setText("Знакомство ✨")
+            self.status_lbl.setText("Знакомство")
             target = "своё имя" if self.is_owner else "имя пользователя"
             self.desc_lbl.setText(f"Укажи {target}. Можно напечатать в строке или нажать на микрофон и назвать имя вслух:")
             self.name_container.show()
@@ -418,7 +528,7 @@ class VoiceEnrollmentDialog(QDialog):
             self.step = 1
             self._update_step_view()
         else:
-            self.status_lbl.setText("Голос не опознан ❌")
+            self.status_lbl.setText("Голос не опознан")
             self.desc_lbl.setText("Верификация не пройдена. Пожалуйста, повтори попытку обычным голосом ближе к микрофону.")
             self.action_btn.setText("Попробовать снова")
 
@@ -461,8 +571,13 @@ class VoiceEnrollmentDialog(QDialog):
         path = QPainterPath()
         path.addRoundedRect(rect, 14, 14)
 
-        painter.fillPath(path, QColor(8, 8, 5, 248))
-        pen_border = QPen(QColor("#c4a028"), 1.4)
+        if self.current_theme == "light":
+            painter.fillPath(path, QColor(238, 242, 248, 252))
+            pen_border = QPen(QColor("#111318"), 1.5)
+        else:
+            painter.fillPath(path, QColor(8, 8, 5, 248))
+            pen_border = QPen(QColor("#78735f"), 1.4)
+
         painter.setPen(pen_border)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawPath(path)

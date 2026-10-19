@@ -113,7 +113,7 @@ class ZapretManager:
 
             cleaned.append(line_strip)
 
-        silent_bat_path = os.path.join(zapret_dir, "_astra_run.bat")
+        silent_bat_path = os.path.join(zapret_dir, "_akira_run.bat")
         try:
             with open(silent_bat_path, "w", encoding="cp1251", errors="ignore") as f:
                 f.write("\n".join(cleaned))

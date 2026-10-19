@@ -1,23 +1,50 @@
+import re
 import urllib.parse
 import webbrowser
 import threading
 import time
+import requests
 import pyautogui
-from services.google.google_contacts import GoogleContactsManager
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+    "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7"
+}
 
 
 class YouTubeManager:
     def __init__(self):
-        self.contacts_manager = GoogleContactsManager()
+        pass
 
-    def _auto_fullscreen(self, delay=2.5):
+    def _auto_fullscreen(self, delay=2.2):
         time.sleep(delay)
         pyautogui.press('f')
 
+    def _resolve_first_video(self, query: str):
+        encoded_query = urllib.parse.quote(query)
+        search_url = f"https://www.youtube.com/results?search_query={encoded_query}"
+
+        try:
+            resp = requests.get(search_url, headers=HEADERS, timeout=3.5)
+            if resp.status_code == 200:
+                html = resp.text
+
+                video_ids = re.findall(r'"videoId":"([a-zA-Z0-9_-]{11})"', html)
+                titles = re.findall(r'"title":{"runs":\[{"text":"(.*?)"}\]', html)
+
+                if video_ids:
+                    first_id = video_ids[0]
+                    first_title = titles[0] if titles else query
+                    return f"https://www.youtube.com/watch?v={first_id}", first_title
+        except Exception as e:
+            print(f"[YouTube Search Error]: {e}")
+
+        return f"https://www.youtube.com/results?search_query={encoded_query}", query
+
     def search_and_play(self, text="", auto_fullscreen=True):
         stop_words = [
-            "астра", "включи", "поставь", "найди", "покажи", "открой",
-            "на ютубе", "в ютубе", "ютуб", "видео", "мне", "про", "прохождение"
+            "акира", "аки", "включи", "поставь", "найди", "покажи", "открой",
+            "на ютубе", "в ютубе", "ютуб", "видео", "ролик", "мне", "про", "прохождение"
         ]
         query = text.lower()
         for word in stop_words:
@@ -28,38 +55,12 @@ class YouTubeManager:
             webbrowser.open("https://youtube.com")
             return "Открываю Ютуб"
 
-        video_url = None
-        title_text = ""
-
-        try:
-            creds = self.contacts_manager._get_credentials()
-            if creds:
-                import googleapiclient.discovery
-                youtube = googleapiclient.discovery.build('youtube', 'v3', credentials=creds)
-                request = youtube.search().list(
-                    part="snippet",
-                    q=query,
-                    type="video",
-                    maxResults=1
-                )
-                response = request.execute()
-                items = response.get("items", [])
-                if items:
-                    video_id = items[0]["id"]["videoId"]
-                    title = items[0]["snippet"]["title"]
-                    video_url = f"https://www.youtube.com/watch?v={video_id}"
-                    title_text = f"Включаю {title}"
-        except Exception as e:
-            print(f"[YOUTUBE OAUTH ERROR]: {e}")
-
-        if not video_url:
-            encoded_query = urllib.parse.quote(query)
-            video_url = f"https://www.youtube.com/results?search_query={encoded_query}"
-            title_text = f"Ищу {query} на Ютубе"
-
+        video_url, title = self._resolve_first_video(query)
         webbrowser.open(video_url)
 
         if auto_fullscreen and "watch?v=" in video_url:
             threading.Thread(target=self._auto_fullscreen, daemon=True).start()
 
-        return title_text
+        if "watch?v=" in video_url:
+            return f"Включаю {title}"
+        return f"Ищу {query} на Ютубе"

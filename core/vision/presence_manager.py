@@ -34,7 +34,7 @@ class PresenceManager(QObject):
 
     def load_owner_faces(self):
         appdata_dir = os.environ.get("APPDATA", os.path.expanduser("~"))
-        owner_folder = os.path.join(appdata_dir, "Astra", "owner_face")
+        owner_folder = os.path.join(appdata_dir, "Akira", "owner_face")
 
         cache_file = os.path.join(owner_folder, "encodings_cache.npy")
         self.owner_encodings = []

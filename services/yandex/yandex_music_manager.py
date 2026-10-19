@@ -148,8 +148,28 @@ class YandexMusicManager:
             self.is_transitioning = False
             return False
 
-    def play_query(self, query):
+    def _ensure_vlc(self) -> bool:
+        global HAS_VLC, vlc
+        if HAS_VLC and self.player:
+            return True
+
+        from services.hdrezka.rezka_player import install_vlc_silent, is_vlc_available
+
         if not HAS_VLC:
+            if install_vlc_silent() or is_vlc_available():
+                try:
+                    import vlc as _vlc
+                    vlc = _vlc
+                    HAS_VLC = True
+                    self.vlc_instance = vlc.Instance('--no-video', '--quiet')
+                    self.player = self.vlc_instance.media_player_new()
+                except Exception as e:
+                    print(f"[VLC Load Error]: {e}")
+
+        return HAS_VLC and self.player is not None
+
+    def play_query(self, query):
+        if not self._ensure_vlc():
             webbrowser.open("https://www.videolan.org/vlc/")
             return "Для работы Яндекс Музыки нужен плеер. Открываю официальный сайт для скачивания."
 
@@ -210,9 +230,9 @@ class YandexMusicManager:
             self.is_ducked = False
 
     def play_my_wave(self):
-        if not HAS_VLC:
+        if not self._ensure_vlc():
             webbrowser.open("https://www.videolan.org/vlc/")
-            return "Для работы +Яндекс Музыки нужен плеер. Открываю официальный сайт для скачивания."
+            return "Для работы Яндекс Музыки нужен плеер. Открываю официальный сайт для скачивания."
 
         if not self._init_client():
             return False

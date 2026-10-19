@@ -7,7 +7,7 @@ ROOT_DIR = os.path.normpath(os.path.join(BASE_DIR, "..", ".."))
 
 if getattr(sys, 'frozen', False):
     APP_DIR = os.path.dirname(sys.executable)
-    USER_DATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Astra")
+    USER_DATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Akira")
 else:
     APP_DIR = ROOT_DIR
     USER_DATA_DIR = os.path.join(ROOT_DIR, "personal_data")
@@ -17,15 +17,16 @@ CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 
 DEFAULT_CONFIG = {
     "user_name": "друг",
-    "assistant_name": "Астра",
+    "assistant_name": "Акира",
     "user_gender": "male",
-    "city": "Москва",
+    "city": "Калининград",
+    "theme": "dark",
     "autostart": False,
     "first_run": True,
     "is_configured": False,
-    "music_service": "spotify",
+    "music_service": "yandex",
     "use_spotify": False,
-    "vpn_service": "",
+    "vpn_service": "none",
     "hdrezka_domain": "https://ru1.hdreskaz.top",
     "voice_volume": 100,
     "alarm_sound": "alarm_1",
@@ -47,17 +48,14 @@ DEFAULT_CONFIG = {
         "eye_tracking": False,
         "telegram": False,
         "gigachat": False,
-        "contacts": False,
         "memory": True
     },
     "api_keys": {
         "gigachat": "",
         "telegram_token": "",
         "telegram_admin_id": 0,
-        "weather": "",
         "yandex_music_token": "",
         "spotify_client_id": "",
-        "spotify_client_secret": "",
         "yandex_iot_token": ""
     }
 }

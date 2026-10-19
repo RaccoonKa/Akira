@@ -41,17 +41,19 @@ class STTThread(QThread):
         self.audio_queue = queue.Queue()
         self.manual_trigger_flag = False
         self.is_speaking = False
-        self.corrector = ASRCorrector()
+        self.corrector = None
         self.model_path = model_path if model_path else get_resource_path("optimized_models", "model_vosk")
 
         cfg = load_config()
-        assistant_name = cfg.get("assistant_name", "астра").lower()
+        assistant_name = cfg.get("assistant_name", "акира").lower()
 
         self.wake_words = {
             assistant_name,
-            "астр", "астро", "астру", "астры", "остра", "остру", "остро",
-            "быстро", "автора", "пастра", "астрал", "австралия",
-            "аста", "асра", "сестра", "костра", "астров"
+            "акир", "акира", "акиру", "акиры", "акире",
+            "окиро", "окиру", "окиры", "акиро",
+            "акыра", "акыру", "акыры", "акиира", "акирра",
+            "кира", "киру", "киры", "киро",
+            "аки", "акирка", "акирочка"
         }
 
     def set_speaking(self, state: bool):
@@ -85,9 +87,9 @@ class STTThread(QThread):
             clean_word = re.sub(r'[^\w]', '', word)
             if clean_word in self.wake_words:
                 return True, i
-            if clean_word.startswith(("астр", "остр", "астро", "аста", "асра")):
+            if clean_word.startswith(("акир", "окир", "акыр", "аки", "оки")):
                 return True, i
-            if clean_word in ["паспорт", "мастер", "остров", "костра", "просто"]:
+            if clean_word in ["пакира", "макира", "окира", "акира", "покура", "про киру"]:
                 return True, i
         return False, -1
 
@@ -108,6 +110,9 @@ class STTThread(QThread):
         if word_set & FAST_PASS_WORDS:
             print(f"[STT Фаст-пас]: Найдено триггер-слово -> без задержки", flush=True)
             return clean
+
+        if self.corrector is None:
+            self.corrector = ASRCorrector()
 
         t0 = time.perf_counter()
         print(f"[STT]: Запуск корректора на CPU для: '{raw_text}'", flush=True)

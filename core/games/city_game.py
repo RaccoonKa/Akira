@@ -15,7 +15,7 @@ class CityGame:
         self.original_names = {}
         self.used_cities = set()
         self.current_letter = None
-        self.last_astra_city = None
+        self.last_akira_city = None
         self._load_cities()
 
     def _load_cities(self):
@@ -83,7 +83,7 @@ class CityGame:
         display_name = self.original_names.get(start_city_low, start_city_low.title())
 
         self.used_cities.add(start_city_low)
-        self.last_astra_city = display_name
+        self.last_akira_city = display_name
         self.current_letter = self._get_target_letter(start_city_low)
 
         ans = (
@@ -101,7 +101,7 @@ class CityGame:
         self.is_active = False
         self.used_cities.clear()
         self.current_letter = None
-        self.last_astra_city = None
+        self.last_akira_city = None
 
         if surrender:
             ans = "Ура, победа за мной! Отличная партия получилась ✨"
@@ -129,12 +129,12 @@ class CityGame:
             return self.stop_game(surrender=False)
 
         inquiry_words = ["что за город", "что это за город", "где это", "где он находится", "где находится", "не знаю такой"]
-        if any(w in text_clean for w in inquiry_words) and self.last_astra_city:
+        if any(w in text_clean for w in inquiry_words) and self.last_akira_city:
             if self._has_gigachat():
-                desc = self._explain_city(self.last_astra_city)
+                desc = self._explain_city(self.last_akira_city)
                 ans = f"{desc} Жду твой ход на букву {self.current_letter.upper()}!"
             else:
-                ans = f"{self.last_astra_city} — абсолютно реальный город! Называй свой на букву {self.current_letter.upper()}."
+                ans = f"{self.last_akira_city} — абсолютно реальный город! Называй свой на букву {self.current_letter.upper()}."
             return {
                 "chat": ans,
                 "voice": ans,
@@ -172,24 +172,24 @@ class CityGame:
             self.original_names[city_candidate] = city_candidate.title()
 
         self.used_cities.add(city_candidate)
-        next_letter_for_astra = self._get_target_letter(city_candidate)
+        next_letter_for_akira = self._get_target_letter(city_candidate)
 
         available_cities = [
             c for c in self.cities
-            if c.startswith(next_letter_for_astra) and c not in self.used_cities
+            if c.startswith(next_letter_for_akira) and c not in self.used_cities
         ]
 
         if not available_cities:
             self.is_active = False
-            ans = f"Ого! Я не знаю больше городов на букву {next_letter_for_astra.upper()}. Ты победил! 🎉"
+            ans = f"Ого! Я не знаю больше городов на букву {next_letter_for_akira.upper()}. Ты победил! 🎉"
             return {"chat": ans, "voice": ans, "emotion": "surprise", "followup": False}
 
-        astra_chosen = random.choice(available_cities)
-        self.used_cities.add(astra_chosen)
-        self.last_astra_city = self.original_names.get(astra_chosen, astra_chosen.title())
-        self.current_letter = self._get_target_letter(astra_chosen)
+        akira_chosen = random.choice(available_cities)
+        self.used_cities.add(akira_chosen)
+        self.last_akira_city = self.original_names.get(akira_chosen, akira_chosen.title())
+        self.current_letter = self._get_target_letter(akira_chosen)
 
-        ans = f"{self.last_astra_city}! Тебе на букву {self.current_letter.upper()}."
+        ans = f"{self.last_akira_city}! Тебе на букву {self.current_letter.upper()}."
         return {
             "chat": ans,
             "voice": ans,

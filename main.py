@@ -38,13 +38,13 @@ os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QIcon
 from core.utils.config import load_config
-from gui.chat_window import MainWindow
-from gui.tray import SystemTray
-from gui.onboarding_wizard import OnboardingWizard
+from gui.windows.chat_window import MainWindow
+from gui.components.tray import SystemTray
+from gui.dialogs.onboarding_wizard import OnboardingWizard
 
 def get_ico_path():
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    ico_path = os.path.join(base_dir, "assets", "icon", "ico", "icon_round.ico")
+    ico_path = os.path.join(base_dir, "assets", "icon", "ico", "akira_icon.ico")
     if os.path.exists(ico_path):
         return os.path.abspath(ico_path)
     fallback_ico = os.path.join(base_dir, "assets", "icon", "icon.ico")
@@ -86,15 +86,15 @@ def apply_native_windows_icon(hwnd, icon_path):
             ctypes.windll.user32.SetClassLongW(hwnd, gclp_hiconsm, h_icon_small)
 
 def main():
-    myappid = 'svetozar.astra.voiceassistant.3.0.0'
+    myappid = 'svetozar.akira.voiceassistant.4.0.0'
     try:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
     except Exception:
         pass
 
     app = QApplication(sys.argv)
-    app.setApplicationName("Astra")
-    app.setApplicationDisplayName("Astra")
+    app.setApplicationName("Akira")
+    app.setApplicationDisplayName("Akira")
     app.setQuitOnLastWindowClosed(False)
 
     ico_path = get_ico_path()
@@ -106,7 +106,7 @@ def main():
     is_first_run = config.get("first_run", True) and not config.get("is_configured", False)
     if is_first_run:
         wizard = OnboardingWizard(config)
-        wizard.setWindowTitle("Astra")
+        wizard.setWindowTitle("Akira")
         wizard.setWindowIcon(app_icon)
 
         wizard_hwnd = int(wizard.winId())
@@ -116,7 +116,7 @@ def main():
         config = load_config()
 
     window = MainWindow(config)
-    window.setWindowTitle("Astra")
+    window.setWindowTitle("Akira")
     window.setWindowIcon(app_icon)
 
     hwnd = int(window.winId())

@@ -6,7 +6,7 @@ import time
 import winreg
 import re
 import spotipy
-from spotipy.oauth2 import SpotifyOAuth
+from spotipy.oauth2 import SpotifyPKCE
 from core.utils.config import load_config, get_user_data_path
 
 
@@ -23,34 +23,52 @@ class SpotifyManager:
         )
         self.device_id = None
 
-    def _load_credentials(self):
+    def _load_client_id(self):
         cfg = load_config()
-        api_keys = cfg.get("api_keys", {})
-        client_id = api_keys.get("spotify_client_id", "")
-        client_secret = api_keys.get("spotify_client_secret", "")
-        return client_id, client_secret
+        return cfg.get("api_keys", {}).get("spotify_client_id", "").strip()
+
+    def is_authenticated(self):
+        cache_path = get_user_data_path(".spotify_cache")
+        if not os.path.exists(cache_path):
+            return False
+        client_id = self._load_client_id()
+        if not client_id:
+            return False
+        try:
+            auth_manager = SpotifyPKCE(
+                client_id=client_id,
+                redirect_uri="http://127.0.0.1:8888/callback",
+                scope=self.scope,
+                cache_path=cache_path,
+                open_browser=False
+            )
+            return auth_manager.get_cached_token() is not None
+        except Exception:
+            return False
 
     def _init_client(self):
         if self.sp is not None:
             return True
 
-        client_id, client_secret = self._load_credentials()
-        if not client_id or not client_secret:
+        client_id = self._load_client_id()
+        if not client_id:
             return False
 
         cache_path = get_user_data_path(".spotify_cache")
 
         try:
-            auth_manager = SpotifyOAuth(
+            auth_manager = SpotifyPKCE(
                 client_id=client_id,
-                client_secret=client_secret,
                 redirect_uri="http://127.0.0.1:8888/callback",
                 scope=self.scope,
                 cache_path=cache_path,
-                open_browser=True
+                open_browser=False
             )
-            self.sp = spotipy.Spotify(auth_manager=auth_manager)
-            return True
+            token = auth_manager.get_access_token()
+            if token:
+                self.sp = spotipy.Spotify(auth_manager=auth_manager)
+                return True
+            return False
         except Exception as e:
             print(f"[Spotify Init Error]: {e}")
             return False
@@ -158,8 +176,8 @@ class SpotifyManager:
         return False
 
     def play_query(self, query):
-        if not self._load_credentials()[0]:
-            return "Укажи client_id и client_secret для Spotify в настройках"
+        if not self._load_client_id():
+            return "Подключи Spotify в настройках Акиры"
 
         if not self._is_spotify_installed():
             return "Прости, я не нашла на твоем ПК Спотик! Установи приложение, и я сразу включу музыку."
@@ -192,8 +210,8 @@ class SpotifyManager:
         return f"Включаю {display_name} в Spotify"
 
     def play_my_wave(self):
-        if not self._load_credentials()[0]:
-            return "Укажи client_id и client_secret для Spotify в настройках"
+        if not self._load_client_id():
+            return "Подключи Spotify в настройках Акиры"
 
         if not self._is_spotify_installed():
             return "Прости, я не нашла на твоем ПК Спотик! Установи приложение, и я сразу включу музыку."

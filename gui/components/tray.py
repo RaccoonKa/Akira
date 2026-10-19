@@ -7,8 +7,8 @@ from PyQt6.QtGui import QAction, QIcon, QPixmap
 class SystemTray(QSystemTrayIcon):
     def __init__(self, window, app):
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        ico_path = os.path.join(base_dir, "assets", "icon", "ico", "icon_round.ico")
-        png_path = os.path.join(base_dir, "assets", "icon", "icon_round.png")
+        ico_path = os.path.join(base_dir, "assets", "icon", "ico", "akira_icon.ico")
+        png_path = os.path.join(base_dir, "assets", "icon", "akira_icon.png")
 
         tray_icon = QIcon()
         if os.path.exists(ico_path):
@@ -21,7 +21,7 @@ class SystemTray(QSystemTrayIcon):
         super().__init__(tray_icon, parent=window)
         self.window = window
         self.app = app
-        self.setToolTip("Astra")
+        self.setToolTip("Akira")
         self.init_menu()
 
     def init_menu(self):

@@ -52,13 +52,13 @@ class VisionThread(QThread):
             if self.frame_counter % 30 == 0:
                 self._update_modules_config()
 
-            is_astra_busy = False
+            is_akira_busy = False
             main_win = self.parent()
             if main_win and hasattr(main_win, 'tts_thread'):
                 if main_win.tts_thread.isRunning():
-                    is_astra_busy = True
+                    is_akira_busy = True
 
-            if is_astra_busy:
+            if is_akira_busy:
                 if cap is not None and cap.isOpened():
                     cap.read()
                 self.msleep(100)

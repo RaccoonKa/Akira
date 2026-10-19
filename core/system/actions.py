@@ -1,18 +1,20 @@
 import os
+import time
 import subprocess
 import webbrowser
 import datetime
 import psutil
 import re
 import ctypes
-import urllib.parse
+import json
 import random
+import requests
 from PIL import ImageGrab
 import pyautogui
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from comtypes import CLSCTX_ALL, CoInitialize
 
-from core.utils.config import load_config, get_user_data_path
+from core.utils.config import get_resource_path, load_config, save_config, get_user_data_path
 from services.wikipedia.wikipedia_manager import WikipediaManager
 from services.yandex.yandex_music_manager import YandexMusicManager
 from services.google.youtube_manager import YouTubeManager
@@ -20,6 +22,8 @@ from services.spotify.spotify_manager import SpotifyManager
 from services.zapret.zapret import ZapretManager
 from services.vpn.vpn_manager import VpnManager
 from services.yandex.smart_home_manager import SmartHomeManager
+from services.torrent.vlc_player import vlc_player
+
 
 pyautogui.FAILSAFE = False
 
@@ -255,6 +259,7 @@ def to_prepositional(name):
     prep_word = "во" if result_name.lower().startswith(("в", "ф")) else "в"
     return f"{prep_word} {result_name}"
 
+
 def transliterate_city(text):
     if not text:
         return ""
@@ -267,6 +272,56 @@ def transliterate_city(text):
     }
     return "".join(translit_map.get(ch, ch) for ch in text.lower()).title()
 
+def get_city_from_system_timezone():
+    tz_map = {}
+    try:
+        json_path = get_resource_path("core", "utils", "timezones.json")
+        if os.path.exists(json_path):
+            with open(json_path, "r", encoding="utf-8") as f:
+                tz_map = json.load(f)
+    except Exception:
+        pass
+
+    try:
+        import winreg
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\TimeZoneInformation")
+        tz_name, _ = winreg.QueryValueEx(key, "TimeZoneKeyName")
+        winreg.CloseKey(key)
+        if tz_name in tz_map:
+            return tz_map[tz_name]
+    except Exception:
+        pass
+
+    return "Москва"
+
+
+def get_current_user_city():
+    cfg = load_config()
+
+    cached_city = cfg.get("auto_detected_city")
+    if cached_city:
+        return cached_city
+
+    system_fallback_city = get_city_from_system_timezone()
+
+    try:
+        res = requests.get("http://ip-api.com/json/?lang=ru&fields=status,country,city,timezone", timeout=1.5)
+        if res.status_code == 200:
+            data = res.json()
+            if data.get("status") == "success":
+                ip_city = data.get("city")
+                ip_tz = data.get("timezone", "")
+
+                local_tz_name = time.tzname[0] if time.tzname else ""
+
+                if ip_city:
+                    cfg["auto_detected_city"] = ip_city
+                    save_config(cfg)
+                    return ip_city
+    except Exception:
+        pass
+
+    return system_fallback_city
 
 class SystemActions:
     @staticmethod
@@ -307,7 +362,8 @@ class SystemActions:
             r'\bмузык(?:а|у|и|ой|е)?\b', r'\bмузл(?:о|а|у|ом)?\b',
             r'\bмне\b', r'\bнам\b', r'\bпожалуйста\b', r'\bбыстро\b',
             r'\bгрупп(?:а|у|ы|ой|е)\b', r'\bальбом(?:а|у|ом|е)?\b',
-            r'\bисполнител(?:ь|я|ю|ем|е)\b', r'\bастра\b', r'\bастру\b', r'\bастро\b'
+            r'\bисполнител(?:ь|я|ю|ем|е)\b',
+            r'\bакира\b', r'\bакиру\b', r'\bакиро\b', r'\bакире\b', r'\bаки\b'
         ]
         for sw in stop_words:
             query_low = re.sub(sw, '', query_low, flags=re.IGNORECASE)
@@ -394,7 +450,7 @@ class SystemActions:
             "поищи в википедии", "википедия", "расскажи про", "расскажи о",
             "дай определение", "скажи определение", "значение слова",
             "определение слова", "определение понятия", "что значит",
-            "объясни термин", "астра", "скажи"
+            "объясни термин", "акира", "скажи"
         ]
         query = text.lower()
         for word in stop_words:
@@ -460,7 +516,7 @@ class SystemActions:
             return "Не удалось запустить Мою волну"
 
         res = ym_manager.play_query(query)
-        if "VLC Player" in res or "токен" in res:
+        if "VLC Player" in res or "токен" in res or "сайт" in res:
             return res
 
         return random.choice([
@@ -473,6 +529,13 @@ class SystemActions:
         ym_manager.stop()
         spotify_manager.stop()
         return "Выключаю музыку"
+
+    @staticmethod
+    def stop_movie(text=""):
+        if vlc_player.is_playing():
+            vlc_player.stop()
+            return "Фильм выключен"
+        return "Плеер не запущен"
 
     @staticmethod
     def like_yandex_track(text=""):
@@ -574,12 +637,15 @@ class SystemActions:
 
     @staticmethod
     def media_play_pause():
+        if vlc_player.is_playing():
+            vlc_player.toggle_pause()
+            return ""
         if _is_spotify_active():
             spotify_manager.toggle_pause()
         elif ym_manager.player and ym_manager.player.is_playing():
             ym_manager.toggle_pause()
         else:
-            pyautogui.press('k')
+            pyautogui.press('space')
         return ""
 
     @staticmethod
@@ -594,7 +660,10 @@ class SystemActions:
 
     @staticmethod
     def toggle_fullscreen(text=""):
-        pyautogui.press('f')
+        if vlc_player.is_playing():
+            vlc_player.toggle_fullscreen()
+        else:
+            pyautogui.press('f')
         return "Разворачиваю"
 
     @staticmethod
@@ -770,30 +839,18 @@ class SystemActions:
         return "Включаю звук"
 
     @staticmethod
-    def play_hdrezka(text="", slots=None):
-        query = None
-        if slots and "movie_or_show" in slots:
-            query = slots["movie_or_show"]
+    def seek_media(direction: str = "forward", seconds: int = 10):
+        if vlc_player.is_playing():
+            vlc_player.seek(direction, seconds)
+        else:
+            presses = max(1, round(seconds / 10))
+            key = "right" if direction == "forward" else "left"
+            for _ in range(presses):
+                pyautogui.press(key)
+                time.sleep(0.04)
 
-        if not query:
-            stop_words = ["включи", "поставь", "найди", "покажи", "открой", "сериал", "фильм", "мультик", "аниме",
-                          "мне", "на хдрезке", "на резке", "на hdrezka"]
-            query = text.lower()
-            for word in stop_words:
-                query = query.replace(word, "")
-            query = query.strip()
-
-        cfg = load_config()
-        domain = cfg.get("hdrezka_domain", "https://ru1.hdreskaz.top").rstrip("/")
-
-        if not query:
-            webbrowser.open(domain)
-            return "Открываю HDRezka"
-
-        encoded_query = urllib.parse.quote(query)
-        search_url = f"{domain}/search/?q={encoded_query}"
-        webbrowser.open(search_url)
-        return f"Ищу {query}"
+        action_word = "вперёд" if direction == "forward" else "назад"
+        return f"Перемотала на {seconds} сек. {action_word}"
 
     @staticmethod
     def play_youtube(text="", slots=None):
@@ -888,12 +945,11 @@ class SystemActions:
 
     @staticmethod
     def get_weather(text="", slots=None):
-        cfg = load_config()
-        api_key = cfg.get("api_keys", {}).get("weather", "")
-        default_city = cfg.get("city") or cfg.get("weather_city", "Москва")
+        import requests
+        import urllib.parse
 
-        if not api_key:
-            return "Укажи ключ погоды в настройках"
+        cfg = load_config()
+        default_city = cfg.get("city") or get_current_user_city()
 
         city_aliases = {
             "мск": "Москва",
@@ -920,7 +976,8 @@ class SystemActions:
             "окно", "окном", "за окном", "снаружи", "тут", "здесь", "дома", "доме",
             "город", "городе", "сейчас", "сегодня", "завтра", "неделю", "неделе",
             "неделя", "выходные", "выходных", "градус", "градусов", "градуса",
-            "погода", "погоду", "погоде", "температура", "температуру", "небо", "небе"
+            "погода", "погоду", "погоде", "температура", "температуру", "небо", "небе",
+            "аки", "акира", "акиру", "акире", "акирой", "акиро"
         }
 
         city_raw = None
@@ -932,14 +989,13 @@ class SystemActions:
 
         if not city_raw and text:
             text_clean = re.sub(r'[^\w\s-]', '', text.lower())
-
             match = re.search(r'\b(?:в|во|на)\s+([а-яёa-z\s-]+)', text_clean)
             if match:
                 possible_city = match.group(1).strip()
                 junk_patterns = [
                     "сейчас", "сегодня", "завтра", "на неделю", "пожалуйста", "градусов",
-                    "погода", "погоду", "астра", "скажи", "улице", "улица", "дворе",
-                    "воля", "воле", "на воле", "свободе", "свобода"
+                    "погода", "погоду", "акира", "аки", "акиру", "акире", "скажи",
+                    "улице", "улица", "дворе", "воля", "воле", "на воле", "свободе", "свобода"
                 ]
                 for j in junk_patterns:
                     possible_city = re.sub(r'\b' + j + r'\b', '', possible_city).strip()
@@ -950,7 +1006,8 @@ class SystemActions:
                 stop_words = [
                     "какая", "какой", "погода", "погоду", "погоде", "сейчас",
                     "сегодня", "завтра", "город", "городе", "температура",
-                    "градусов", "астра", "скажи", "покажи", "узнай", "улица", "улице"
+                    "градусов", "акира", "аки", "акиру", "акире", "акирой",
+                    "скажи", "покажи", "узнай", "улица", "улице"
                 ]
                 words = [w for w in re.findall(r'[а-яёa-z]+', text_clean) if
                          w not in stop_words and w not in weather_junk]
@@ -967,101 +1024,92 @@ class SystemActions:
         if city_key in city_aliases:
             city_raw = city_aliases[city_key]
 
-        words = city_raw.split()
-        if not words:
-            words = [default_city]
+        wmo_codes = {
+            0: "ясно",
+            1: "преимущественно ясно",
+            2: "переменная облачность",
+            3: "пасмурно",
+            45: "туман",
+            48: "изморозь",
+            51: "легкая морось",
+            53: "моросящий дождь",
+            55: "плотная морось",
+            56: "ледяная морось",
+            57: "сильная ледяная морось",
+            61: "небольшой дождь",
+            63: "умеренный дождь",
+            65: "сильный дождь",
+            66: "слабый ледяной дождь",
+            67: "сильный ледяной дождь",
+            71: "небольшой снег",
+            73: "снегопад",
+            75: "сильный снегопад",
+            77: "снежные зерна",
+            80: "кратковременный дождь",
+            81: "ливень",
+            82: "сильный ливень",
+            85: "снежный заряд",
+            86: "сильный снежный заряд",
+            95: "гроза",
+            96: "гроза с небольшим градом",
+            99: "гроза с сильным градом"
+        }
 
-        last = words[-1]
-        last_candidates = []
-        if last.endswith("е"):
-            last_candidates.extend([last[:-1], last[:-1] + "а", last])
-        elif last.endswith("и"):
-            last_candidates.extend([last[:-1], last[:-1] + "ь", last[:-1] + "я", last])
-        elif last.endswith("у"):
-            last_candidates.extend([last[:-1] + "а", last[:-1], last])
-        else:
-            last_candidates.append(last)
+        temp = None
+        desc = ""
+        display_city_name = city_raw.title()
 
-        prefix = " ".join(words[:-1])
-        if prefix:
-            prefix += " "
+        try:
+            geo_res = requests.get(
+                "https://geocoding-api.open-meteo.com/v1/search",
+                params={"name": city_raw, "count": 1, "language": "ru", "format": "json"},
+                timeout=3.5
+            )
+            if geo_res.status_code == 200 and geo_res.json().get("results"):
+                best_geo = geo_res.json()["results"][0]
+                lat = best_geo["latitude"]
+                lon = best_geo["longitude"]
+                display_city_name = best_geo.get("name", display_city_name)
 
-        candidate_cities = []
-        for cand_last in last_candidates:
-            full_name = (prefix + cand_last).strip().title()
-            if full_name not in candidate_cities:
-                candidate_cities.append(full_name)
-            if " " in full_name:
-                dash_name = full_name.replace(" ", "-")
-                if dash_name not in candidate_cities:
-                    candidate_cities.append(dash_name)
+                weather_res = requests.get(
+                    "https://api.open-meteo.com/v1/forecast",
+                    params={
+                        "latitude": lat,
+                        "longitude": lon,
+                        "current": ["temperature_2m", "weather_code"],
+                        "timezone": "auto"
+                    },
+                    timeout=3.5
+                )
+                if weather_res.status_code == 200:
+                    current_data = weather_res.json().get("current", {})
+                    temp = round(current_data.get("temperature_2m", 0))
+                    code = current_data.get("weather_code", 0)
+                    desc = wmo_codes.get(code, "без осадков")
+        except Exception:
+            temp = None
 
-        import requests
-
-        weather_data = None
-        display_city_name = candidate_cities[0] if candidate_cities else city_raw.title()
-
-        for cand in candidate_cities:
+        if temp is None:
             try:
-                geo_url = "https://api.openweathermap.org/geo/1.0/direct"
-                geo_params = {"q": f"{cand},RU", "limit": 1, "appid": api_key}
-                geo_res = requests.get(geo_url, params=geo_params, timeout=3)
-                if geo_res.status_code != 200 or not geo_res.json():
-                    geo_params = {"q": cand, "limit": 1, "appid": api_key}
-                    geo_res = requests.get(geo_url, params=geo_params, timeout=3)
-
-                if geo_res.status_code == 200 and geo_res.json():
-                    geo_info = geo_res.json()[0]
-                    lat = geo_info["lat"]
-                    lon = geo_info["lon"]
-                    local_names = geo_info.get("local_names", {})
-                    display_city_name = local_names.get("ru", cand)
-
-                    w_url = "https://api.openweathermap.org/data/2.5/weather"
-                    w_params = {
-                        "lat": lat,
-                        "lon": lon,
-                        "appid": api_key,
-                        "units": "metric",
-                        "lang": "ru"
-                    }
-                    w_res = requests.get(w_url, params=w_params, timeout=3)
-                    if w_res.status_code == 200:
-                        weather_data = w_res.json()
-                        break
-                elif geo_res.status_code == 401:
-                    return "Ключ погоды еще активируется, подожди пару минут"
+                encoded_city = urllib.parse.quote(city_raw)
+                wttr_res = requests.get(
+                    f"https://wttr.in/{encoded_city}?format=j1",
+                    headers={"Accept-Language": "ru"},
+                    timeout=4.0
+                )
+                if wttr_res.status_code == 200:
+                    data = wttr_res.json()
+                    curr = data["current_condition"][0]
+                    temp = round(float(curr["temp_C"]))
+                    ru_desc_list = curr.get("lang_ru")
+                    if ru_desc_list:
+                        desc = ru_desc_list[0]["value"].lower()
+                    else:
+                        desc = curr.get("weatherDesc", [{}])[0].get("value", "").lower()
             except Exception:
-                pass
+                temp = None
 
-        if not weather_data:
-            url = "https://api.openweathermap.org/data/2.5/weather"
-            extended_queries = []
-            for cand in candidate_cities:
-                trans = transliterate_city(cand)
-                extended_queries.extend([f"{trans},RU", trans, f"{cand},RU", cand])
-
-            for q_name in extended_queries:
-                params = {
-                    "q": q_name,
-                    "appid": api_key,
-                    "units": "metric",
-                    "lang": "ru"
-                }
-                try:
-                    res = requests.get(url, params=params, timeout=3)
-                    if res.status_code == 200:
-                        weather_data = res.json()
-                        break
-                    elif res.status_code == 401:
-                        return "Ключ погоды еще активируется, подожди пару минут"
-                except Exception:
-                    pass
-
-        if weather_data:
-            temp = round(weather_data["main"]["temp"])
-            desc = weather_data["weather"][0]["description"]
-
+        if temp is not None:
             temp_abs = abs(temp)
             temp_word = number_to_words(temp_abs)
 
@@ -1078,4 +1126,4 @@ class SystemActions:
             return f"Сейчас {location_phrase} {sign}{temp_word} {deg_word}, {desc}"
 
         display_city = city_raw.title()
-        return f"Не удалось найти локацию {display_city}"
+        return f"Не удалось узнать погоду для города {display_city}"

@@ -7,7 +7,7 @@ class WikipediaManager:
         self.lang = lang
         self.session = requests.Session()
         self.session.headers.update({
-            "User-Agent": "AstraVoiceAssistant/1.0 (https://github.com; contact@astra.local)"
+            "User-Agent": "AkiraVoiceAssistant/4.0.0 (https://github.com; contact@akira.local)"
         })
         self.api_url = f"https://{self.lang}.wikipedia.org/w/api.php"
 
