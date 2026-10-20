@@ -730,6 +730,20 @@ class CommandParser:
             return {"user_display": user_display, "chat": ans, "voice": ans, "emotion": "happy",
                     "is_whisper": is_whisper}
 
+        city_change_triggers = [
+            "смени город", "поменяй город", "установи город",
+            "мой город теперь", "мой город", "я переехал в", "я переехала в"
+        ]
+        if any(t in text_low for t in city_change_triggers):
+            res_city = SystemActions.set_city(text)
+            return {
+                "user_display": user_display,
+                "chat": res_city,
+                "voice": res_city,
+                "emotion": "happy",
+                "is_whisper": is_whisper
+            }
+
         if self.reminder_manager.is_ringing:
             stop_triggers = ["стоп", "хватит", "выключи", "заткнись", "отключи", "тихо", "молчи", "выруби"]
             snooze_triggers = ["отложи", "еще пять минут", "ещё пять минут", "позже", "дай поспать", "перенеси"]

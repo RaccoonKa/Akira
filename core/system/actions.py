@@ -11,6 +11,21 @@ import random
 import requests
 from PIL import ImageGrab
 import pyautogui
+
+import certifi
+
+try:
+    os.environ.setdefault('REQUESTS_CA_BUNDLE', certifi.where())
+    os.environ.setdefault('SSL_CERT_FILE', certifi.where())
+except Exception:
+    pass
+
+weather_session = requests.Session()
+weather_session.headers.update({
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "application/json"
+})
+
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from comtypes import CLSCTX_ALL, CoInitialize
 
@@ -298,30 +313,35 @@ def get_city_from_system_timezone():
 def get_current_user_city():
     cfg = load_config()
 
-    cached_city = cfg.get("auto_detected_city")
-    if cached_city:
-        return cached_city
+    manual_city = cfg.get("city")
+    if manual_city:
+        return manual_city
 
-    system_fallback_city = get_city_from_system_timezone()
+    system_fallback = get_city_from_system_timezone()
 
     try:
-        res = requests.get("http://ip-api.com/json/?lang=ru&fields=status,country,city,timezone", timeout=1.5)
+        res = requests.get("http://ip-api.com/json/?lang=ru&fields=status,query,city", timeout=1.5)
         if res.status_code == 200:
             data = res.json()
             if data.get("status") == "success":
+                current_ip = data.get("query")
                 ip_city = data.get("city")
-                ip_tz = data.get("timezone", "")
 
-                local_tz_name = time.tzname[0] if time.tzname else ""
+                cached_ip = cfg.get("last_network_ip")
+                cached_city = cfg.get("auto_detected_city")
+
+                if current_ip == cached_ip and cached_city:
+                    return cached_city
 
                 if ip_city:
+                    cfg["last_network_ip"] = current_ip
                     cfg["auto_detected_city"] = ip_city
                     save_config(cfg)
                     return ip_city
     except Exception:
         pass
 
-    return system_fallback_city
+    return cfg.get("auto_detected_city") or system_fallback
 
 class SystemActions:
     @staticmethod
@@ -369,6 +389,31 @@ class SystemActions:
             query_low = re.sub(sw, '', query_low, flags=re.IGNORECASE)
 
         return re.sub(r'\s+', ' ', query_low).strip()
+
+    @staticmethod
+    def set_city(text="", slots=None):
+        clean_text = re.sub(r'[^\w\s-]', '', text.lower())
+
+        match = re.search(r'\b(?:город\s+на|в|теперь)\s+([а-яёa-z\s-]+)', clean_text)
+        if match:
+            new_city = match.group(1).strip()
+        else:
+            stop_words = ["смени", "поменяй", "установи", "город", "мой", "теперь", "я", "переехал", "акира", "аки"]
+            words = [w for w in clean_text.split() if w not in stop_words]
+            new_city = words[-1] if words else ""
+
+        if not new_city or len(new_city) < 2:
+            return "Не расслышала название города. Назови его ещё раз, например: 'Смени город на Москву'."
+
+        new_city_title = clean_city_display_name(new_city).title()
+
+        cfg = load_config()
+        cfg["city"] = new_city_title
+        cfg["auto_detected_city"] = new_city_title
+        save_config(cfg)
+
+        prep = to_prepositional(new_city_title)
+        return f"Запомнила! Твой город теперь — {new_city_title}. Буду узнавать погоду {prep} ✨"
 
     @staticmethod
     def handle_gesture(gesture_name):
@@ -945,7 +990,6 @@ class SystemActions:
 
     @staticmethod
     def get_weather(text="", slots=None):
-        import requests
         import urllib.parse
 
         cfg = load_config()
@@ -1025,53 +1069,47 @@ class SystemActions:
             city_raw = city_aliases[city_key]
 
         wmo_codes = {
-            0: "ясно",
-            1: "преимущественно ясно",
-            2: "переменная облачность",
-            3: "пасмурно",
-            45: "туман",
-            48: "изморозь",
-            51: "легкая морось",
-            53: "моросящий дождь",
-            55: "плотная морось",
-            56: "ледяная морось",
-            57: "сильная ледяная морось",
-            61: "небольшой дождь",
-            63: "умеренный дождь",
-            65: "сильный дождь",
-            66: "слабый ледяной дождь",
-            67: "сильный ледяной дождь",
-            71: "небольшой снег",
-            73: "снегопад",
-            75: "сильный снегопад",
-            77: "снежные зерна",
-            80: "кратковременный дождь",
-            81: "ливень",
-            82: "сильный ливень",
-            85: "снежный заряд",
-            86: "сильный снежный заряд",
-            95: "гроза",
-            96: "гроза с небольшим градом",
-            99: "гроза с сильным градом"
+            0: "ясно", 1: "преимущественно ясно", 2: "переменная облачность", 3: "пасмурно",
+            45: "туман", 48: "изморозь", 51: "легкая морось", 53: "моросящий дождь",
+            55: "плотная морось", 56: "ледяная морось", 57: "сильная ледяная морось",
+            61: "небольшой дождь", 63: "умеренный дождь", 65: "сильный дождь",
+            66: "слабый ледяной дождь", 67: "сильный ледяной дождь", 71: "небольшой снег",
+            73: "снегопад", 75: "сильный снегопад", 77: "снежные зерна",
+            80: "кратковременный дождь", 81: "ливень", 82: "сильный ливень",
+            85: "снежный заряд", 86: "сильный снежный заряд", 95: "гроза",
+            96: "гроза с небольшим градом", 99: "гроза с сильным градом"
         }
 
         temp = None
         desc = ""
         display_city_name = city_raw.title()
 
-        try:
-            geo_res = requests.get(
-                "https://geocoding-api.open-meteo.com/v1/search",
-                params={"name": city_raw, "count": 1, "language": "ru", "format": "json"},
-                timeout=3.5
-            )
-            if geo_res.status_code == 200 and geo_res.json().get("results"):
-                best_geo = geo_res.json()["results"][0]
-                lat = best_geo["latitude"]
-                lon = best_geo["longitude"]
-                display_city_name = best_geo.get("name", display_city_name)
+        lat, lon = None, None
+        cached_coords = cfg.get("city_coords", {})
+        if city_raw.lower() == default_city.lower() and "lat" in cached_coords and "lon" in cached_coords:
+            lat = cached_coords["lat"]
+            lon = cached_coords["lon"]
+            display_city_name = cached_coords.get("name", display_city_name)
 
-                weather_res = requests.get(
+        try:
+            if lat is None or lon is None:
+                geo_res = weather_session.get(
+                    "https://geocoding-api.open-meteo.com/v1/search",
+                    params={"name": city_raw, "count": 1, "language": "ru", "format": "json"},
+                    timeout=2.5
+                )
+                if geo_res.status_code == 200 and geo_res.json().get("results"):
+                    best_geo = geo_res.json()["results"][0]
+                    lat = best_geo["latitude"]
+                    lon = best_geo["longitude"]
+                    display_city_name = best_geo.get("name", display_city_name)
+
+                    if city_raw.lower() == default_city.lower():
+                        cfg["city_coords"] = {"lat": lat, "lon": lon, "name": display_city_name}
+                        save_config(cfg)
+
+            if lat is not None and lon is not None:
+                weather_res = weather_session.get(
                     "https://api.open-meteo.com/v1/forecast",
                     params={
                         "latitude": lat,
@@ -1079,23 +1117,24 @@ class SystemActions:
                         "current": ["temperature_2m", "weather_code"],
                         "timezone": "auto"
                     },
-                    timeout=3.5
+                    timeout=2.5
                 )
                 if weather_res.status_code == 200:
                     current_data = weather_res.json().get("current", {})
                     temp = round(current_data.get("temperature_2m", 0))
                     code = current_data.get("weather_code", 0)
                     desc = wmo_codes.get(code, "без осадков")
-        except Exception:
+        except Exception as e:
+            print(f"[Weather Open-Meteo Error]: {e}", flush=True)
             temp = None
 
         if temp is None:
             try:
                 encoded_city = urllib.parse.quote(city_raw)
-                wttr_res = requests.get(
+                wttr_res = weather_session.get(
                     f"https://wttr.in/{encoded_city}?format=j1",
                     headers={"Accept-Language": "ru"},
-                    timeout=4.0
+                    timeout=3.0
                 )
                 if wttr_res.status_code == 200:
                     data = wttr_res.json()
@@ -1106,7 +1145,8 @@ class SystemActions:
                         desc = ru_desc_list[0]["value"].lower()
                     else:
                         desc = curr.get("weatherDesc", [{}])[0].get("value", "").lower()
-            except Exception:
+            except Exception as e:
+                print(f"[Weather Wttr Error]: {e}", flush=True)
                 temp = None
 
         if temp is not None:
