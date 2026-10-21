@@ -39,7 +39,6 @@ from services.vpn.vpn_manager import VpnManager
 from services.yandex.smart_home_manager import SmartHomeManager
 from services.torrent.vlc_player import vlc_player
 
-
 pyautogui.FAILSAFE = False
 
 wiki_manager = WikipediaManager()
@@ -116,6 +115,63 @@ def number_to_words(n):
     elif n == 100:
         return "сто"
     return str(n)
+
+
+def num_to_genitive(n):
+    n = int(abs(n))
+    gen_units = {
+        0: "ноля", 1: "одного", 2: "двух", 3: "трёх", 4: "четырёх",
+        5: "пяти", 6: "шести", 7: "семи", 8: "восьми", 9: "девяти"
+    }
+    gen_teens = {
+        10: "десяти", 11: "одиннадцати", 12: "двенадцати", 13: "тринадцати",
+        14: "четырнадцати", 15: "пятнадцати", 16: "шестнадцати",
+        17: "семнадцати", 18: "восемнадцати", 19: "девятнадцати"
+    }
+    gen_tens = {
+        20: "двадцати", 30: "тридцати", 40: "сорока", 50: "пятидесяти"
+    }
+    if n in gen_units:
+        return gen_units[n]
+    if n in gen_teens:
+        return gen_teens[n]
+    if n in gen_tens:
+        return gen_tens[n]
+    if 21 <= n <= 59:
+        t = (n // 10) * 10
+        u = n % 10
+        if u == 0:
+            return gen_tens.get(t, str(t))
+        return f"{gen_tens.get(t, '')} {gen_units.get(u, '')}".strip()
+    return str(n)
+
+
+def format_temp_spoken(t):
+    sign = "минус " if t < 0 else ("плюс " if t > 0 else "")
+    abs_t = abs(t)
+    t_word = number_to_words(abs_t)
+    if abs_t % 10 == 1 and abs_t % 100 != 11:
+        deg = "градус"
+    elif abs_t % 10 in [2, 3, 4] and abs_t % 100 not in [12, 13, 14]:
+        deg = "градуса"
+    else:
+        deg = "градусов"
+    return f"{sign}{t_word} {deg}".strip()
+
+
+def format_temp_range_spoken(t_min, t_max):
+    if t_min == t_max:
+        return format_temp_spoken(t_max)
+    sign_min = "минус " if t_min < 0 else ("плюс " if t_min > 0 else "")
+    sign_max = "минус " if t_max < 0 else ("плюс " if t_max > 0 else "")
+    w_min = num_to_genitive(abs(t_min))
+    w_max = num_to_genitive(abs(t_max))
+    abs_max = abs(t_max)
+    if abs_max % 10 == 1 and abs_max % 100 != 11:
+        deg = "градуса"
+    else:
+        deg = "градусов"
+    return f"от {sign_min}{w_min} до {sign_max}{w_max} {deg}"
 
 
 def time_to_words(hours, minutes):
@@ -287,6 +343,7 @@ def transliterate_city(text):
     }
     return "".join(translit_map.get(ch, ch) for ch in text.lower()).title()
 
+
 def get_city_from_system_timezone():
     tz_map = {}
     try:
@@ -342,6 +399,7 @@ def get_current_user_city():
         pass
 
     return cfg.get("auto_detected_city") or system_fallback
+
 
 class SystemActions:
     @staticmethod
@@ -989,39 +1047,92 @@ class SystemActions:
         return zapret_manager.stop()
 
     @staticmethod
+    def _get_caring_tip_and_emotion(temp, code):
+        rain_codes = {51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82}
+        snow_codes = {71, 73, 75, 77, 85, 86}
+        thunder_codes = {95, 96, 99}
+
+        if code in thunder_codes:
+            tips = [
+                "Надвигается гроза! Закрой окна и будь осторожен на улице ⚡",
+                "Грозовой денёк! Лучше переждать дома в уюте ⚡🛋️"
+            ]
+            return random.choice(tips), "weather_thunder"
+
+        if code in rain_codes:
+            tips = [
+                "Обязательно захвати зонтик и надень непромокаемую обувь ☔",
+                "На улице дождливо, не забудь зонт! А лучше останься дома с тёплым чаем ☕🌧️",
+                "Там мокро! Береги ноги в тепле и прихвати зонт 😉🌂"
+            ]
+            return random.choice(tips), "weather_rain"
+
+        if code in snow_codes or temp <= -5:
+            tips = [
+                "Одевайся теплее: шарф и перчатки точно не помешают ❄️🧤",
+                "На улице настоящий мороз! Застегни куртку до конца и береги уши 🧣☃️",
+                "Холодина! Не забудь шапку, здоровье важнее всего ❄️"
+            ]
+            return random.choice(tips), "weather_snow"
+
+        if code == 3:
+            tips = [
+                "Небо затянуто тучами, так что зонтик на всякий случай не помешает ☁️🌂",
+                "На улице пасмурно и серо. Одевайся уютнее и захвати зонт на всякий пожарный ☁️🧥"
+            ]
+            return random.choice(tips), "weather_cloudy"
+
+        if code in {1, 2}:
+            tips = [
+                "На улице переменная облачность, отличный баланс между солнцем и прохладой ⛅",
+                "Свежо и солнышко иногда проглядывает, хороший денёк 🌤️"
+            ]
+            return random.choice(tips), "weather_cloudy"
+
+        if temp >= 25:
+            tips = [
+                "Жарковато! Пей побольше воды, держись в тени и захвати мороженое 🍦☀️",
+                "Настоящее лето! Не забудь солнцезащитные очки 🕶️🥤"
+            ]
+            return random.choice(tips), "weather_hot"
+
+        if 0 <= temp < 10:
+            tips = [
+                "На улице зябко и свежо, накинь тёплую куртку 🧥",
+                "Довольно прохладно, одевайся по погоде и не простудись ✨"
+            ]
+            return random.choice(tips), "weather_cloudy"
+
+        tips = [
+            "Отличная ясная погода, самое время прогуляться и подышать воздухом ✨🌿",
+            "Прекрасный денёк, заряжайся позитивом 🌤️"
+        ]
+        return random.choice(tips), "happy"
+
+    @staticmethod
     def get_weather(text="", slots=None):
         import urllib.parse
+        from datetime import datetime, timedelta
 
         cfg = load_config()
         default_city = cfg.get("city") or get_current_user_city()
 
         city_aliases = {
-            "мск": "Москва",
-            "спб": "Санкт-Петербург",
-            "питер": "Санкт-Петербург",
-            "екб": "Екатеринбург",
-            "якоб": "Екатеринбург",
-            "клгд": "Калининград",
-            "колы года": "Калининград",
-            "колы гыды": "Калининград",
-            "ннов": "Нижний Новгород",
-            "нн": "Нижний Новгород",
-            "энн": "Нижний Новгород",
-            "нижний": "Нижний Новгород",
-            "сиб": "Новосибирск",
-            "себе": "Новосибирск",
-            "сибе": "Новосибирск",
-            "челяба": "Челябинск",
-            "ростов": "Ростов-на-Дону"
+            "мск": "Москва", "спб": "Санкт-Петербург", "питер": "Санкт-Петербург",
+            "екб": "Екатеринбург", "якоб": "Екатеринбург", "клгд": "Калининград",
+            "ннов": "Нижний Новгород", "нн": "Нижний Новгород", "сиб": "Новосибирск",
+            "челяба": "Челябинск", "ростов": "Ростов-на-Дону"
         }
 
         weather_junk = {
             "улица", "улице", "улицы", "улицу", "на улице", "двор", "дворе", "двора", "во дворе",
             "окно", "окном", "за окном", "снаружи", "тут", "здесь", "дома", "доме",
-            "город", "городе", "сейчас", "сегодня", "завтра", "неделю", "неделе",
-            "неделя", "выходные", "выходных", "градус", "градусов", "градуса",
+            "город", "городе", "сейчас", "сегодня", "завтра", "послезавтра", "неделю", "неделе",
+            "неделя", "выходные", "выходных", "выходным", "градус", "градусов", "градуса",
             "погода", "погоду", "погоде", "температура", "температуру", "небо", "небе",
-            "аки", "акира", "акиру", "акире", "акирой", "акиро"
+            "аки", "акира", "акиру", "акире", "акирой", "акиро",
+            "понедельник", "вторник", "среду", "среда", "четверг", "пятницу", "пятница", "субботу", "суббота",
+            "воскресенье"
         }
 
         city_raw = None
@@ -1031,15 +1142,18 @@ class SystemActions:
             if cand and cand not in weather_junk:
                 city_raw = cleaned_slot
 
-        if not city_raw and text:
-            text_clean = re.sub(r'[^\w\s-]', '', text.lower())
+        text_clean = re.sub(r'[^\w\s-]', '', text.lower()) if text else ""
+
+        if not city_raw and text_clean:
             match = re.search(r'\b(?:в|во|на)\s+([а-яёa-z\s-]+)', text_clean)
             if match:
                 possible_city = match.group(1).strip()
                 junk_patterns = [
-                    "сейчас", "сегодня", "завтра", "на неделю", "пожалуйста", "градусов",
+                    "сейчас", "сегодня", "завтра", "послезавтра", "на неделю", "пожалуйста", "градусов",
                     "погода", "погоду", "акира", "аки", "акиру", "акире", "скажи",
-                    "улице", "улица", "дворе", "воля", "воле", "на воле", "свободе", "свобода"
+                    "улице", "улица", "дворе", "выходные", "выходных",
+                    "понедельник", "вторник", "среду", "среда", "четверг", "пятницу", "пятница", "субботу", "суббота",
+                    "воскресенье"
                 ]
                 for j in junk_patterns:
                     possible_city = re.sub(r'\b' + j + r'\b', '', possible_city).strip()
@@ -1049,7 +1163,7 @@ class SystemActions:
             else:
                 stop_words = [
                     "какая", "какой", "погода", "погоду", "погоде", "сейчас",
-                    "сегодня", "завтра", "город", "городе", "температура",
+                    "сегодня", "завтра", "послезавтра", "город", "городе", "температура",
                     "градусов", "акира", "аки", "акиру", "акире", "акирой",
                     "скажи", "покажи", "узнай", "улица", "улице"
                 ]
@@ -1068,102 +1182,126 @@ class SystemActions:
         if city_key in city_aliases:
             city_raw = city_aliases[city_key]
 
-        wmo_codes = {
-            0: "ясно", 1: "преимущественно ясно", 2: "переменная облачность", 3: "пасмурно",
-            45: "туман", 48: "изморозь", 51: "легкая морось", 53: "моросящий дождь",
-            55: "плотная морось", 56: "ледяная морось", 57: "сильная ледяная морось",
-            61: "небольшой дождь", 63: "умеренный дождь", 65: "сильный дождь",
-            66: "слабый ледяной дождь", 67: "сильный ледяной дождь", 71: "небольшой снег",
-            73: "снегопад", 75: "сильный снегопад", 77: "снежные зерна",
-            80: "кратковременный дождь", 81: "ливень", 82: "сильный ливень",
-            85: "снежный заряд", 86: "сильный снежный заряд", 95: "гроза",
-            96: "гроза с небольшим градом", 99: "гроза с сильным градом"
-        }
-
-        temp = None
-        desc = ""
-        display_city_name = city_raw.title()
-
-        lat, lon = None, None
-        cached_coords = cfg.get("city_coords", {})
-        if city_raw.lower() == default_city.lower() and "lat" in cached_coords and "lon" in cached_coords:
-            lat = cached_coords["lat"]
-            lon = cached_coords["lon"]
-            display_city_name = cached_coords.get("name", display_city_name)
-
+        data = None
         try:
-            if lat is None or lon is None:
-                geo_res = weather_session.get(
-                    "https://geocoding-api.open-meteo.com/v1/search",
-                    params={"name": city_raw, "count": 1, "language": "ru", "format": "json"},
-                    timeout=2.5
-                )
-                if geo_res.status_code == 200 and geo_res.json().get("results"):
-                    best_geo = geo_res.json()["results"][0]
-                    lat = best_geo["latitude"]
-                    lon = best_geo["longitude"]
-                    display_city_name = best_geo.get("name", display_city_name)
+            encoded_city = urllib.parse.quote(city_raw)
+            res = requests.get(
+                f"http://185.79.139.120:8000/api/weather?city={encoded_city}",
+                timeout=3.0
+            )
+            if res.status_code == 200:
+                resp_json = res.json()
+                if resp_json.get("status") == "ok":
+                    data = resp_json
+        except Exception:
+            pass
 
-                    if city_raw.lower() == default_city.lower():
-                        cfg["city_coords"] = {"lat": lat, "lon": lon, "name": display_city_name}
-                        save_config(cfg)
+        if not data:
+            return f"Не удалось узнать погоду для города {city_raw.title()}"
 
-            if lat is not None and lon is not None:
-                weather_res = weather_session.get(
-                    "https://api.open-meteo.com/v1/forecast",
-                    params={
-                        "latitude": lat,
-                        "longitude": lon,
-                        "current": ["temperature_2m", "weather_code"],
-                        "timezone": "auto"
-                    },
-                    timeout=2.5
-                )
-                if weather_res.status_code == 200:
-                    current_data = weather_res.json().get("current", {})
-                    temp = round(current_data.get("temperature_2m", 0))
-                    code = current_data.get("weather_code", 0)
-                    desc = wmo_codes.get(code, "без осадков")
-        except Exception as e:
-            print(f"[Weather Open-Meteo Error]: {e}", flush=True)
-            temp = None
+        city_name = clean_city_display_name(data.get("city", city_raw.title()))
+        location_phrase = to_prepositional(city_name)
+        daily = data.get("daily", [])
 
-        if temp is None:
-            try:
-                encoded_city = urllib.parse.quote(city_raw)
-                wttr_res = weather_session.get(
-                    f"https://wttr.in/{encoded_city}?format=j1",
-                    headers={"Accept-Language": "ru"},
-                    timeout=3.0
-                )
-                if wttr_res.status_code == 200:
-                    data = wttr_res.json()
-                    curr = data["current_condition"][0]
-                    temp = round(float(curr["temp_C"]))
-                    ru_desc_list = curr.get("lang_ru")
-                    if ru_desc_list:
-                        desc = ru_desc_list[0]["value"].lower()
-                    else:
-                        desc = curr.get("weatherDesc", [{}])[0].get("value", "").lower()
-            except Exception as e:
-                print(f"[Weather Wttr Error]: {e}", flush=True)
-                temp = None
+        weekdays_map = {
+            "понедельник": 0, "понедельника": 0,
+            "вторник": 1, "вторника": 1,
+            "среду": 2, "среда": 2, "среды": 2,
+            "четверг": 3, "четверга": 3,
+            "пятницу": 4, "пятница": 4, "пятницы": 4,
+            "субботу": 5, "суббота": 5, "субботы": 5,
+            "воскресенье": 6, "воскресенья": 6
+        }
+        weekday_names = ["в понедельник", "во вторник", "в среду", "в четверг", "в пятницу", "в субботу",
+                         "в воскресенье"]
 
-        if temp is not None:
-            temp_abs = abs(temp)
-            temp_word = number_to_words(temp_abs)
+        is_weekend = any(w in text_clean for w in ["выходные", "выходных", "выходным", "уикенд"])
+        is_week = any(
+            w in text_clean for w in ["на неделю", "на всю неделю", "на 7 дней", "всю неделю", "прогноз на неделю"])
 
-            if temp_abs % 10 == 1 and temp_abs % 100 != 11:
-                deg_word = "градус"
-            elif temp_abs % 10 in [2, 3, 4] and temp_abs % 100 not in [12, 13, 14]:
-                deg_word = "градуса"
+        now_dt = datetime.now()
+        current_w = now_dt.weekday()
+
+        if is_weekend and len(daily) >= 7:
+            sat_offset = (5 - current_w) % 7
+            sun_offset = (6 - current_w) % 7
+            sat = daily[sat_offset]
+            sun = daily[sun_offset]
+
+            sat_t = sat["temp_max"]
+            sun_t = sun["temp_max"]
+            tip, emotion = SystemActions._get_caring_tip_and_emotion(max(sat_t, sun_t), sat["code"])
+
+            sat_spoken = format_temp_spoken(sat_t)
+            sun_spoken = format_temp_spoken(sun_t)
+
+            voice_ans = (
+                f"Прогноз на выходные {location_phrase}: "
+                f"в субботу {sat_spoken}, {sat['desc']}, "
+                f"а в воскресенье {sun_spoken}, {sun['desc']}. {tip}"
+            )
+            chat_ans = (
+                f"Прогноз на выходные {location_phrase}: "
+                f"в субботу {sat_t:+}°, {sat['desc']}, "
+                f"а в воскресенье {sun_t:+}°, {sun['desc']}. {tip}"
+            )
+            return {"chat": chat_ans, "voice": voice_ans, "emotion": emotion}
+
+        target_offset = None
+        for word, w_idx in weekdays_map.items():
+            if re.search(r'\b' + word + r'\b', text_clean):
+                target_offset = (w_idx - current_w) % 7
+                break
+
+        if target_offset is None:
+            if "послезавтра" in text_clean:
+                target_offset = 2
+            elif "завтра" in text_clean:
+                target_offset = 1
+
+        if target_offset is not None and target_offset < len(daily):
+            day_info = daily[target_offset]
+            t_max = day_info["temp_max"]
+            t_min = day_info["temp_min"]
+            code = day_info["code"]
+            desc = day_info["desc"]
+
+            if target_offset == 1:
+                day_prefix = "Завтра"
+            elif target_offset == 2:
+                day_prefix = "Послезавтра"
             else:
-                deg_word = "градусов"
+                day_prefix = weekday_names[(current_w + target_offset) % 7].capitalize()
 
-            sign = "минус " if temp < 0 else ""
-            display_city_name = clean_city_display_name(display_city_name)
-            location_phrase = to_prepositional(display_city_name)
-            return f"Сейчас {location_phrase} {sign}{temp_word} {deg_word}, {desc}"
+            tip, emotion = SystemActions._get_caring_tip_and_emotion(t_max, code)
+            range_spoken = format_temp_range_spoken(t_min, t_max)
 
-        display_city = city_raw.title()
-        return f"Не удалось узнать погоду для города {display_city}"
+            voice_ans = f"{day_prefix} {location_phrase} ожидается {range_spoken}, {desc}. {tip}"
+            chat_ans = f"{day_prefix} {location_phrase} ожидается от {t_min:+}° до {t_max:+}°, {desc}. {tip}"
+            return {"chat": chat_ans, "voice": voice_ans, "emotion": emotion}
+
+        if is_week and len(daily) >= 5:
+            max_temps = [d["temp_max"] for d in daily[:7] if d["temp_max"] is not None]
+            min_temps = [d["temp_min"] for d in daily[:7] if d["temp_min"] is not None]
+            has_rain = any(d["code"] in {51, 53, 55, 61, 63, 65, 80, 81} for d in daily[:7])
+
+            t_top = max(max_temps) if max_temps else 15
+            t_low = min(min_temps) if min_temps else 5
+            rain_phrase = "периодически будут дожди, держи зонт под рукой ☔" if has_rain else "в основном без осадков 🌤️"
+            tip, emotion = SystemActions._get_caring_tip_and_emotion(t_top, 61 if has_rain else 0)
+
+            range_spoken = format_temp_range_spoken(t_low, t_top)
+            voice_ans = f"На этой неделе {location_phrase} температура будет {range_spoken}, {rain_phrase}. {tip}"
+            chat_ans = f"На этой неделе {location_phrase} температура будет от {t_low:+}° до {t_top:+}°, {rain_phrase}. {tip}"
+            return {"chat": chat_ans, "voice": voice_ans, "emotion": emotion}
+
+        temp = data.get("temp", 0)
+        code = data.get("code", 0)
+        desc = data.get("desc", "ясно")
+
+        temp_spoken = format_temp_spoken(temp)
+        tip, emotion = SystemActions._get_caring_tip_and_emotion(temp, code)
+
+        voice_text = f"Сейчас {location_phrase} {temp_spoken}, {desc}. {tip}"
+        chat_text = f"Сейчас {location_phrase} {temp:+}° ({temp_spoken}), {desc}. {tip}"
+        return {"chat": chat_text, "voice": voice_text, "emotion": emotion}

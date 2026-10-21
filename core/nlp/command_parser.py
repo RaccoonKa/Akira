@@ -1461,6 +1461,13 @@ class CommandParser:
                         res = action_func()
 
                 if res is not None:
+                    if isinstance(res, dict):
+                        res.setdefault("user_display", canonical_display)
+                        res.setdefault("is_whisper", is_whisper)
+                        if "emotion" not in res:
+                            res["emotion"] = emotion
+                        return res
+
                     res_str = str(res)
                     if emotion == "sad" and intent in ["play_music", "mode_rest"]:
                         res_str = f"{res_str}... Надеюсь, это поможет тебе почувствовать себя лучше 💛 Если захочешь выговориться — я рядом."

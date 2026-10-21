@@ -23,7 +23,7 @@ from core.nlp.command_parser import CommandParser
 from core.system.actions import SystemActions
 from core.utils.config import get_user_data_path, load_config, save_config
 
-SERVER_HOST = ""
+SERVER_HOST = "185.79.139.120:8000"
 PAIRING_PATH = Path(get_user_data_path("pairing_session.json"))
 
 main_window_instance = None

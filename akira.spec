@@ -84,7 +84,8 @@ hiddenimports += [
     'pyautogui',
     'psutil',
     'PIL',
-    'PyQt6.QtSvg'
+    'PyQt6.QtSvg',
+    'unittest'
 ]
 
 hiddenimports += collect_submodules('core')
@@ -101,7 +102,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['tkinter', 'notebook', 'IPython', 'matplotlib', 'pytest', 'unittest'],
+    excludes=['tkinter', 'notebook', 'IPython', 'matplotlib', 'pytest'],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,

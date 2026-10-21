@@ -245,7 +245,12 @@ class AkiraMicWidget(QFrame):
             "angry": (352.0, 235.0, 255.0),
             "surprise": (280.0, 220.0, 255.0),
             "neutral": (42.0, 45.0, 250.0),
-            "other": (280.0, 220.0, 255.0)
+            "other": (280.0, 220.0, 255.0),
+            "weather_rain": (212.0, 235.0, 255.0),
+            "weather_hot": (45.0, 245.0, 255.0),
+            "weather_snow": (185.0, 160.0, 255.0),
+            "weather_thunder": (280.0, 235.0, 255.0),
+            "weather_cloudy": (215.0, 60.0, 240.0)
         }
 
         self.light_palette = {
@@ -254,7 +259,12 @@ class AkiraMicWidget(QFrame):
             "angry": (352.0, 230.0, 110.0),
             "surprise": (282.0, 215.0, 100.0),
             "neutral": (215.0, 55.0, 42.0),
-            "other": (282.0, 215.0, 100.0)
+            "other": (282.0, 215.0, 100.0),
+            "weather_rain": (218.0, 240.0, 120.0),
+            "weather_hot": (38.0, 255.0, 115.0),
+            "weather_snow": (192.0, 210.0, 105.0),
+            "weather_thunder": (282.0, 225.0, 110.0),
+            "weather_cloudy": (215.0, 65.0, 65.0)
         }
 
         self.emotion_palette = self.dark_palette
@@ -711,16 +721,26 @@ class ChatFrame(QFrame):
             "angry": (352.0, 230.0, 255.0),
             "surprise": (280.0, 220.0, 255.0),
             "neutral": (42.0, 60.0, 160.0),
-            "other": (280.0, 220.0, 255.0)
+            "other": (280.0, 220.0, 255.0),
+            "weather_rain": (212.0, 220.0, 255.0),
+            "weather_hot": (45.0, 240.0, 255.0),
+            "weather_snow": (185.0, 160.0, 255.0),
+            "weather_thunder": (280.0, 230.0, 255.0),
+            "weather_cloudy": (215.0, 60.0, 220.0)
         }
 
         self.light_palette = {
-            "happy": (35.0, 235.0, 115.0),
-            "sad": (218.0, 220.0, 110.0),
-            "angry": (352.0, 230.0, 110.0),
-            "surprise": (282.0, 215.0, 100.0),
-            "neutral": (215.0, 55.0, 60.0),
-            "other": (282.0, 215.0, 100.0)
+            "happy": (38.0, 240.0, 235.0),
+            "sad": (212.0, 220.0, 235.0),
+            "angry": (355.0, 230.0, 235.0),
+            "surprise": (285.0, 220.0, 235.0),
+            "neutral": (218.0, 210.0, 160.0),
+            "other": (285.0, 220.0, 235.0),
+            "weather_rain": (215.0, 255.0, 190.0),
+            "weather_hot": (38.0, 245.0, 245.0),
+            "weather_snow": (205.0, 230.0, 195.0),
+            "weather_thunder": (278.0, 230.0, 240.0),
+            "weather_cloudy": (218.0, 200.0, 175.0)
         }
 
         self.emotion_palette = self.dark_palette
@@ -917,13 +937,15 @@ class ChatFrame(QFrame):
             op = self.border_opacity
 
             if self.current_theme == "light":
-                c_bright = QColor.fromHsv(h_val, s_val, v_val, int(255 * op))
-                c_mid = QColor.fromHsv(h_val, min(255, s_val + 20), max(10, int(v_val * 0.75)), int(200 * op))
-                c_dark = QColor.fromHsv(h_val, min(255, s_val + 40), max(5, int(v_val * 0.45)), int(110 * op))
+                c_bright = QColor.fromHsv(h_val, min(255, int(s_val * 1.05)), int(v_val), int(255 * op))
+                c_mid = QColor.fromHsv(h_val, int(s_val), int(v_val * 0.95), int(150 * op))
+                c_dark = QColor.fromHsv(h_val, max(30, int(s_val * 0.7)), int(v_val), int(30 * op))
+                border_width = 2.0
             else:
                 c_bright = QColor.fromHsv(h_val, s_val, v_val, int(230 * op))
                 c_mid = QColor.fromHsv(h_val, min(255, s_val + 20), max(20, int(v_val * 0.55)), int(140 * op))
                 c_dark = QColor.fromHsv(h_val, min(255, s_val + 40), max(10, int(v_val * 0.22)), int(50 * op))
+                border_width = 1.5
 
             border_grad = QLinearGradient(cx - dx, cy - dy, cx + dx, cy + dy)
             border_grad.setColorAt(0.0, c_dark)
