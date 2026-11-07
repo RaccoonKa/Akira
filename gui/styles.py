@@ -63,6 +63,14 @@ QLabel#FileLabel {
     background: transparent;
     padding-bottom: 4px;
 }
+QLabel#ThinkingStatusLabel {
+    color: rgba(222, 215, 196, 0.70);
+    font-size: 11px;
+    font-style: italic;
+    background: transparent;
+    padding: 0px 4px 2px 4px;
+    letter-spacing: 0.4px;
+}
 QPushButton#TitleBtn {
     background-color: transparent;
     color: #78735f;
@@ -705,6 +713,14 @@ QLabel#FileLabel {
     font-style: italic;
     background: transparent;
     padding-bottom: 4px;
+}
+QLabel#ThinkingStatusLabel {
+    color: rgba(17, 19, 24, 0.65);
+    font-size: 11px;
+    font-style: italic;
+    background: transparent;
+    padding: 0px 4px 2px 4px;
+    letter-spacing: 0.4px;
 }
 QPushButton#TitleBtn {
     background-color: transparent;

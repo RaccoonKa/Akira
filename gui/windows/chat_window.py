@@ -21,7 +21,7 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import (
     QPainter, QPen, QColor, QLinearGradient, QRadialGradient,
     QBrush, QPainterPath, QFont, QFontDatabase, QGuiApplication,
-    QIcon, QPixmap
+    QIcon, QPixmap, QTextCursor
 )
 from PyQt6.QtSvg import QSvgRenderer
 from gui.styles import get_main_style
@@ -704,8 +704,69 @@ class AkiraMiniMicWidget(AkiraMicWidget):
                 return
         super().mousePressEvent(event)
 
+class ThinkingLabel(QLabel):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._opacity = 0.0
+        self._offset_y = 6.0
+        self.current_theme = "dark"
+        self.setObjectName("ThinkingStatusLabel")
+        self.setFixedHeight(20)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setStyleSheet("background: transparent; border: none;")
+
+    def set_theme(self, theme: str):
+        self.current_theme = theme
+        self.update()
+
+    def set_opacity(self, val: float):
+        self.set_progress(val)
+    
+    def get_opacity(self) -> float:
+        return self._opacity
+
+    def set_progress(self, val: float):
+        self._opacity = max(0.0, min(1.0, float(val)))
+        self._offset_y = (1.0 - self._opacity) * 6.0
+        self.update()
+
+    def paintEvent(self, event):
+        if self._opacity <= 0.01 or not self.text():
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+
+        painter.translate(0, self._offset_y)
+
+        font = self.font()
+        font.setItalic(True)
+        painter.setFont(font)
+
+        if self.current_theme == "light":
+            col = QColor(17, 19, 24, int(self._opacity * 165))
+        else:
+            col = QColor(222, 215, 196, int(self._opacity * 180))
+
+        painter.setPen(col)
+        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, self.text())
+        painter.end()
 
 class ChatFrame(QFrame):
+
+    CHAT_PLACEHOLDERS = [
+        "Доверься мне...",
+        "Какие мысли на сегодня?..",
+        "Напиши мне что-нибудь...",
+        "Рассказывай, я на связи...",
+        "Жду твоих указаний...",
+        "Чем займемся прямо сейчас?..",
+        "Спроси меня о чем угодно...",
+        "Внимательно слушаю...",
+        "Шепни мне задачу...",
+        "Давай сотворим что-то крутое..."
+    ]
+    
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
@@ -791,6 +852,19 @@ class ChatFrame(QFrame):
         self.file_container.hide()
         layout.addWidget(self.file_container, 0)
 
+        self.thinking_label = ThinkingLabel(self)
+        self.thinking_label.hide()
+        layout.addWidget(self.thinking_label, 0)
+
+        self.thinking_anim = QVariantAnimation(self)
+        self.thinking_anim.setDuration(260)
+        self.thinking_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.thinking_anim.valueChanged.connect(self.thinking_label.set_progress)
+
+        self.thinking_cycle_timer = QTimer(self)
+        self.thinking_cycle_timer.setInterval(2800)
+        self.thinking_cycle_timer.timeout.connect(self._cycle_thinking_phrase)
+
         self.input_container = QWidget()
         self.input_container.setObjectName("InputContainer")
         self.input_container.setStyleSheet("background: transparent;")
@@ -808,7 +882,7 @@ class ChatFrame(QFrame):
         self.input_field = QLineEdit()
         self.input_field.setObjectName("InputField")
         self.input_field.setFixedHeight(35)
-        self.input_field.setPlaceholderText("Введите команду...")
+        self.randomize_placeholder()
         input_layout.addWidget(self.input_field, 1)
 
         self.send_button = QPushButton()
@@ -844,6 +918,8 @@ class ChatFrame(QFrame):
 
     def set_theme(self, theme: str):
         self.current_theme = theme
+        if hasattr(self, 'thinking_label'):
+            self.thinking_label.set_theme(theme)
         self.emotion_palette = self.light_palette if theme == "light" else self.dark_palette
         if self.target_emotion in self.emotion_palette:
             self.target_h, self.target_s, self.target_v = self.emotion_palette[self.target_emotion]
@@ -883,6 +959,99 @@ class ChatFrame(QFrame):
 
     def mousePressEvent(self, event):
         event.accept()
+
+    THINKING_PHRASES = [
+        "Варю мысли под синтвейв...",
+        "Перебираю полочки в памяти...",
+        "Секунду, шезлонг видеокарты нагревается...",
+        "Строю дерево вероятностей...",
+        "Ищу красивое решение без костылей...",
+        "Разгоняю кулеры ради ответа...",
+        "Проверяю гипотезы в фоновом потоке...",
+        "Вчитываюсь в суть вопроса...",
+        "Пересобираю логику на лету..."
+    ]
+
+    THINKING_FILE_PHRASES = [
+        "Сканирую прикрепленный документ...",
+        "Вчитываюсь в строки файла...",
+        "Разбираю структуру данных...",
+        "Выделяю главное из документа..."
+    ]
+
+    def randomize_placeholder(self):
+        phrase = random.choice(self.CHAT_PLACEHOLDERS)
+        self.input_field.setPlaceholderText(phrase)
+
+    def start_thinking(self, has_file=False):
+        pool = self.THINKING_FILE_PHRASES if has_file else self.THINKING_PHRASES
+        self._current_thinking_pool = pool
+        self._last_phrase = random.choice(pool)
+        self.thinking_label.setText(self._last_phrase)
+        self.thinking_label.set_theme(self.current_theme)
+        self.thinking_label.set_progress(0.0)
+        self.thinking_label.show()
+
+        if hasattr(self, 'thinking_anim'):
+            self.thinking_anim.stop()
+
+        self.thinking_anim = QVariantAnimation(self)
+        self.thinking_anim.setDuration(480)
+        self.thinking_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.thinking_anim.setStartValue(self.thinking_label.get_opacity())
+        self.thinking_anim.setEndValue(1.0)
+        self.thinking_anim.valueChanged.connect(self.thinking_label.set_progress)
+        self.thinking_anim.start()
+
+        self.thinking_cycle_timer.start()
+
+    def _cycle_thinking_phrase(self):
+        pool = getattr(self, '_current_thinking_pool', self.THINKING_PHRASES)
+        candidates = [p for p in pool if p != self._last_phrase]
+        new_phrase = random.choice(candidates) if candidates else pool[0]
+        self._last_phrase = new_phrase
+
+        fade_out = QVariantAnimation(self)
+        fade_out.setDuration(280)
+        fade_out.setEasingCurve(QEasingCurve.Type.InQuad)
+        fade_out.setStartValue(self.thinking_label.get_opacity())
+        fade_out.setEndValue(0.05)
+        fade_out.valueChanged.connect(self.thinking_label.set_progress)
+
+        def _on_faded():
+            self.thinking_label.setText(new_phrase)
+            fade_in = QVariantAnimation(self)
+            fade_in.setDuration(360)
+            fade_in.setEasingCurve(QEasingCurve.Type.OutQuad)
+            fade_in.setStartValue(0.05)
+            fade_in.setEndValue(1.0)
+            fade_in.valueChanged.connect(self.thinking_label.set_progress)
+            fade_in.start()
+            self._fade_in_sub = fade_in
+
+        fade_out.finished.connect(_on_faded)
+        fade_out.start()
+        self._fade_out_sub = fade_out
+
+    def stop_thinking(self):
+        self.thinking_cycle_timer.stop()
+        if hasattr(self, 'thinking_anim'):
+            self.thinking_anim.stop()
+
+        self.thinking_anim = QVariantAnimation(self)
+        self.thinking_anim.setDuration(420)
+        self.thinking_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        self.thinking_anim.setStartValue(self.thinking_label.get_opacity())
+        self.thinking_anim.setEndValue(0.0)
+        self.thinking_anim.valueChanged.connect(self.thinking_label.set_progress)
+
+        def _on_hide():
+            if self.thinking_label.get_opacity() <= 0.02:
+                self.thinking_label.hide()
+                self.thinking_label.setText("")
+
+        self.thinking_anim.finished.connect(_on_hide)
+        self.thinking_anim.start()
 
     def select_file(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -1244,6 +1413,22 @@ class MainWindow(QWidget):
 
         self.apply_theme(self.current_theme, initial=True)
 
+    MINI_PLACEHOLDERS = [
+        "слушаю...",
+        "команда...",
+        "я на связи...",
+        "жду команду...",
+        "что делаем?..",
+        "слушаю тебя...",
+        "я рядом...",
+        "наготове...",
+        "готова..."
+    ]
+
+    def randomize_mini_placeholder(self):
+        phrase = random.choice(self.MINI_PLACEHOLDERS)
+        self.mini_input_field.setPlaceholderText(phrase)
+
     def update_title_icons(self):
         icon_color = "#ded7c4" if self.current_theme == "dark" else "#111318"
         icon_sz = 15
@@ -1542,6 +1727,7 @@ class MainWindow(QWidget):
             self.mini_text_worker.start()
 
     def on_mini_text_command_finished(self, response):
+        self.randomize_mini_placeholder()
         self.mini_input_field.setEnabled(True)
         self.mini_send_button.setEnabled(True)
         self.mini_input_field.setFocus()
@@ -1560,7 +1746,7 @@ class MainWindow(QWidget):
             self.right_panel.set_emotion(emotion)
 
             if chat_text:
-                self.chat_history.append(f"Акира: {chat_text}\n")
+                self.stream_text_to_chat(chat_text)
             if voice_text:
                 self.speak_reply(voice_text, is_whisper=False)
 
@@ -1786,7 +1972,7 @@ class MainWindow(QWidget):
         self.mini_input_field = QLineEdit()
         self.mini_input_field.setObjectName("InputField")
         self.mini_input_field.setFixedHeight(34)
-        self.mini_input_field.setPlaceholderText("Команда...")
+        self.randomize_mini_placeholder()
         self.mini_input_field.setFont(QFont(self.font_family, 12))
         self.mini_input_field.returnPressed.connect(self.send_mini_message)
         mini_layout.addWidget(self.mini_input_field, 1, alignment=Qt.AlignmentFlag.AlignVCenter)
@@ -1965,6 +2151,10 @@ class MainWindow(QWidget):
     def exit_app(self):
         self._save_exit_timestamp()
         self.hide()
+        try:
+            self.shutdown()
+        except Exception:
+            pass
         volume_ducker.force_restore()
         os._exit(0)
 
@@ -2230,6 +2420,8 @@ class MainWindow(QWidget):
 
         self.voice_worker = CommandWorker(self.command_parser, text, audio_data=audio_data, is_voice=True, parent=self)
         self.voice_worker.result_ready.connect(self.on_voice_command_finished)
+        if hasattr(self, 'right_panel'):
+            self.right_panel.start_thinking(has_file=False)
         self.voice_worker.start()
 
     def on_wake_word_detected(self):
@@ -2246,6 +2438,8 @@ class MainWindow(QWidget):
             self.stt_thread.start_followup(timeout=3.0)
 
     def on_voice_command_finished(self, response):
+        if hasattr(self, 'right_panel'):
+            self.right_panel.stop_thinking()
         if response:
             is_whisper = False
             user_display = self.voice_worker.text
@@ -2268,7 +2462,7 @@ class MainWindow(QWidget):
                 self.chat_history.append(f"Вы (голос): {user_display}")
 
             if chat_text:
-                self.chat_history.append(f"Акира: {chat_text}\n")
+                self.stream_text_to_chat(chat_text)
 
                 if isinstance(response, dict) and "Список доступных вариантов обхода" in chat_text:
                     if not (self.right_panel.isVisible() and self.right_panel.height() > 10):
@@ -2288,6 +2482,67 @@ class MainWindow(QWidget):
             self.left_panel.set_emotion(emotion)
             self.right_panel.set_emotion(emotion)
 
+    def stream_text_to_chat(self, text: str, prefix: str = "Акира: "):
+        if hasattr(self, '_typewriter_timer') and self._typewriter_timer.isActive():
+            self._typewriter_timer.stop()
+            if hasattr(self, '_typewriter_remaining') and self._typewriter_remaining:
+                c = self.chat_history.textCursor()
+                c.movePosition(QTextCursor.MoveOperation.End)
+                c.insertText("".join(self._typewriter_remaining) + "\n\n")
+                self.chat_history.setTextCursor(c)
+
+        cursor = self.chat_history.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        current_plain = self.chat_history.toPlainText()
+        if current_plain and not current_plain.endswith("\n"):
+            cursor.insertText("\n")
+        cursor.insertText(prefix)
+        self.chat_history.setTextCursor(cursor)
+        self.chat_history.ensureCursorVisible()
+
+        import re
+        tokens = re.findall(r'\S+|\s+', text)
+        self._typewriter_remaining = tokens
+
+        total = len(tokens)
+        if total > 100:
+            interval = 14
+            chunk_size = 2
+        elif total > 50:
+            interval = 18
+            chunk_size = 1
+        else:
+            interval = 26
+            chunk_size = 1
+
+        self._typewriter_chunk_size = chunk_size
+        self._typewriter_timer = QTimer(self)
+        self._typewriter_timer.setInterval(interval)
+
+        def _step():
+            if not getattr(self, '_typewriter_remaining', None):
+                self._typewriter_timer.stop()
+                c = self.chat_history.textCursor()
+                c.movePosition(QTextCursor.MoveOperation.End)
+                c.insertText("\n\n")
+                self.chat_history.setTextCursor(c)
+                self.chat_history.ensureCursorVisible()
+                return
+
+            c = self.chat_history.textCursor()
+            c.movePosition(QTextCursor.MoveOperation.End)
+            for _ in range(self._typewriter_chunk_size):
+                if self._typewriter_remaining:
+                    t = self._typewriter_remaining.pop(0)
+                    c.insertText(t)
+            self.chat_history.setTextCursor(c)
+            self.chat_history.ensureCursorVisible()
+            sb = self.chat_history.verticalScrollBar()
+            sb.setValue(sb.maximum())
+
+        self._typewriter_timer.timeout.connect(_step)
+        self._typewriter_timer.start()
+    
     def send_message(self):
         if not self.ui_revealed:
             return
@@ -2322,12 +2577,16 @@ class MainWindow(QWidget):
             self.send_button.setEnabled(False)
             self.right_panel.clear_attachment()
 
+            self.right_panel.start_thinking(has_file=bool(attached_file))
+            
             self.text_worker = CommandWorker(self.command_parser, text, is_voice=False, attached_file=attached_file,
                                              parent=self)
             self.text_worker.result_ready.connect(self.on_text_command_finished)
             self.text_worker.start()
 
     def on_text_command_finished(self, response):
+        self.right_panel.stop_thinking()
+        self.right_panel.randomize_placeholder()
         self.input_field.setEnabled(True)
         self.send_button.setEnabled(True)
         self.input_field.activateWindow()
@@ -2347,7 +2606,7 @@ class MainWindow(QWidget):
             self.right_panel.set_emotion(emotion)
 
             if chat_text:
-                self.chat_history.append(f"Акира: {chat_text}\n")
+                self.stream_text_to_chat(chat_text)
             if voice_text:
                 self.speak_reply(voice_text, is_whisper=False)
 
