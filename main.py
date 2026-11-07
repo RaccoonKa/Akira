@@ -66,7 +66,7 @@ def apply_native_windows_icon(hwnd, icon_path):
     gclp_hiconsm = -34
 
     h_icon_big = ctypes.windll.user32.LoadImageW(
-        None, icon_path, image_icon, 256, 256, lr_loadfromfile
+        None, icon_path, image_icon, 48, 48, lr_loadfromfile
     )
     h_icon_small = ctypes.windll.user32.LoadImageW(
         None, icon_path, image_icon, 32, 32, lr_loadfromfile

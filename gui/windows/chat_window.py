@@ -129,6 +129,9 @@ class AudioVisualizerWorker(QThread):
                     self.msleep(300)
                     continue
 
+                # Запоминаем ID текущего устройства вывода
+                current_speaker_id = getattr(default_speaker, 'id', None)
+
                 mic = None
                 try:
                     mic = sc.get_microphone(default_speaker.id, include_loopback=True)
@@ -151,10 +154,21 @@ class AudioVisualizerWorker(QThread):
                     recorder_ctx = mic.recorder(samplerate=44100, blocksize=2048)
 
                 with recorder_ctx as recorder:
+                    check_device_counter = 0
                     while self.running:
                         data = recorder.record(numframes=2048)
                         if not self.running:
                             break
+
+                        check_device_counter += 1
+                        if check_device_counter >= 25:
+                            check_device_counter = 0
+                            try:
+                                new_default = sc.default_speaker()
+                                if new_default and getattr(new_default, 'id', None) != current_speaker_id:
+                                    break
+                            except Exception:
+                                pass
 
                         samples = data[:, 0] if data.ndim > 1 else data
                         rms = float(np.sqrt(np.mean(samples ** 2)))

@@ -12,6 +12,17 @@ from core.nlp.asr_corrector import ASRCorrector
 from core.utils.config import load_config, get_resource_path
 from core.system.actions import ym_manager
 
+try:
+    from comtypes import CoInitialize, CoUninitialize
+    _HAS_COM = True
+except ImportError:
+    _HAS_COM = False
+
+try:
+    import soundcard as sc
+except ImportError:
+    sc = None
+
 FAST_PASS_WORDS = {
     "погода", "погоду", "погоде", "градус", "градусов", "температура", "прогноз",
     "музыка", "музыку", "трек", "песня", "песню", "пауза", "стоп", "плей",
@@ -191,15 +202,27 @@ class STTThread(QThread):
         print(f"[STT]: Корректор отработал за {time.perf_counter() - t0:.2f}с -> '{corrected}'", flush=True)
         return corrected
 
-    def run(self):
+    def _get_default_mic_info(self):
+        """Определяет актуальный системный микрофон по умолчанию через WASAPI."""
+        if sc is None:
+            return None, None
         try:
-            vosk.SetLogLevel(-1)
-            model = vosk.Model(self.model_path)
-            recognizer = vosk.KaldiRecognizer(model, self.samplerate)
-        except Exception as e:
-            self.error_occurred.emit(f"Ошибка загрузки модели Vosk: {e}")
-            return
+            mic = sc.default_microphone()
+            if mic:
+                return getattr(mic, 'id', None), getattr(mic, 'name', 'Default Microphone')
+        except Exception:
+            pass
+        return None, None
 
+    def _is_tts_active(self) -> bool:
+        """Проверяет, говорит ли Акира сейчас, чтобы не прерывать PortAudio."""
+        main_win = self.parent()
+        if main_win and hasattr(main_win, 'tts_thread'):
+            return main_win.tts_thread.isRunning()
+        return getattr(self, 'is_speaking', False)
+
+    def _open_stream(self):
+        """Создает и запускает входной аудиопоток с автоматическим ресемплингом в 16 кГц."""
         try:
             stream = sd.RawInputStream(
                 samplerate=self.samplerate,
@@ -208,19 +231,90 @@ class STTThread(QThread):
                 channels=1,
                 callback=self._audio_callback
             )
+            stream.start()
+            return stream
         except Exception as e:
-            self.error_occurred.emit(f"Ошибка микрофона: {e}")
+            print(f"[STT Stream Error]: Не удалось открыть поток микрофона: {e}", flush=True)
+            return None
+
+    def run(self):
+        if _HAS_COM:
+            try:
+                CoInitialize()
+            except Exception:
+                pass
+
+        try:
+            vosk.SetLogLevel(-1)
+            model = vosk.Model(self.model_path)
+            recognizer = vosk.KaldiRecognizer(model, self.samplerate)
+        except Exception as e:
+            self.error_occurred.emit(f"Ошибка загрузки модели Vosk: {e}")
+            if _HAS_COM:
+                try:
+                    CoUninitialize()
+                except Exception:
+                    pass
             return
+
+        current_mic_id, current_mic_name = self._get_default_mic_info()
+        if current_mic_name:
+            print(f"[STT]: Активный микрофон: {current_mic_name}", flush=True)
+
+        stream = self._open_stream()
+        if stream is None:
+            self.error_occurred.emit("Ошибка микрофона: не удалось инициализировать устройство")
 
         active_mode = False
         active_start_time = 0.0
         utterance_buffer = bytearray()
         wake_signaled = False
+        device_check_counter = 0
 
-        with stream:
-            self.listening_state_changed.emit(False)
+        self.listening_state_changed.emit(False)
 
+        try:
             while self._running:
+                # 1. Проверка смены устройства и здоровья потока каждые ~1.5 сек
+                device_check_counter += 1
+                if device_check_counter >= 15:
+                    device_check_counter = 0
+
+                    is_stream_dead = (stream is None) or (not stream.active)
+                    new_mic_id, new_mic_name = self._get_default_mic_info()
+                    mic_changed = (new_mic_id is not None and new_mic_id != current_mic_id)
+
+                    # Переподключаем только когда TTS не выводит звук
+                    if (mic_changed or is_stream_dead) and not self._is_tts_active():
+                        if stream:
+                            try:
+                                stream.stop()
+                                stream.close()
+                            except Exception:
+                                pass
+                            stream = None
+
+                        try:
+                            sd._terminate()
+                            sd._initialize()
+                        except Exception:
+                            pass
+
+                        with self.audio_queue.mutex:
+                            self.audio_queue.queue.clear()
+                        utterance_buffer.clear()
+                        recognizer.Reset()
+
+                        stream = self._open_stream()
+                        if stream:
+                            current_mic_id = new_mic_id
+                            current_mic_name = new_mic_name
+                            print(f"[STT]: Микрофон переключен на: {current_mic_name}", flush=True)
+
+                if stream is None:
+                    self.msleep(200)
+                    continue
+
                 if self.is_speaking:
                     try:
                         self.audio_queue.get(timeout=0.1)
@@ -280,7 +374,6 @@ class STTThread(QThread):
                         raw_command = " ".join(words[wake_idx + 1:]).strip()
                         if raw_command:
                             if not self._is_likely_command(raw_command):
-                                print(f"[STT Фильтр шума]: Отклонена фраза без структуры команды: '{raw_command}'", flush=True)
                                 ym_manager.unduck(100)
                                 self.listening_state_changed.emit(False)
                                 active_mode = False
@@ -299,7 +392,6 @@ class STTThread(QThread):
                             self.listening_state_changed.emit(True)
                     elif active_mode:
                         if not self._is_likely_command(text):
-                            print(f"[STT Фильтр шума]: В активном режиме отклонена фраза без структуры команды: '{text}'", flush=True)
                             ym_manager.unduck(100)
                             self.listening_state_changed.emit(False)
                             active_mode = False
@@ -324,6 +416,18 @@ class STTThread(QThread):
                                 self.wake_word_detected.emit()
                                 ym_manager.duck()
                                 self.listening_state_changed.emit(True)
+        finally:
+            if stream:
+                try:
+                    stream.stop()
+                    stream.close()
+                except Exception:
+                    pass
+            if _HAS_COM:
+                try:
+                    CoUninitialize()
+                except Exception:
+                    pass
 
     def stop_thread(self):
         self._running = False
