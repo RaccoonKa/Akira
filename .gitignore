@@ -1,3 +1,70 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+*.pyd
+
+# Distribution / packaging
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+
+# Sentry & Crash reports
+.sentry-native/
+
+# Virtual Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDEs and Editors
+.idea/
+.vscode/
+*.sublime-workspace
+*.sublime-project
+.project
+.pydevproject
+.settings/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+*.tmp
+*.temp
+*.log
+
+# Sensitive files / keys / credentials / local notes
+aki_ssh*
+server_commands
+*.key
+*.pem
+*.pub
+
 # Персональные данные и токены
 personal_data/configs/config.json
 personal_data/configs/pairing_session.json
@@ -6,11 +73,11 @@ personal_data/configs/.spotify_cache
 personal_data/configs/google/token.json
 personal_data/owner_face/*
 
-# Исключения
+# Исключения для personal_data
 !personal_data/configs/config.py
 !personal_data/configs/config.template.json
 !personal_data/owner_face/.gitkeep
 
-# Мусор
+# Временные файлы моделей и артефакты
 temp_model*
 *.data
