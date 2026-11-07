@@ -81,3 +81,5 @@ personal_data/owner_face/*
 # Временные файлы моделей и артефакты
 temp_model*
 *.data
+*.npz
+
