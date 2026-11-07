@@ -1381,6 +1381,13 @@ class MainWindow(QWidget):
                     self.show_animated()
         super().changeEvent(event)
 
+    def bring_to_front(self):
+        if not self.isVisible() or self.isMinimized():
+            self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized | Qt.WindowState.WindowActive)
+            self.showNormal()
+        self.raise_()
+        self.activateWindow()
+    
     def show_animated(self):
         if hasattr(self, 'closing_anim') and self.closing_anim.state() == QPropertyAnimation.State.Running:
             self.closing_anim.stop()

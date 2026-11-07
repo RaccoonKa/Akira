@@ -37,6 +37,7 @@ os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QIcon
+from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from core.utils.config import load_config
 from gui.windows.chat_window import MainWindow
 from gui.components.tray import SystemTray
@@ -97,6 +98,20 @@ def main():
     app.setApplicationDisplayName("Akira")
     app.setQuitOnLastWindowClosed(False)
 
+    server_name = "AkiraVoiceAssistant_SingleInstance_IPC"
+    client_socket = QLocalSocket()
+    client_socket.connectToServer(server_name)
+
+    if client_socket.waitForConnected(400):
+        client_socket.write(b"RESTORE")
+        client_socket.waitForBytesWritten(400)
+        client_socket.disconnectFromServer()
+        sys.exit(0)
+
+    server = QLocalServer()
+    server.removeServer(server_name)
+    server.listen(server_name)
+
     ico_path = get_ico_path()
     app_icon = QIcon(ico_path) if ico_path else QIcon()
     app.setWindowIcon(app_icon)
@@ -118,6 +133,13 @@ def main():
     window = MainWindow(config)
     window.setWindowTitle("Akira")
     window.setWindowIcon(app_icon)
+
+    def handle_second_instance():
+        conn = server.nextPendingConnection()
+        if conn:
+            conn.readyRead.connect(lambda: conn.readAll())
+            window.bring_to_front()
+    server.newConnection.connect(handle_second_instance)
 
     hwnd = int(window.winId())
     apply_native_windows_icon(hwnd, ico_path)
