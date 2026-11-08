@@ -14,11 +14,11 @@ from transformers.utils import logging as tf_logging
 from core.system.actions import SystemActions, zapret_manager
 from services.vpn.vpn_manager import VpnManager
 from core.utils.config import load_config
-from core.nlp.llm_provider import GigaChatProvider
-from core.nlp.nlu import JointNLU
-from core.nlp.document_parser import DocumentParser
-from core.nlp.speaker_verifier import SpeakerVerifier
-from core.nlp.text_emotion_classifier import TextEmotionClassifier
+from core.nlp.generative.llm_provider import GigaChatProvider
+from core.nlp.parser.nlu import JointNLU
+from core.nlp.generative.document_parser import DocumentParser
+from core.nlp.speech.speaker_verifier import SpeakerVerifier
+from core.nlp.emotion.text_emotion_classifier import TextEmotionClassifier
 from core.system.app_launcher import AppLauncher
 from core.system.time_parser import TimeParser
 from core.system.reminder_manager import ReminderManager
@@ -1411,7 +1411,10 @@ class CommandParser:
 
         if rule_intent == "chat":
             user_prefix = f"[Говорит пользователь: {speaker_name}] " if not is_owner else ""
-            prompt_with_emotion = f"{user_prefix}[Эмоциональный тон пользователя: {emo_desc}] {text}" if emotion != "neutral" else f"{user_prefix}{text}"
+            words_count = len(text.split())
+            is_confident_emo = (emotion != "neutral") and (emo_conf >= 0.75) and (words_count >= 3)
+            emo_prefix = f"[Эмоциональный тон пользователя: {emo_desc}] " if is_confident_emo else ""
+            prompt_with_emotion = f"{user_prefix}{emo_prefix}{text}"
             ans = self.llm.ask(prompt_with_emotion, raw_user_text=text)
             return {"user_display": user_display, "chat": ans, "voice": ans, "emotion": emotion,
                     "is_whisper": is_whisper, "followup": True}
@@ -1478,7 +1481,9 @@ class CommandParser:
                         return {"user_display": canonical_display, "chat": "" if is_voice else res_str, "voice": res_str, "emotion": emotion, "is_whisper": is_whisper}
                     return {"user_display": canonical_display, "chat": res_str, "voice": res_str, "emotion": emotion, "is_whisper": is_whisper}
 
-        prompt_with_emotion = f"[Эмоциональный тон пользователя: {emo_desc}] {text}" if emotion != "neutral" else text
+        words_count = len(text.split())
+        is_confident_emo = (emotion != "neutral") and (emo_conf >= 0.75) and (words_count >= 3)
+        prompt_with_emotion = f"[Эмоциональный тон пользователя: {emo_desc}] {text}" if is_confident_emo else text
         ans = self.llm.ask(prompt_with_emotion, raw_user_text=text)
         return {"user_display": user_display, "chat": ans, "voice": ans, "emotion": emotion, "is_whisper": is_whisper,
                 "followup": True}

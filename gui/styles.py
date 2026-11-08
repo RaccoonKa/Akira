@@ -82,6 +82,61 @@ QPushButton#TitleBtn:hover {
     background-color: rgba(120, 115, 95, 0.2);
     color: #ffffff;
 }
+QLabel#ModelSelectorLabel {
+    color: #ded7c4;
+    font-size: 11px;
+    font-weight: bold;
+    letter-spacing: 0.5px;
+}
+QComboBox#ModelSelectorCombo {
+    background-color: #070705;
+    color: #ded7c4;
+    border: 1px solid #78735f;
+    border-radius: 8px;
+    padding: 2px 18px 2px 8px;
+}
+QComboBox#ModelSelectorCombo:hover {
+    border: 1px solid #9e9780;
+    background-color: #0f0e0b;
+}
+QComboBox#ModelSelectorCombo:focus {
+    border: 1px solid #ded7c4;
+}
+QComboBox#ModelSelectorCombo::drop-down {
+    border: none;
+    background: transparent;
+    width: 0px;
+}
+QComboBox#ModelSelectorCombo::down-arrow {
+    image: none;
+    border: none;
+    width: 0px;
+    height: 0px;
+}
+QComboBox#ModelSelectorCombo QAbstractItemView {
+    background-color: #0e0d0a;
+    color: #ded7c4;
+    selection-background-color: #2b2820;
+    selection-color: #ffffff;
+    border: 1px solid #78735f;
+    border-radius: 8px;
+    padding: 3px;
+    outline: none;
+}
+QComboBox#ModelSelectorCombo QAbstractItemView::item {
+    height: 24px;
+    padding: 2px 8px;
+    border-radius: 5px;
+    color: #ded7c4;
+}
+QComboBox#ModelSelectorCombo QAbstractItemView::item:selected {
+    background-color: #2b2820;
+    color: #ffffff;
+}
+QComboBox#ModelSelectorCombo QAbstractItemView::item:disabled {
+    color: #555042;
+    background-color: transparent;
+}
 QPushButton#MinBtn {
     background-color: transparent;
     color: #ffffff;
@@ -732,6 +787,61 @@ QPushButton#TitleBtn {
 QPushButton#TitleBtn:hover {
     background-color: rgba(17, 19, 24, 0.12);
     color: #000000;
+}
+QLabel#ModelSelectorLabel {
+    color: #111318;
+    font-size: 11px;
+    font-weight: bold;
+    letter-spacing: 0.5px;
+}
+QComboBox#ModelSelectorCombo {
+    background-color: #ffffff;
+    color: #111318;
+    border: 1.5px solid #111318;
+    border-radius: 8px;
+    padding: 2px 18px 2px 8px;
+}
+QComboBox#ModelSelectorCombo:hover {
+    border: 1.5px solid #000000;
+    background-color: #f4f6fa;
+}
+QComboBox#ModelSelectorCombo:focus {
+    border: 2px solid #000000;
+}
+QComboBox#ModelSelectorCombo::drop-down {
+    border: none;
+    background: transparent;
+    width: 0px;
+}
+QComboBox#ModelSelectorCombo::down-arrow {
+    image: none;
+    border: none;
+    width: 0px;
+    height: 0px;
+}
+QComboBox#ModelSelectorCombo QAbstractItemView {
+    background-color: #ffffff;
+    color: #111318;
+    selection-background-color: #e2e8f0;
+    selection-color: #000000;
+    border: 1.5px solid #111318;
+    border-radius: 8px;
+    padding: 3px;
+    outline: none;
+}
+QComboBox#ModelSelectorCombo QAbstractItemView::item {
+    height: 24px;
+    padding: 2px 8px;
+    border-radius: 5px;
+    color: #111318;
+}
+QComboBox#ModelSelectorCombo QAbstractItemView::item:selected {
+    background-color: #e2e8f0;
+    color: #000000;
+}
+QComboBox#ModelSelectorCombo QAbstractItemView::item:disabled {
+    color: #a2a8b5;
+    background-color: transparent;
 }
 QPushButton#MinBtn {
     background-color: transparent;

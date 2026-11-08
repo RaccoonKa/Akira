@@ -15,8 +15,9 @@ class UpdateCheckerThread(QThread):
 
     def run(self):
         url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+        headers = {"User-Agent": "Akira-Client-App"}
         try:
-            resp = requests.get(url, timeout=5)
+            resp = requests.get(url, headers=headers, timeout=12)
             if resp.status_code == 200:
                 data = resp.json()
                 latest_tag = data.get("tag_name", "").lstrip("v")
@@ -33,7 +34,7 @@ class UpdateCheckerThread(QThread):
                     if download_url:
                         self.update_available.emit(latest_tag, changelog, download_url)
         except Exception as e:
-            print(f"[Update Checker Error]: {e}")
+            print(f"[Update Checker Warning]: GitHub временно недоступен ({e})")
 
 
 class DownloaderThread(QThread):

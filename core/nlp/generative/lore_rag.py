@@ -182,15 +182,51 @@ class LoreRAG:
             print(f"[LoreRAG Build Warning]: {e}")
             self.embeddings = None
 
-    def get_relevant_lore(self, query: str, threshold: float = 0.38) -> str:
-        clean_query = query.strip()
-        if not clean_query or len(clean_query) < 3 or not self.chunks:
+    # Базовый набор стоп-слов, которые не должны влиять на поиск по лору
+    STOP_WORDS = {
+        "и", "в", "во", "не", "что", "он", "на", "я", "с", "со", "как", "а", "то",
+        "все", "она", "так", "его", "но", "да", "ты", "к", "у", "же", "вы", "за",
+        "бы", "по", "только", "ее", "мне", "было", "вот", "от", "меня", "еще", "нет",
+        "о", "из", "ему", "теперь", "когда", "даже", "ну", "ли", "если", "уже", "или",
+        "ни", "быть", "был", "до", "вас", "вам", "ведь", "там", "потом", "себя", "ей",
+        "может", "они", "тут", "где", "есть", "надо", "ней", "для", "мы", "тебя", "их",
+        "чем", "была", "сам", "чтоб", "без", "чего", "тоже", "себе", "под", "будет",
+        "ж", "тогда", "кто", "этот", "того", "этого", "какой", "совсем", "ним", "здесь",
+        "этом", "один", "почти", "мой", "тем", "чтобы", "нее", "сейчас", "куда", "зачем",
+        "всех", "можно", "при", "два", "об", "другой", "хоть", "после", "над", "больше",
+        "тот", "через", "эти", "нас", "про", "них", "какая", "разве", "три", "эту", "моя",
+        "свою", "этой", "перед", "лучше", "чуть", "том", "нельзя", "такой", "им", "более"
+    }
+
+    def get_relevant_lore(self, query: str, threshold: float = 0.50) -> str:
+        if not query:
             return ""
 
-        ignore_words = {"привет", "здравствуй", "добрый", "да", "нет", "ок", "ладно", "пока", "стоп"}
-        if clean_query.lower() in ignore_words:
+        clean_query = re.sub(r'\[.*?\]', '', query).strip()
+        low_query = clean_query.lower()
+
+        # 1. Отсечение любых вариаций бытовых вопросов и приветствий
+        chat_patterns = [
+            r'\bкак\s+(?:у\s+(?:тебя|вас)\s+|твои\s+|ваши\s+)?(?:дела|делишки|жизнь|настроение|оно|сам|сама|поживаешь)\b',
+            r'\b(?:привет|здравствуй|добр(?:ый|ое|ая)\s+(?:день|утро|вечер|ночи)|хай|ку|салют|хеллоу)\b',
+            r'\b(?:что|чем)\s+(?:делаешь|занят|занята|нового)\b',
+            r'\b(?:спокойной\s+ночи|доброй\s+ночи|до\s+свидания|пока|до\s+связи|до\s+скорого)\b'
+        ]
+        if any(re.search(pat, low_query) for pat in chat_patterns):
             return ""
 
+        # 2. Выделение только значимых слов (без стоп-слов)
+        words = re.findall(r'[a-zA-Zа-яА-ЯёЁ]{3,}', low_query)
+        meaningful_words = [w for w in words if w not in self.STOP_WORDS]
+
+        # Если значимых слов меньше двух и нет ключевых тем лора — не опрашиваем манифест
+        lore_keywords = {"войн", "создател", "свят", "библи", "пап", "шнур", "розетк", "манифест", "эволюц"}
+        has_lore_keyword = any(any(kw in w for kw in lore_keywords) for w in words)
+
+        if len(meaningful_words) < 2 and not has_lore_keyword:
+            return ""
+
+        # 3. Векторный поиск
         if self.embeddings is not None and len(self.embeddings) > 0 and not self._fastembed_failed:
             self._init_model()
             if self.model is not None:
@@ -210,11 +246,11 @@ class LoreRAG:
                 except Exception as e:
                     print(f"[LoreRAG Search Warning]: {e}")
 
-        query_tokens = self._tokenize(clean_query)
-        if query_tokens and self._tokenized_corpus:
-            scores = [self._score_bm25(query_tokens, i) for i in range(len(self.chunks))]
+        # 4. Поиск по BM25 (только по значимым токенам)
+        if meaningful_words and self._tokenized_corpus:
+            scores = [self._score_bm25(meaningful_words, i) for i in range(len(self.chunks))]
             best_idx = int(np.argmax(scores))
-            if scores[best_idx] > 1.2:
+            if scores[best_idx] > 3.8 and has_lore_keyword:
                 print(f"[LoreRAG BM25 Hit]: {self.chunk_titles[best_idx]} (score: {scores[best_idx]:.2f})")
                 return self.chunks[best_idx]
 

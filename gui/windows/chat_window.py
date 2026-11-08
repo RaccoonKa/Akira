@@ -11,7 +11,7 @@ from services.telegram.telegram_bot import TelegramBotThread
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTextEdit, QLineEdit, QFrame, QFileDialog, QGridLayout,
-    QGraphicsOpacityEffect
+    QGraphicsOpacityEffect, QComboBox, QListView, QStyledItemDelegate, QStyle
 )
 from PyQt6.QtCore import (
     Qt, QPoint, QRectF, QTimer, QPropertyAnimation, QVariantAnimation,
@@ -21,14 +21,14 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import (
     QPainter, QPen, QColor, QLinearGradient, QRadialGradient,
     QBrush, QPainterPath, QFont, QFontDatabase, QGuiApplication,
-    QIcon, QPixmap, QTextCursor
+    QIcon, QPixmap, QTextCursor, QCursor
 )
 from PyQt6.QtSvg import QSvgRenderer
 from gui.styles import get_main_style
 from gui.windows.settings_window import SettingsFrame
 from audio.stt import STTThread
 from audio.tts import TTSThread
-from core.nlp.command_parser import CommandParser
+from core.nlp.parser.command_parser import CommandParser
 from core.system.actions import SystemActions
 from core.vision.vision_provider import VisionThread
 from core.vision.presence_manager import PresenceManager
@@ -766,19 +766,251 @@ class ThinkingLabel(QLabel):
         painter.drawText(self.rect(), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, self.text())
         painter.end()
 
+class ModelItemDelegate(QStyledItemDelegate):
+    def __init__(self, combo, parent=None):
+        super().__init__(parent or combo)
+        self.combo = combo
+
+    def paint(self, painter, option, index):
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        row = index.row()
+        is_hovered = (row == self.combo.hovered_row)
+        is_selected = (row == self.combo.currentIndex())
+        is_enabled = bool(index.flags() & Qt.ItemFlag.ItemIsEnabled)
+        is_light = (self.combo.current_theme == "light")
+
+        rect = QRectF(option.rect).adjusted(2, 1, -2, -1)
+        font = QFont(option.font)
+
+        if is_hovered and is_enabled:
+            # Активная ячейка под курсором — яркий динамический цвет эмоции
+            col = self.combo.current_hover_color
+            bg_col = QColor(col)
+            bg_col.setAlpha(40 if is_light else 65)
+            border_col = QColor(col)
+            border_col.setAlpha(160 if is_light else 200)
+
+            painter.setPen(QPen(border_col, 1.2))
+            painter.setBrush(QBrush(bg_col))
+            painter.drawRoundedRect(rect, 6, 6)
+
+            text_col = QColor("#000000" if is_light else "#ffffff")
+        elif is_selected:
+            # Выбранная модель, когда курсор находится на другой ячейке (сдержанный нейтральный контур)
+            bg_col = QColor(17, 19, 24, 12) if is_light else QColor(222, 215, 196, 15)
+            border_col = QColor(17, 19, 24, 35) if is_light else QColor(222, 215, 196, 40)
+
+            painter.setPen(QPen(border_col, 1.0))
+            painter.setBrush(QBrush(bg_col))
+            painter.drawRoundedRect(rect, 6, 6)
+
+            text_col = QColor("#111318" if is_light else "#ded7c4")
+        else:
+            # Обычные неактивные ячейки
+            if is_enabled:
+                text_col = QColor("#111318" if is_light else "#ded7c4")
+            else:
+                text_col = QColor("#a2a8b5" if is_light else "#555042")
+
+        text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+        painter.setPen(text_col)
+        painter.setFont(font)
+        text_rect = rect.adjusted(8, 0, -8, 0)
+        painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, text)
+
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        sz = super().sizeHint(option, index)
+        sz.setHeight(28)
+        return sz
+
+
+class ModelSelectorCombo(QComboBox):
+    model_hovered = pyqtSignal(str)
+
+    EMOTIONS = [
+        "happy", "surprise", "weather_hot", "weather_rain",
+        "weather_thunder", "sad", "weather_snow", "angry"
+    ]
+
+    DARK_EMO_COLORS = {
+        "happy": QColor("#facc15"),
+        "surprise": QColor("#c084fc"),
+        "weather_hot": QColor("#fb923c"),
+        "weather_rain": QColor("#38bdf8"),
+        "weather_thunder": QColor("#f472b6"),
+        "sad": QColor("#67e8f9"),
+        "weather_snow": QColor("#4ade80"),
+        "angry": QColor("#f43f5e")
+    }
+
+    LIGHT_EMO_COLORS = {
+        "happy": QColor("#d97706"),
+        "surprise": QColor("#7c3aed"),
+        "weather_hot": QColor("#ea580c"),
+        "weather_rain": QColor("#0284c7"),
+        "weather_thunder": QColor("#9333ea"),
+        "sad": QColor("#0891b2"),
+        "weather_snow": QColor("#059669"),
+        "angry": QColor("#e11d48")
+    }
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setView(QListView())
+        self.setItemDelegate(ModelItemDelegate(self))
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setMouseTracking(True)
+
+        if self.view():
+            self.view().setMouseTracking(True)
+            if self.view().viewport():
+                self.view().viewport().setCursor(Qt.CursorShape.PointingHandCursor)
+                self.view().viewport().setMouseTracking(True)
+                self.view().viewport().installEventFilter(self)
+
+        self.current_theme = "dark"
+        self.hovered_row = -1
+        self.last_emotion = None
+        self.current_hover_color = self.DARK_EMO_COLORS["happy"]
+
+    def enterEvent(self, event):
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        super().enterEvent(event)
+
+    def mouseMoveEvent(self, event):
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        super().mouseMoveEvent(event)
+
+    def _pick_new_color(self):
+        available = [e for e in self.EMOTIONS if e != self.last_emotion]
+        emo = random.choice(available) if available else self.EMOTIONS[0]
+        self.last_emotion = emo
+
+        palette = self.LIGHT_EMO_COLORS if self.current_theme == "light" else self.DARK_EMO_COLORS
+        self.current_hover_color = palette.get(emo, QColor("#facc15"))
+        self.model_hovered.emit(emo)
+
+    def showPopup(self):
+        self.hovered_row = -1
+        self.last_emotion = None
+        super().showPopup()
+        if self.view() and self.view().window():
+            container = self.view().window()
+            container.setMouseTracking(True)
+            container.installEventFilter(self)
+            pos_global = QCursor.pos()
+            if self.rect().contains(self.mapFromGlobal(pos_global)):
+                container.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def hidePopup(self):
+        super().hidePopup()
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        if self.view() and self.view().window():
+            self.view().window().unsetCursor()
+
+    def eventFilter(self, obj, event):
+        container = self.view().window() if self.view() else None
+        viewport = self.view().viewport() if self.view() else None
+
+        if obj in (viewport, container):
+            if event.type() == QEvent.Type.MouseMove:
+                pos_global = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
+
+                # Проверяем нахождение курсора над самой плашкой (кнопкой выбора модели)
+                if self.rect().contains(self.mapFromGlobal(pos_global)):
+                    if container:
+                        container.setCursor(Qt.CursorShape.PointingHandCursor)
+                    self.setCursor(Qt.CursorShape.PointingHandCursor)
+                else:
+                    if viewport and viewport.rect().contains(viewport.mapFromGlobal(pos_global)):
+                        if container:
+                            container.setCursor(Qt.CursorShape.PointingHandCursor)
+                    else:
+                        if container:
+                            container.setCursor(Qt.CursorShape.ArrowCursor)
+
+                # Переключение подсветки строк при движении внутри списка
+                if obj == viewport:
+                    idx = self.view().indexAt(viewport.mapFromGlobal(pos_global))
+                    if idx.isValid():
+                        row = idx.row()
+                        if row != self.hovered_row:
+                            self.hovered_row = row
+                            if idx.flags() & Qt.ItemFlag.ItemIsEnabled:
+                                self._pick_new_color()
+                            viewport.update()
+                    else:
+                        if self.hovered_row != -1:
+                            self.hovered_row = -1
+                            viewport.update()
+
+            elif event.type() == QEvent.Type.Leave:
+                if obj == viewport:
+                    self.hovered_row = -1
+                    viewport.update()
+
+        return super().eventFilter(obj, event)
+
+    def set_theme(self, theme: str):
+        self.current_theme = theme
+        list_bg = "#ffffff" if theme == "light" else "#0e0d0a"
+        list_border = "1.5px solid #111318" if theme == "light" else "1px solid #78735f"
+
+        self.view().setStyleSheet(f"""
+            QListView {{
+                background-color: {list_bg};
+                border: {list_border};
+                border-radius: 8px;
+                padding: 3px;
+                outline: none;
+            }}
+            QListView::item {{
+                background: transparent;
+                border: none;
+            }}
+            QListView::item:selected {{
+                background: transparent;
+                border: none;
+            }}
+            QListView::item:hover {{
+                background: transparent;
+                border: none;
+            }}
+        """)
+        self.update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        arrow_col = QColor("#111318") if self.current_theme == "light" else QColor("#ded7c4")
+        pen = QPen(arrow_col, 1.8)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+
+        cx = self.width() - 11.0
+        cy = self.height() / 2.0
+        painter.drawLine(QPointF(cx - 3.5, cy - 1.5), QPointF(cx, cy + 2.0))
+        painter.drawLine(QPointF(cx, cy + 2.0), QPointF(cx + 3.5, cy - 1.5))
+
 class ChatFrame(QFrame):
 
     CHAT_PLACEHOLDERS = [
         "Доверься мне...",
-        "Какие мысли на сегодня?..",
-        "Напиши мне что-нибудь...",
-        "Рассказывай, я на связи...",
-        "Жду твоих указаний...",
-        "Чем займемся прямо сейчас?..",
-        "Спроси меня о чем угодно...",
-        "Внимательно слушаю...",
-        "Шепни мне задачу...",
-        "Давай сотворим что-то крутое..."
+        "Какие мысли?..",
+        "Напиши мне...",
+        "Рассказывай...",
+        "Чем займемся?..",
+        "Спроси меня...",
+        "Шепни мне...",
+        "Давай творить...",
+        "Вжух..."
     ]
     
     def __init__(self, parent=None):
@@ -845,7 +1077,7 @@ class ChatFrame(QFrame):
         layout.addWidget(self.chat_history, 1)
 
         self.attached_file = None
-
+        
         self.file_container = QWidget()
         file_layout = QHBoxLayout(self.file_container)
         file_layout.setContentsMargins(0, 0, 0, 4)
@@ -884,12 +1116,12 @@ class ChatFrame(QFrame):
         self.input_container.setStyleSheet("background: transparent;")
         input_layout = QHBoxLayout(self.input_container)
         input_layout.setContentsMargins(0, 0, 0, 0)
-        input_layout.setSpacing(6)
+        input_layout.setSpacing(5)
 
         self.attach_button = QPushButton()
         self.attach_button.setObjectName("AttachBtn")
         self.attach_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.attach_button.setFixedSize(32, 32)
+        self.attach_button.setFixedSize(32, 35)
         self.attach_button.clicked.connect(self.select_file)
         input_layout.addWidget(self.attach_button)
 
@@ -899,15 +1131,58 @@ class ChatFrame(QFrame):
         self.randomize_placeholder()
         input_layout.addWidget(self.input_field, 1)
 
+        self.model_combo = ModelSelectorCombo()
+        self.model_combo.setObjectName("ModelSelectorCombo")
+        self.model_combo.setFixedWidth(102)
+        self.model_combo.setFixedHeight(35)
+        input_layout.addWidget(self.model_combo, 0)
+
         self.send_button = QPushButton()
         self.send_button.setObjectName("AttachBtn")
         self.send_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.send_button.setFixedSize(32, 32)
+        self.send_button.setFixedSize(32, 35)
         input_layout.addWidget(self.send_button)
 
         layout.addWidget(self.input_container, 0)
 
+        self.refresh_model_list()
         self.update_icons()
+
+    def refresh_model_list(self):
+        cfg = load_config()
+        api_keys = cfg.get("api_keys", {})
+        has_giga = bool(api_keys.get("gigachat", "").strip())
+        has_openrouter = bool(api_keys.get("openrouter", "").strip())
+
+        models = [
+            ("Spark", "gigachat", has_giga),
+            ("Synapse", "deepseek", has_openrouter),
+            ("Quantum", "claude", has_openrouter)
+        ]
+
+        current_val = self.model_combo.currentData() or cfg.get("selected_model", "gigachat")
+        self.model_combo.blockSignals(True)
+        self.model_combo.clear()
+
+        # Четко различимый приглушенный цвет для недоступных пунктов
+        dim_color = QColor(160, 165, 175) if self.current_theme == "light" else QColor(110, 105, 92)
+
+        for name, key, is_available in models:
+            self.model_combo.addItem(name, key)
+            idx = self.model_combo.count() - 1
+            item = self.model_combo.model().item(idx)
+
+            if not is_available:
+                item.setEnabled(False)
+                item.setForeground(QBrush(dim_color))
+
+        target_idx = self.model_combo.findData(current_val)
+        if target_idx != -1:
+            self.model_combo.setCurrentIndex(target_idx)
+        else:
+            self.model_combo.setCurrentIndex(0)
+
+        self.model_combo.blockSignals(False)
 
     def set_content_opacity(self, opacity: float):
         self.content_opacity_effect.setOpacity(max(0.0, min(1.0, opacity)))
@@ -934,11 +1209,14 @@ class ChatFrame(QFrame):
         self.current_theme = theme
         if hasattr(self, 'thinking_label'):
             self.thinking_label.set_theme(theme)
+        if hasattr(self, 'model_combo'):
+            self.model_combo.set_theme(theme)
         self.emotion_palette = self.light_palette if theme == "light" else self.dark_palette
         if self.target_emotion in self.emotion_palette:
             self.target_h, self.target_s, self.target_v = self.emotion_palette[self.target_emotion]
             self.cur_h, self.cur_s, self.cur_v = self.emotion_palette[self.target_emotion]
         self.update_icons()
+        self.refresh_model_list()
         self.update()
 
     def set_emotion(self, emotion: str):
@@ -1800,7 +2078,7 @@ class MainWindow(QWidget):
 
         title_bar = QHBoxLayout()
         title_bar.setContentsMargins(10, 0, 10, 0)
-
+        
         self.title_btns_widget = QWidget()
         self.title_btns_widget.setObjectName("TitleBtnsWidget")
         title_btns_layout = QHBoxLayout(self.title_btns_widget)
@@ -1900,6 +2178,14 @@ class MainWindow(QWidget):
         self.right_panel.hide()
         mic_chat_layout.addWidget(self.right_panel)
 
+        saved_model = self.config.get("selected_model", "gigachat")
+        idx = self.right_panel.model_combo.findData(saved_model)
+        if idx != -1:
+            self.right_panel.model_combo.setCurrentIndex(idx)
+        self.command_parser.llm.set_model(saved_model)
+        self.right_panel.model_combo.currentIndexChanged.connect(self.on_chat_model_changed)
+        self.right_panel.model_combo.model_hovered.connect(self.on_model_hovered)
+
         self.content_layout.addWidget(self.mic_chat_container, 0, 0)
 
         self.settings_panel = SettingsFrame()
@@ -1925,6 +2211,8 @@ class MainWindow(QWidget):
         self.input_field.setFont(QFont(self.font_family, 12))
         self.send_button = self.right_panel.send_button
         self.send_button.setFont(QFont(self.font_family, 12))
+        self.right_panel.model_combo.setFont(QFont(self.font_family, 11))
+        self.right_panel.model_combo.view().setFont(QFont(self.font_family, 11))
 
         self.input_field.returnPressed.connect(self.send_message)
         self.send_button.clicked.connect(self.send_message)
@@ -2011,6 +2299,18 @@ class MainWindow(QWidget):
             self.mini_mode_container.setVisible(False)
             self.right_area.setVisible(True)
             self.setFixedSize(380, 560)
+
+    def on_chat_model_changed(self, index):
+        model_key = self.right_panel.model_combo.currentData()
+        if model_key:
+            self.command_parser.llm.set_model(model_key)
+            cfg = load_config()
+            cfg["selected_model"] = model_key
+            save_config(cfg)
+    
+    def on_model_hovered(self, emotion):
+        if hasattr(self, 'right_panel'):
+            self.right_panel.set_emotion(emotion)
 
     def check_battery_status(self):
         try:
@@ -2735,6 +3035,7 @@ class MainWindow(QWidget):
         target_h = 280 if is_opening else 0
 
         if is_opening:
+            self.right_panel.refresh_model_list()
             self.right_panel.setFixedHeight(start_h)
             self.right_panel.show()
             self.right_panel.set_content_opacity(0.0)

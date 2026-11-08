@@ -53,7 +53,11 @@ class MemoryManager:
             if not self.facts:
                 return ""
             formatted_facts = "\n".join([f"- {fact}" for fact in self.facts])
-            return f"\n\nФАКТЫ И ВОСПОМИНАНИЯ О ПОЛЬЗОВАТЕЛЕ (ДОЛГОВРЕМЕННАЯ ПАМЯТЬ):\n{formatted_facts}\nИспользуй эти факты естественным образом в общении, если это уместно."
+            return (
+                f"\n\nФАКТЫ И ВОСПОМИНАНИЯ О ПОЛЬЗОВАТЕЛЕ (ДОЛГОВРЕМЕННАЯ ПАМЯТЬ):\n"
+                f"{formatted_facts}\n"
+                f"Используй эти факты естественным образом в общении, если это уместно."
+            )
 
     def extract_facts_async(self, client, model_name: str, user_text: str, assistant_reply: str):
         threading.Thread(
@@ -75,11 +79,11 @@ class MemoryManager:
             return
 
         extraction_prompt = (
-            "Ты — аналитик диалога. Определи, сообщил ли пользователь в своей реплике какую-либо личную информацию о себе: "
-            "своё имя, профессию, стек технологий, увлечения, любимые вещи, привычки или факты о своей жизни.\n\n"
+            "Ты — аналитик диалога. Определи, сообщил ли пользователь в своей реплике личную информацию о себе: "
+            "своё имя, стек технологий, увлечения, любимые вещи, привычки или факты о своей жизни.\n\n"
             "ПРАВИЛА:\n"
             "1. Если пользователь просто задал вопрос, пошутил или поддержал разговор ни о чём — напиши ровно одно слово: НИЧЕГО\n"
-            "2. Если есть реальный факт о пользователе — сформулируй его кратко от 3-го лица в одно предложение (например: 'Пользователь пишет код на Python', 'Любит чай без сахара').\n"
+            "2. Если есть реальный факт о пользователе — сформулируй его кратко от 3-го лица в одно предложение (например: 'Пользователь пишет код на Python').\n"
             "3. Не пиши вступительных слов, только сам факт или НИЧЕГО.\n\n"
             f"Реплика пользователя: {user_text}\n"
             f"Ответ ассистента: {assistant_reply}\n\n"
@@ -87,13 +91,33 @@ class MemoryManager:
         )
 
         try:
-            payload = {
-                "model": model_name,
-                "messages": [{"role": "user", "content": extraction_prompt}]
-            }
-            response = client.chat(payload)
-            result = response.choices[0].message.content.strip()
+            raw_content = ""
 
+            # Ветка 1: GigaChat (client.chat является вызываемым методом)
+            if hasattr(client, "chat") and callable(client.chat):
+                res = client.chat({
+                    "model": model_name if model_name else "GigaChat",
+                    "messages": [{"role": "user", "content": extraction_prompt}]
+                })
+                if res and getattr(res, "choices", None):
+                    raw_content = getattr(res.choices[0].message, "content", "")
+
+            # Ветка 2: OpenRouter / OpenAI (client.chat — объект с ресурсом completions)
+            elif hasattr(client, "chat") and hasattr(client.chat, "completions"):
+                target_model = model_name if ("/" in model_name or ":" in model_name) else "deepseek/deepseek-chat"
+                response = client.chat.completions.create(
+                    model=target_model,
+                    messages=[{"role": "user", "content": extraction_prompt}],
+                    temperature=0.2,
+                    max_tokens=150
+                )
+                if response and getattr(response, "choices", None):
+                    choice = response.choices[0]
+                    raw_content = getattr(choice.message, "content", None)
+                    if not raw_content:
+                        raw_content = getattr(choice.message, "reasoning", "")
+
+            result = str(raw_content or "").strip()
             negative_markers = ["НИЧЕГО", "НЕТ", "ФАКТОВ НЕТ", "НЕТ НОВОЙ", "НЕТ ФАКТОВ"]
             clean_res = result.replace("Результат:", "").replace("Факт:", "").strip()
 
@@ -101,5 +125,6 @@ class MemoryManager:
                 if 5 <= len(clean_res) <= 140:
                     print(f"[Memory]: Новый факт в копилку -> '{clean_res}'", flush=True)
                     self.add_fact(clean_res)
+
         except Exception as e:
-            print(f"[Memory Extract Error]: {e}", flush=True)
+            print(f"[Memory Extract Warning]: {e}", flush=True)

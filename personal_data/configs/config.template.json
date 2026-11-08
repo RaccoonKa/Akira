@@ -10,7 +10,6 @@
     "music_service": "yandex",
     "use_spotify": false,
     "vpn_service": "none",
-    "hdrezka_domain": "https://ru1.hdreskaz.top",
     "voice_volume": 100,
     "alarm_sound": "alarm_1",
     "custom_alarm_path": "",
@@ -35,6 +34,7 @@
     },
     "api_keys": {
         "gigachat": "",
+        "openrouter": "",
         "telegram_token": "",
         "telegram_admin_id": 0,
         "yandex_music_token": "",
