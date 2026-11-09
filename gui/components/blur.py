@@ -20,9 +20,16 @@ class WINDOWCOMPOSITIONATTRIBDATA(Structure):
     ]
 
 
-def enable_window_acrylic(hwnd: int, hex_color: str = "25080805"):
-    if sys.platform != "win32":
-        return
+ACCENT_DISABLED = 0
+ACCENT_ENABLE_GRADIENT = 1
+ACCENT_ENABLE_TRANSPARENTGRADIENT = 2
+ACCENT_ENABLE_BLURBEHIND = 3
+ACCENT_ENABLE_ACRYLICBLURBEHIND = 4
+
+
+def _apply_accent_policy(hwnd: int, accent_state: int, accent_flags: int = 0, color_int: int = 0) -> bool:
+    if sys.platform != "win32" or not hwnd:
+        return False
 
     try:
         user32 = ctypes.windll.user32
@@ -30,33 +37,55 @@ def enable_window_acrylic(hwnd: int, hex_color: str = "25080805"):
         set_window_composition_attribute.restype = c_int
         set_window_composition_attribute.argtypes = [c_void_p, ctypes.POINTER(WINDOWCOMPOSITIONATTRIBDATA)]
 
-        color_int = int(hex_color, 16)
-
         accent = ACCENT_POLICY()
-        accent.AccentState = 4
-        accent.AccentFlags = 2
+        accent.AccentState = accent_state
+        accent.AccentFlags = accent_flags
         accent.GradientColor = color_int
         accent.AnimationId = 0
 
         data = WINDOWCOMPOSITIONATTRIBDATA()
-        data.Attribute = 19
+        data.Attribute = 19  # WCA_ACCENT_POLICY
         data.Data = ctypes.cast(byref(accent), c_void_p)
         data.SizeOfData = sizeof(accent)
 
-        set_window_composition_attribute(c_void_p(hwnd), byref(data))
-    except Exception as e:
-        try:
-            accent = ACCENT_POLICY()
-            accent.AccentState = 3
-            accent.AccentFlags = 0
-            accent.GradientColor = 0
-            accent.AnimationId = 0
+        res = set_window_composition_attribute(c_void_p(hwnd), byref(data))
+        return bool(res)
+    except Exception:
+        return False
 
-            data = WINDOWCOMPOSITIONATTRIBDATA()
-            data.Attribute = 19
-            data.Data = ctypes.cast(byref(accent), c_void_p)
-            data.SizeOfData = sizeof(accent)
 
-            set_window_composition_attribute(c_void_p(hwnd), byref(data))
-        except Exception:
-            pass
+def enable_window_acrylic(hwnd: int, hex_color: str = "25080805"):
+    if sys.platform != "win32" or not hwnd:
+        return
+
+    try:
+        color_int = int(hex_color, 16)
+    except (ValueError, TypeError):
+        color_int = 0
+
+    success = _apply_accent_policy(
+        hwnd=hwnd,
+        accent_state=ACCENT_ENABLE_ACRYLICBLURBEHIND,
+        accent_flags=2,
+        color_int=color_int
+    )
+
+    if not success:
+        _apply_accent_policy(
+            hwnd=hwnd,
+            accent_state=ACCENT_ENABLE_BLURBEHIND,
+            accent_flags=0,
+            color_int=0
+        )
+
+
+def disable_window_acrylic(hwnd: int):
+    if sys.platform != "win32" or not hwnd:
+        return
+
+    _apply_accent_policy(
+        hwnd=hwnd,
+        accent_state=ACCENT_DISABLED,
+        accent_flags=0,
+        color_int=0
+    )

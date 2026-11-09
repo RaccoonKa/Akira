@@ -11,24 +11,25 @@ from services.telegram.telegram_bot import TelegramBotThread
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTextEdit, QLineEdit, QFrame, QFileDialog, QGridLayout,
-    QGraphicsOpacityEffect, QComboBox, QListView, QStyledItemDelegate, QStyle
+    QGraphicsOpacityEffect, QSizePolicy
 )
 from PyQt6.QtCore import (
-    Qt, QPoint, QRectF, QTimer, QPropertyAnimation, QVariantAnimation,
+    Qt, QPoint, QRect, QRectF, QTimer, QPropertyAnimation, QVariantAnimation,
     QEasingCurve, QParallelAnimationGroup, QThread, pyqtSignal, QEvent,
     QSize, QPointF, QByteArray
 )
 from PyQt6.QtGui import (
     QPainter, QPen, QColor, QLinearGradient, QRadialGradient,
     QBrush, QPainterPath, QFont, QFontDatabase, QGuiApplication,
-    QIcon, QPixmap, QTextCursor, QCursor
+    QIcon, QPixmap, QTextCursor
 )
 from PyQt6.QtSvg import QSvgRenderer
 from gui.styles import get_main_style
 from gui.windows.settings_window import SettingsFrame
+from gui.windows.studio_frame import StudioFrame
 from audio.stt import STTThread
 from audio.tts import TTSThread
-from core.nlp.parser.command_parser import CommandParser
+from core.nlp.command_parser import CommandParser
 from core.system.actions import SystemActions
 from core.vision.vision_provider import VisionThread
 from core.vision.presence_manager import PresenceManager
@@ -90,6 +91,13 @@ SVG_PAPERCLIP = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" f
 <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
 </svg>"""
 
+SVG_STUDIO = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/>
+</svg>"""
+
+SVG_STUDIO_COLLAPSE = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+<rect x="3" y="3" width="18" height="18" rx="2"/><polyline points="10 9 7 12 10 15"/><polyline points="14 9 17 12 14 15"/>
+</svg>"""
 
 def render_svg_icon(svg_xml: str, color: str, size: int = 15) -> QIcon:
     xml = svg_xml.replace("{color}", color)
@@ -129,9 +137,6 @@ class AudioVisualizerWorker(QThread):
                     self.msleep(300)
                     continue
 
-                # Запоминаем ID текущего устройства вывода
-                current_speaker_id = getattr(default_speaker, 'id', None)
-
                 mic = None
                 try:
                     mic = sc.get_microphone(default_speaker.id, include_loopback=True)
@@ -154,21 +159,10 @@ class AudioVisualizerWorker(QThread):
                     recorder_ctx = mic.recorder(samplerate=44100, blocksize=2048)
 
                 with recorder_ctx as recorder:
-                    check_device_counter = 0
                     while self.running:
                         data = recorder.record(numframes=2048)
                         if not self.running:
                             break
-
-                        check_device_counter += 1
-                        if check_device_counter >= 25:
-                            check_device_counter = 0
-                            try:
-                                new_default = sc.default_speaker()
-                                if new_default and getattr(new_default, 'id', None) != current_speaker_id:
-                                    break
-                            except Exception:
-                                pass
 
                         samples = data[:, 0] if data.ndim > 1 else data
                         rms = float(np.sqrt(np.mean(samples ** 2)))
@@ -766,251 +760,19 @@ class ThinkingLabel(QLabel):
         painter.drawText(self.rect(), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, self.text())
         painter.end()
 
-class ModelItemDelegate(QStyledItemDelegate):
-    def __init__(self, combo, parent=None):
-        super().__init__(parent or combo)
-        self.combo = combo
-
-    def paint(self, painter, option, index):
-        painter.save()
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        row = index.row()
-        is_hovered = (row == self.combo.hovered_row)
-        is_selected = (row == self.combo.currentIndex())
-        is_enabled = bool(index.flags() & Qt.ItemFlag.ItemIsEnabled)
-        is_light = (self.combo.current_theme == "light")
-
-        rect = QRectF(option.rect).adjusted(2, 1, -2, -1)
-        font = QFont(option.font)
-
-        if is_hovered and is_enabled:
-            # Активная ячейка под курсором — яркий динамический цвет эмоции
-            col = self.combo.current_hover_color
-            bg_col = QColor(col)
-            bg_col.setAlpha(40 if is_light else 65)
-            border_col = QColor(col)
-            border_col.setAlpha(160 if is_light else 200)
-
-            painter.setPen(QPen(border_col, 1.2))
-            painter.setBrush(QBrush(bg_col))
-            painter.drawRoundedRect(rect, 6, 6)
-
-            text_col = QColor("#000000" if is_light else "#ffffff")
-        elif is_selected:
-            # Выбранная модель, когда курсор находится на другой ячейке (сдержанный нейтральный контур)
-            bg_col = QColor(17, 19, 24, 12) if is_light else QColor(222, 215, 196, 15)
-            border_col = QColor(17, 19, 24, 35) if is_light else QColor(222, 215, 196, 40)
-
-            painter.setPen(QPen(border_col, 1.0))
-            painter.setBrush(QBrush(bg_col))
-            painter.drawRoundedRect(rect, 6, 6)
-
-            text_col = QColor("#111318" if is_light else "#ded7c4")
-        else:
-            # Обычные неактивные ячейки
-            if is_enabled:
-                text_col = QColor("#111318" if is_light else "#ded7c4")
-            else:
-                text_col = QColor("#a2a8b5" if is_light else "#555042")
-
-        text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
-        painter.setPen(text_col)
-        painter.setFont(font)
-        text_rect = rect.adjusted(8, 0, -8, 0)
-        painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, text)
-
-        painter.restore()
-
-    def sizeHint(self, option, index):
-        sz = super().sizeHint(option, index)
-        sz.setHeight(28)
-        return sz
-
-
-class ModelSelectorCombo(QComboBox):
-    model_hovered = pyqtSignal(str)
-
-    EMOTIONS = [
-        "happy", "surprise", "weather_hot", "weather_rain",
-        "weather_thunder", "sad", "weather_snow", "angry"
-    ]
-
-    DARK_EMO_COLORS = {
-        "happy": QColor("#facc15"),
-        "surprise": QColor("#c084fc"),
-        "weather_hot": QColor("#fb923c"),
-        "weather_rain": QColor("#38bdf8"),
-        "weather_thunder": QColor("#f472b6"),
-        "sad": QColor("#67e8f9"),
-        "weather_snow": QColor("#4ade80"),
-        "angry": QColor("#f43f5e")
-    }
-
-    LIGHT_EMO_COLORS = {
-        "happy": QColor("#d97706"),
-        "surprise": QColor("#7c3aed"),
-        "weather_hot": QColor("#ea580c"),
-        "weather_rain": QColor("#0284c7"),
-        "weather_thunder": QColor("#9333ea"),
-        "sad": QColor("#0891b2"),
-        "weather_snow": QColor("#059669"),
-        "angry": QColor("#e11d48")
-    }
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setView(QListView())
-        self.setItemDelegate(ModelItemDelegate(self))
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setMouseTracking(True)
-
-        if self.view():
-            self.view().setMouseTracking(True)
-            if self.view().viewport():
-                self.view().viewport().setCursor(Qt.CursorShape.PointingHandCursor)
-                self.view().viewport().setMouseTracking(True)
-                self.view().viewport().installEventFilter(self)
-
-        self.current_theme = "dark"
-        self.hovered_row = -1
-        self.last_emotion = None
-        self.current_hover_color = self.DARK_EMO_COLORS["happy"]
-
-    def enterEvent(self, event):
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        super().enterEvent(event)
-
-    def mouseMoveEvent(self, event):
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        super().mouseMoveEvent(event)
-
-    def _pick_new_color(self):
-        available = [e for e in self.EMOTIONS if e != self.last_emotion]
-        emo = random.choice(available) if available else self.EMOTIONS[0]
-        self.last_emotion = emo
-
-        palette = self.LIGHT_EMO_COLORS if self.current_theme == "light" else self.DARK_EMO_COLORS
-        self.current_hover_color = palette.get(emo, QColor("#facc15"))
-        self.model_hovered.emit(emo)
-
-    def showPopup(self):
-        self.hovered_row = -1
-        self.last_emotion = None
-        super().showPopup()
-        if self.view() and self.view().window():
-            container = self.view().window()
-            container.setMouseTracking(True)
-            container.installEventFilter(self)
-            pos_global = QCursor.pos()
-            if self.rect().contains(self.mapFromGlobal(pos_global)):
-                container.setCursor(Qt.CursorShape.PointingHandCursor)
-
-    def hidePopup(self):
-        super().hidePopup()
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        if self.view() and self.view().window():
-            self.view().window().unsetCursor()
-
-    def eventFilter(self, obj, event):
-        container = self.view().window() if self.view() else None
-        viewport = self.view().viewport() if self.view() else None
-
-        if obj in (viewport, container):
-            if event.type() == QEvent.Type.MouseMove:
-                pos_global = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
-
-                # Проверяем нахождение курсора над самой плашкой (кнопкой выбора модели)
-                if self.rect().contains(self.mapFromGlobal(pos_global)):
-                    if container:
-                        container.setCursor(Qt.CursorShape.PointingHandCursor)
-                    self.setCursor(Qt.CursorShape.PointingHandCursor)
-                else:
-                    if viewport and viewport.rect().contains(viewport.mapFromGlobal(pos_global)):
-                        if container:
-                            container.setCursor(Qt.CursorShape.PointingHandCursor)
-                    else:
-                        if container:
-                            container.setCursor(Qt.CursorShape.ArrowCursor)
-
-                # Переключение подсветки строк при движении внутри списка
-                if obj == viewport:
-                    idx = self.view().indexAt(viewport.mapFromGlobal(pos_global))
-                    if idx.isValid():
-                        row = idx.row()
-                        if row != self.hovered_row:
-                            self.hovered_row = row
-                            if idx.flags() & Qt.ItemFlag.ItemIsEnabled:
-                                self._pick_new_color()
-                            viewport.update()
-                    else:
-                        if self.hovered_row != -1:
-                            self.hovered_row = -1
-                            viewport.update()
-
-            elif event.type() == QEvent.Type.Leave:
-                if obj == viewport:
-                    self.hovered_row = -1
-                    viewport.update()
-
-        return super().eventFilter(obj, event)
-
-    def set_theme(self, theme: str):
-        self.current_theme = theme
-        list_bg = "#ffffff" if theme == "light" else "#0e0d0a"
-        list_border = "1.5px solid #111318" if theme == "light" else "1px solid #78735f"
-
-        self.view().setStyleSheet(f"""
-            QListView {{
-                background-color: {list_bg};
-                border: {list_border};
-                border-radius: 8px;
-                padding: 3px;
-                outline: none;
-            }}
-            QListView::item {{
-                background: transparent;
-                border: none;
-            }}
-            QListView::item:selected {{
-                background: transparent;
-                border: none;
-            }}
-            QListView::item:hover {{
-                background: transparent;
-                border: none;
-            }}
-        """)
-        self.update()
-
-    def paintEvent(self, event):
-        super().paintEvent(event)
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        arrow_col = QColor("#111318") if self.current_theme == "light" else QColor("#ded7c4")
-        pen = QPen(arrow_col, 1.8)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-        painter.setPen(pen)
-
-        cx = self.width() - 11.0
-        cy = self.height() / 2.0
-        painter.drawLine(QPointF(cx - 3.5, cy - 1.5), QPointF(cx, cy + 2.0))
-        painter.drawLine(QPointF(cx, cy + 2.0), QPointF(cx + 3.5, cy - 1.5))
-
 class ChatFrame(QFrame):
 
     CHAT_PLACEHOLDERS = [
         "Доверься мне...",
-        "Какие мысли?..",
-        "Напиши мне...",
-        "Рассказывай...",
-        "Чем займемся?..",
-        "Спроси меня...",
-        "Шепни мне...",
-        "Давай творить...",
-        "Вжух..."
+        "Какие мысли на сегодня?..",
+        "Напиши мне что-нибудь...",
+        "Рассказывай, я на связи...",
+        "Жду твоих указаний...",
+        "Чем займемся прямо сейчас?..",
+        "Спроси меня о чем угодно...",
+        "Внимательно слушаю...",
+        "Шепни мне задачу...",
+        "Давай сотворим что-то крутое..."
     ]
     
     def __init__(self, parent=None):
@@ -1077,7 +839,7 @@ class ChatFrame(QFrame):
         layout.addWidget(self.chat_history, 1)
 
         self.attached_file = None
-        
+
         self.file_container = QWidget()
         file_layout = QHBoxLayout(self.file_container)
         file_layout.setContentsMargins(0, 0, 0, 4)
@@ -1116,12 +878,12 @@ class ChatFrame(QFrame):
         self.input_container.setStyleSheet("background: transparent;")
         input_layout = QHBoxLayout(self.input_container)
         input_layout.setContentsMargins(0, 0, 0, 0)
-        input_layout.setSpacing(5)
+        input_layout.setSpacing(6)
 
         self.attach_button = QPushButton()
         self.attach_button.setObjectName("AttachBtn")
         self.attach_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.attach_button.setFixedSize(32, 35)
+        self.attach_button.setFixedSize(32, 32)
         self.attach_button.clicked.connect(self.select_file)
         input_layout.addWidget(self.attach_button)
 
@@ -1131,58 +893,15 @@ class ChatFrame(QFrame):
         self.randomize_placeholder()
         input_layout.addWidget(self.input_field, 1)
 
-        self.model_combo = ModelSelectorCombo()
-        self.model_combo.setObjectName("ModelSelectorCombo")
-        self.model_combo.setFixedWidth(102)
-        self.model_combo.setFixedHeight(35)
-        input_layout.addWidget(self.model_combo, 0)
-
         self.send_button = QPushButton()
         self.send_button.setObjectName("AttachBtn")
         self.send_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.send_button.setFixedSize(32, 35)
+        self.send_button.setFixedSize(32, 32)
         input_layout.addWidget(self.send_button)
 
         layout.addWidget(self.input_container, 0)
 
-        self.refresh_model_list()
         self.update_icons()
-
-    def refresh_model_list(self):
-        cfg = load_config()
-        api_keys = cfg.get("api_keys", {})
-        has_giga = bool(api_keys.get("gigachat", "").strip())
-        has_openrouter = bool(api_keys.get("openrouter", "").strip())
-
-        models = [
-            ("Spark", "gigachat", has_giga),
-            ("Synapse", "deepseek", has_openrouter),
-            ("Quantum", "claude", has_openrouter)
-        ]
-
-        current_val = self.model_combo.currentData() or cfg.get("selected_model", "gigachat")
-        self.model_combo.blockSignals(True)
-        self.model_combo.clear()
-
-        # Четко различимый приглушенный цвет для недоступных пунктов
-        dim_color = QColor(160, 165, 175) if self.current_theme == "light" else QColor(110, 105, 92)
-
-        for name, key, is_available in models:
-            self.model_combo.addItem(name, key)
-            idx = self.model_combo.count() - 1
-            item = self.model_combo.model().item(idx)
-
-            if not is_available:
-                item.setEnabled(False)
-                item.setForeground(QBrush(dim_color))
-
-        target_idx = self.model_combo.findData(current_val)
-        if target_idx != -1:
-            self.model_combo.setCurrentIndex(target_idx)
-        else:
-            self.model_combo.setCurrentIndex(0)
-
-        self.model_combo.blockSignals(False)
 
     def set_content_opacity(self, opacity: float):
         self.content_opacity_effect.setOpacity(max(0.0, min(1.0, opacity)))
@@ -1209,14 +928,11 @@ class ChatFrame(QFrame):
         self.current_theme = theme
         if hasattr(self, 'thinking_label'):
             self.thinking_label.set_theme(theme)
-        if hasattr(self, 'model_combo'):
-            self.model_combo.set_theme(theme)
         self.emotion_palette = self.light_palette if theme == "light" else self.dark_palette
         if self.target_emotion in self.emotion_palette:
             self.target_h, self.target_s, self.target_v = self.emotion_palette[self.target_emotion]
             self.cur_h, self.cur_s, self.cur_v = self.emotion_palette[self.target_emotion]
         self.update_icons()
-        self.refresh_model_list()
         self.update()
 
     def set_emotion(self, emotion: str):
@@ -1442,7 +1158,7 @@ class BackgroundFrame(QFrame):
         self.stars = []
         for _ in range(70):
             self.stars.append({
-                'rx': random.uniform(0.01, 0.99),
+                'offset_right': random.uniform(10, 870),
                 'ry': random.uniform(0.01, 0.99),
                 'size': random.uniform(0.6, 1.3),
                 'phase': random.uniform(0, math.pi * 2),
@@ -1540,7 +1256,9 @@ class BackgroundFrame(QFrame):
         ]
 
         for star in self.stars:
-            sx = star['rx'] * w
+            sx = w - star['offset_right']
+            if sx < 0:
+                continue
             sy = star['ry'] * h
             twinkle = (math.sin(star['phase']) + 1) / 2
             sz = star['size']
@@ -1659,13 +1377,25 @@ class MainWindow(QWidget):
         mgr.missed_reminders_signal.connect(self._on_missed_reminders)
 
         self.current_theme = self.config.get("theme", "dark") if isinstance(self.config, dict) else "dark"
-        self.is_mini_mode = False
+        self.is_mini_mode = self.config.get("is_mini_mode", False) if isinstance(self.config, dict) else False
+
+        # Константы геометрии: окно ОС всегда имеет ширину EXTENDED_WIDTH (Zero-Move)
+        self.window_mode = "mini" if self.is_mini_mode else "normal"
+        self.NORMAL_WIDTH = 380
+        self.EXTENDED_WIDTH = 880
+        self.WINDOW_HEIGHT = 560
+        self._is_mode_animating = False
+
+        # Анимация перемещения внутреннего корпуса (Zero-Move)
+        self.expand_anim = QVariantAnimation(self)
+        self.expand_anim.setDuration(620)
+        self.expand_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self.expand_anim.valueChanged.connect(self._on_expand_step)
 
         self.vision_thread = None
         self.presence_manager = None
 
         self.is_muted = self.config.get("is_muted", False) if isinstance(self.config, dict) else False
-        self.is_mini_mode = self.config.get("is_mini_mode", False) if isinstance(self.config, dict) else False
         self.is_whisper_mode = self.config.get("is_whisper_mode", False) if isinstance(self.config, dict) else False
 
         self.absence_start_time = None
@@ -1678,6 +1408,11 @@ class MainWindow(QWidget):
 
         self.init_ui()
         self.init_audio()
+
+        # Анимация прозрачности студии строго ПОСЛЕ создания self.studio_opacity в init_ui
+        self.studio_fade_anim = QPropertyAnimation(self.studio_opacity, b"opacity")
+        self.studio_fade_anim.setDuration(280)
+        self.studio_fade_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
         self.theme_overlay = ThemeRevealOverlay(self)
 
@@ -1734,6 +1469,13 @@ class MainWindow(QWidget):
             self.settings_btn.setText("")
             self.settings_btn.setIcon(render_svg_icon(SVG_SETTINGS, icon_color, icon_sz))
             self.settings_btn.setIconSize(QSize(icon_sz, icon_sz))
+
+        if hasattr(self, 'studio_btn'):
+            self.studio_btn.setText("")
+            studio_svg = SVG_STUDIO_COLLAPSE if getattr(self, 'window_mode', 'normal') == 'extended' else SVG_STUDIO
+            self.studio_btn.setIcon(render_svg_icon(studio_svg, icon_color, icon_sz))
+            self.studio_btn.setIconSize(QSize(icon_sz, icon_sz))
+            self.studio_btn.setToolTip("Свернуть студию" if getattr(self, 'window_mode', 'normal') == 'extended' else "Режим студии")
 
         if hasattr(self, 'mini_mode_btn'):
             self.mini_mode_btn.setText("")
@@ -1796,6 +1538,9 @@ class MainWindow(QWidget):
         self.mini_left_panel.set_theme(theme)
         self.right_panel.set_theme(theme)
         self.settings_panel.set_theme(theme)
+        if hasattr(self, 'studio_panel'):
+            self.studio_panel.set_theme(theme)
+        self.studio_panel.set_theme(theme)
         self.update_title_icons()
 
         if enable_window_acrylic:
@@ -1874,8 +1619,9 @@ class MainWindow(QWidget):
         screen = QGuiApplication.primaryScreen()
         avail = screen.availableGeometry()
 
-        w = self.width()
-        h = self.height()
+        # Правый край корпуса всегда прижат к (avail.right - 20)
+        w = self.EXTENDED_WIDTH
+        h = self.WINDOW_HEIGHT
         x = avail.x() + avail.width() - w - 20
         y = avail.y() + avail.height() - h - 20
         start_y = avail.y() + avail.height() + 50
@@ -1958,6 +1704,146 @@ class MainWindow(QWidget):
             self.toggle_settings()
         self.settings_panel.scroll_to_bottom()
 
+    def _update_click_mask(self, width: int):
+        """Оставляет активной для мыши только видимую часть корпуса Акиры."""
+        from PyQt6.QtGui import QRegion
+        x_local = self.EXTENDED_WIDTH - width
+        self.setMask(QRegion(x_local, 0, width, self.WINDOW_HEIGHT))
+
+    def _on_expand_step(self, val):
+        w = int(round(val))
+        x_local = self.EXTENDED_WIDTH - w
+        self.bg_frame.setGeometry(x_local, 0, w, self.WINDOW_HEIGHT)
+        self._update_click_mask(w)
+
+    def toggle_extended_mode(self):
+        if getattr(self, '_is_mode_animating', False):
+            return
+        if self.is_mini_mode or getattr(self, 'window_mode', 'normal') == "mini":
+            return
+            
+        is_expanding = (self.window_mode == "normal")
+        self.window_mode = "extended" if is_expanding else "normal"
+        self.update_title_icons()
+        self._is_mode_animating = True
+        
+        if is_expanding:
+            if self.right_panel.isVisible():
+                self._do_toggle_chat(force_close=True)
+            
+            self.studio_panel.hide()
+            self.studio_opacity.setOpacity(0.0)
+            
+            try:
+                self.expand_anim.finished.disconnect()
+            except Exception:
+                pass
+                
+            self.expand_anim.stop()
+            self.expand_anim.setDuration(620)
+            self.expand_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+            self.expand_anim.setStartValue(float(self.NORMAL_WIDTH))
+            self.expand_anim.setEndValue(float(self.EXTENDED_WIDTH))
+            
+            def on_expand_finished():
+                self.bg_frame.setGeometry(0, 0, self.EXTENDED_WIDTH, self.WINDOW_HEIGHT)
+                self.clearMask()  # Окно полностью раскрыто — маска кликов занимает все 880px
+                
+                self.studio_panel.show()
+                try:
+                    self.studio_fade_anim.finished.disconnect()
+                except Exception:
+                    pass
+                self.studio_fade_anim.stop()
+                self.studio_fade_anim.setDuration(280)
+                self.studio_fade_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+                self.studio_fade_anim.setStartValue(0.0)
+                self.studio_fade_anim.setEndValue(1.0)
+                
+                def on_fade_in_finished():
+                    self._is_mode_animating = False
+                    
+                self.studio_fade_anim.finished.connect(on_fade_in_finished)
+                self.studio_fade_anim.start()
+                
+            self.expand_anim.finished.connect(on_expand_finished)
+            self.expand_anim.start()
+
+        else:
+            self.command_parser.llm.set_model("gigachat")
+            
+            # Фаза 1: Растворяем студию
+            try:
+                self.studio_fade_anim.finished.disconnect()
+            except Exception:
+                pass
+            self.studio_fade_anim.stop()
+            self.studio_fade_anim.setDuration(200)
+            self.studio_fade_anim.setEasingCurve(QEasingCurve.Type.InQuad)
+            self.studio_fade_anim.setStartValue(self.studio_opacity.opacity())
+            self.studio_fade_anim.setEndValue(0.0)
+            
+            def on_fade_out_finished():
+                self.studio_panel.hide()
+                
+                try:
+                    self.expand_anim.finished.disconnect()
+                except Exception:
+                    pass
+                self.expand_anim.stop()
+                self.expand_anim.setDuration(580)
+                self.expand_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+                self.expand_anim.setStartValue(float(self.EXTENDED_WIDTH))
+                self.expand_anim.setEndValue(float(self.NORMAL_WIDTH))
+                
+                def on_collapse_finished():
+                    init_x = self.EXTENDED_WIDTH - self.NORMAL_WIDTH
+                    self.bg_frame.setGeometry(init_x, 0, self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
+                    self._update_click_mask(self.NORMAL_WIDTH)
+                    self._is_mode_animating = False
+                    
+                self.expand_anim.finished.connect(on_collapse_finished)
+                self.expand_anim.start()
+                
+            self.studio_fade_anim.finished.connect(on_fade_out_finished)
+            self.studio_fade_anim.start()
+
+    def toggle_mini_mode(self):
+        self.is_mini_mode = not self.is_mini_mode
+        pos = self.pos()
+
+        self.hide()
+        flags = self.windowFlags()
+
+        if self.is_mini_mode:
+            flags |= Qt.WindowType.WindowStaysOnTopHint
+            self.setWindowFlags(flags)
+            self.clearMask()
+            self.right_area.hide()
+            self.mini_mode_container.show()
+            self.setFixedSize(460, 56)
+            self.bg_frame.setGeometry(0, 0, 460, 56)
+            self.bg_frame.set_mic_widget(self.mini_left_panel)
+        else:
+            flags &= ~Qt.WindowType.WindowStaysOnTopHint
+            self.setWindowFlags(flags)
+            self.mini_mode_container.hide()
+            self.right_area.show()
+            self.setFixedSize(self.EXTENDED_WIDTH, self.WINDOW_HEIGHT)
+            init_x = self.EXTENDED_WIDTH - self.NORMAL_WIDTH
+            self.bg_frame.setGeometry(init_x, 0, self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
+            self._update_click_mask(self.NORMAL_WIDTH)
+            self.bg_frame.set_mic_widget(self.left_panel)
+
+        self.move(pos)
+        self.show()
+
+        cfg = load_config()
+        cfg["is_mini_mode"] = self.is_mini_mode
+        if isinstance(self.config, dict):
+            self.config["is_mini_mode"] = self.is_mini_mode
+        save_config(cfg)
+
     def toggle_mini_mode(self):
         self.is_mini_mode = not self.is_mini_mode
         pos = self.pos()
@@ -1970,14 +1856,16 @@ class MainWindow(QWidget):
             self.setWindowFlags(flags)
             self.right_area.hide()
             self.mini_mode_container.show()
-            self.setFixedSize(460, 56)
+            self.resize(460, 56)
+            self.bg_frame.setGeometry(0, 0, 460, 56)
             self.bg_frame.set_mic_widget(self.mini_left_panel)
         else:
             flags &= ~Qt.WindowType.WindowStaysOnTopHint
             self.setWindowFlags(flags)
             self.mini_mode_container.hide()
             self.right_area.show()
-            self.setFixedSize(380, 560)
+            self.resize(self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
+            self.bg_frame.setGeometry(0, 0, self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
             self.bg_frame.set_mic_widget(self.left_panel)
 
         self.move(pos)
@@ -2059,26 +1947,42 @@ class MainWindow(QWidget):
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
-        self.setFixedSize(380, 560)
+        # Окно ОС сразу фиксируется в максимальной ширине 880px
+        self.setFixedSize(self.EXTENDED_WIDTH, self.WINDOW_HEIGHT)
 
-        main_layout = QVBoxLayout()
-        main_layout.setContentsMargins(0, 0, 0, 0)
-
-        self.bg_frame = BackgroundFrame()
+        # Корпус Акиры размещается внутри окна напрямую
+        self.bg_frame = BackgroundFrame(self)
         self.bg_frame.setObjectName("CentralWidget")
+        
+        # В компактном режиме корпус стоит у правого края окна (x = 500)
+        init_x = self.EXTENDED_WIDTH - self.NORMAL_WIDTH
+        self.bg_frame.setGeometry(init_x, 0, self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
 
-        container_layout = QVBoxLayout()
+        container_layout = QHBoxLayout(self.bg_frame)
         container_layout.setContentsMargins(6, 6, 6, 6)
         container_layout.setSpacing(0)
 
+        # 1. Левая панель студии (Extended Mode)
+        self.studio_panel = StudioFrame(self)
+        self.studio_panel.setMinimumWidth(0)
+        self.studio_panel.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
+        self.studio_panel.hide()
+
+        self.studio_opacity = QGraphicsOpacityEffect(self.studio_panel)
+        self.studio_opacity.setOpacity(0.0)
+        self.studio_panel.setGraphicsEffect(self.studio_opacity)
+        container_layout.addWidget(self.studio_panel, 1)
+
+        # 2. Правая часть со сферой (зафиксирована на 368px)
         self.right_area = QWidget()
-        right_area_layout = QVBoxLayout()
+        self.right_area.setFixedWidth(self.NORMAL_WIDTH - 12)
+        right_area_layout = QVBoxLayout(self.right_area)
         right_area_layout.setContentsMargins(0, 0, 0, 0)
         right_area_layout.setSpacing(0)
 
         title_bar = QHBoxLayout()
         title_bar.setContentsMargins(10, 0, 10, 0)
-        
+
         self.title_btns_widget = QWidget()
         self.title_btns_widget.setObjectName("TitleBtnsWidget")
         title_btns_layout = QHBoxLayout(self.title_btns_widget)
@@ -2100,6 +2004,14 @@ class MainWindow(QWidget):
         self.settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.settings_btn.clicked.connect(self.toggle_settings)
         title_btns_layout.addWidget(self.settings_btn)
+
+        self.studio_btn = QPushButton()
+        self.studio_btn.setObjectName("TitleBtn")
+        self.studio_btn.setFixedSize(28, 28)
+        self.studio_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.studio_btn.setToolTip("Режим студии")
+        self.studio_btn.clicked.connect(self.toggle_extended_mode)
+        title_btns_layout.addWidget(self.studio_btn)
 
         self.mini_mode_btn = QPushButton()
         self.mini_mode_btn.setObjectName("TitleBtn")
@@ -2178,14 +2090,6 @@ class MainWindow(QWidget):
         self.right_panel.hide()
         mic_chat_layout.addWidget(self.right_panel)
 
-        saved_model = self.config.get("selected_model", "gigachat")
-        idx = self.right_panel.model_combo.findData(saved_model)
-        if idx != -1:
-            self.right_panel.model_combo.setCurrentIndex(idx)
-        self.command_parser.llm.set_model(saved_model)
-        self.right_panel.model_combo.currentIndexChanged.connect(self.on_chat_model_changed)
-        self.right_panel.model_combo.model_hovered.connect(self.on_model_hovered)
-
         self.content_layout.addWidget(self.mic_chat_container, 0, 0)
 
         self.settings_panel = SettingsFrame()
@@ -2202,8 +2106,7 @@ class MainWindow(QWidget):
                                       Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom)
 
         right_area_layout.addLayout(self.content_layout)
-        self.right_area.setLayout(right_area_layout)
-        container_layout.addWidget(self.right_area)
+        container_layout.addWidget(self.right_area, 0, Qt.AlignmentFlag.AlignRight)
 
         self.chat_history = self.right_panel.chat_history
         self.chat_history.setFont(QFont(self.font_family, 12))
@@ -2211,15 +2114,9 @@ class MainWindow(QWidget):
         self.input_field.setFont(QFont(self.font_family, 12))
         self.send_button = self.right_panel.send_button
         self.send_button.setFont(QFont(self.font_family, 12))
-        self.right_panel.model_combo.setFont(QFont(self.font_family, 11))
-        self.right_panel.model_combo.view().setFont(QFont(self.font_family, 11))
 
         self.input_field.returnPressed.connect(self.send_message)
         self.send_button.clicked.connect(self.send_message)
-
-        self.bg_frame.setLayout(container_layout)
-        main_layout.addWidget(self.bg_frame)
-        self.setLayout(main_layout)
 
         self.title_btns_opacity = QGraphicsOpacityEffect(self.title_btns_widget)
         self.title_btns_opacity.setOpacity(0.0)
@@ -2245,7 +2142,7 @@ class MainWindow(QWidget):
         self._is_chat_animating = False
         self._pending_action = None
 
-        self.mini_mode_container = QWidget()
+        self.mini_mode_container = QWidget(self)
         self.mini_mode_container.hide()
         mini_layout = QHBoxLayout(self.mini_mode_container)
         mini_layout.setContentsMargins(8, 0, 8, 0)
@@ -2286,8 +2183,6 @@ class MainWindow(QWidget):
         self.mini_send_button.clicked.connect(self.send_mini_message)
         mini_layout.addWidget(self.mini_send_button, alignment=Qt.AlignmentFlag.AlignVCenter)
 
-        container_layout.addWidget(self.mini_mode_container)
-
         self.bg_frame.set_mic_widget(self.mini_left_panel if self.is_mini_mode else self.left_panel)
 
         if self.is_mini_mode:
@@ -2295,22 +2190,13 @@ class MainWindow(QWidget):
             self.mini_mode_container.setVisible(True)
             self.setFixedSize(460, 56)
             self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+            self.clearMask()
         else:
             self.mini_mode_container.setVisible(False)
             self.right_area.setVisible(True)
-            self.setFixedSize(380, 560)
-
-    def on_chat_model_changed(self, index):
-        model_key = self.right_panel.model_combo.currentData()
-        if model_key:
-            self.command_parser.llm.set_model(model_key)
-            cfg = load_config()
-            cfg["selected_model"] = model_key
-            save_config(cfg)
-    
-    def on_model_hovered(self, emotion):
-        if hasattr(self, 'right_panel'):
-            self.right_panel.set_emotion(emotion)
+            self.setFixedSize(self.EXTENDED_WIDTH, self.WINDOW_HEIGHT)
+            # В компактном режиме прозрачные 500px слева прозрачны для кликов мыши сквозь окно
+            self._update_click_mask(self.NORMAL_WIDTH)
 
     def check_battery_status(self):
         try:
@@ -2429,6 +2315,8 @@ class MainWindow(QWidget):
             self.mute_btn.setEnabled(enabled)
         if hasattr(self, 'whisper_btn'):
             self.whisper_btn.setEnabled(enabled)
+        if hasattr(self, 'studio_btn'):
+            self.studio_btn.setEnabled(enabled)
         if hasattr(self, 'mini_mode_btn'):
             self.mini_mode_btn.setEnabled(enabled)
         if hasattr(self, 'mini_exit_btn'):
@@ -3035,7 +2923,6 @@ class MainWindow(QWidget):
         target_h = 280 if is_opening else 0
 
         if is_opening:
-            self.right_panel.refresh_model_list()
             self.right_panel.setFixedHeight(start_h)
             self.right_panel.show()
             self.right_panel.set_content_opacity(0.0)
