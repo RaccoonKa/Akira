@@ -27,6 +27,7 @@ from PyQt6.QtSvg import QSvgRenderer
 from gui.styles import get_main_style
 from gui.windows.settings_window import SettingsFrame
 from gui.windows.studio_frame import StudioFrame
+from gui.windows.mini_window import MiniWindow
 from audio.stt import STTThread
 from audio.tts import TTSThread
 from core.nlp.command_parser import CommandParser
@@ -51,6 +52,14 @@ except ImportError:
 
 warnings.filterwarnings("ignore", message="data discontinuity in recording")
 
+SVG_CLOSE = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+</svg>"""
+
+SVG_MINIMIZE = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+<line x1="5" y1="12" x2="19" y2="12"/>
+</svg>"""
+
 SVG_POWER = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
 <path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/>
 </svg>"""
@@ -71,6 +80,10 @@ SVG_CHAT = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="
 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
 </svg>"""
 
+SVG_UPDATE = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+</svg>"""
+
 SVG_VOLUME = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
 <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
 </svg>"""
@@ -81,10 +94,6 @@ SVG_MUTE = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="
 
 SVG_LOUD = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
 <path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/>
-</svg>"""
-
-SVG_WHISPER = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
 </svg>"""
 
 SVG_PAPERCLIP = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -112,6 +121,128 @@ def render_svg_icon(svg_xml: str, color: str, size: int = 15) -> QIcon:
     pixmap.setDevicePixelRatio(scale)
     return QIcon(pixmap)
 
+
+class EmotionHoverButton(QPushButton):
+    """Кнопка плашки с динамической сменой цветов эмоций и эффектом блокировки."""
+    def __init__(self, svg_xml: str = "", tooltip: str = "", main_window=None, parent=None):
+        super().__init__(parent)
+        self.main_window = main_window
+        self.svg_xml = svg_xml
+        self.icon_size = 15
+        self._is_denied_animating = False
+        self.setFixedSize(28, 28)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setObjectName("TitleBtn")
+        if tooltip:
+            self.setToolTip(tooltip)
+        self.update_icon()
+
+    def set_svg(self, svg_xml: str):
+        self.svg_xml = svg_xml
+        self.update_icon()
+
+    def get_default_color(self) -> str:
+        theme = getattr(self.main_window, 'current_theme', 'dark')
+        return "#111318" if theme == "light" else "#ded7c4"
+
+    def get_locked_color(self) -> str:
+        theme = getattr(self.main_window, 'current_theme', 'dark')
+        return "#88909e" if theme == "light" else "#6e6958"
+
+    def get_random_emotion_color(self) -> str:
+        theme = getattr(self.main_window, 'current_theme', 'dark')
+        if theme == "light":
+            h, s, v = random.choice([
+                (35.0, 235.0, 115.0),   # happy (янтарный)
+                (218.0, 220.0, 110.0),  # sad (лазурный)
+                (352.0, 230.0, 110.0),  # angry (рубиновый)
+                (282.0, 215.0, 100.0),  # surprise (пурпурный)
+                (218.0, 240.0, 120.0),  # weather_rain (синий)
+                (38.0, 255.0, 115.0),   # weather_hot (терракотовый)
+                (192.0, 210.0, 105.0),  # weather_snow (бирюзовый)
+                (282.0, 225.0, 110.0),  # weather_thunder (фиолетовый)
+            ])
+        else:
+            h, s, v = random.choice([
+                (45.0, 230.0, 255.0),   # happy (золотой)
+                (198.0, 220.0, 255.0),  # sad (голубой)
+                (352.0, 235.0, 255.0),  # angry (алый)
+                (280.0, 220.0, 255.0),  # surprise (маджента)
+                (212.0, 235.0, 255.0),  # weather_rain (аквамарин)
+                (45.0, 245.0, 255.0),   # weather_hot (тёплый жёлтый)
+                (185.0, 160.0, 255.0),  # weather_snow (ледяной)
+                (280.0, 235.0, 255.0),  # weather_thunder (электрик)
+            ])
+        return QColor.fromHsv(int(h), int(s), int(v)).name()
+
+    def update_icon(self, color: str = None):
+        if not self.svg_xml:
+            return
+        if color is None:
+            if self is getattr(self.main_window, 'toggle_chat_btn', None) and getattr(self.main_window, 'window_mode', 'normal') == 'extended':
+                color = self.get_locked_color()
+            else:
+                color = self.get_default_color()
+        self.setIcon(render_svg_icon(self.svg_xml, color, self.icon_size))
+        self.setIconSize(QSize(self.icon_size, self.icon_size))
+
+    def trigger_denied_effect(self):
+        """Эффект запрета: физическое покачивание (shake) и двойное алое мерцание."""
+        if self._is_denied_animating:
+            return
+        self._is_denied_animating = True
+
+        theme = getattr(self.main_window, 'current_theme', 'dark')
+        red_col = "#ff3b30" if theme == "dark" else "#d32f2f"
+        locked_col = self.get_locked_color()
+        orig_pos = self.pos()
+
+        steps = [
+            (0,   -3, red_col,    "background-color: rgba(255, 59, 48, 0.28); border-radius: 6px;"),
+            (70,   3, red_col,    "background-color: rgba(255, 59, 48, 0.28); border-radius: 6px;"),
+            (140, -2, locked_col, "background: transparent; border: none;"),
+            (210,  2, red_col,    "background-color: rgba(255, 59, 48, 0.32); border-radius: 6px;"),
+            (290,  0, locked_col, "background: transparent; border: none;")
+        ]
+
+        for delay, dx, icon_col, bg_style in steps:
+            def _apply(d_x=dx, i_c=icon_col, b_s=bg_style):
+                self.move(orig_pos.x() + d_x, orig_pos.y())
+                self.update_icon(i_c)
+                self.setStyleSheet(b_s)
+            QTimer.singleShot(delay, _apply)
+
+        def _finish():
+            self.move(orig_pos)
+            self.setStyleSheet("")
+            self.update_icon(locked_col)
+            self._is_denied_animating = False
+
+        QTimer.singleShot(360, _finish)
+
+    def enterEvent(self, event):
+        if self is getattr(self.main_window, 'toggle_chat_btn', None) and getattr(self.main_window, 'window_mode', 'normal') == 'extended':
+            self.setCursor(Qt.CursorShape.ForbiddenCursor)
+            theme = getattr(self.main_window, 'current_theme', 'dark')
+            col = "#e05555" if theme == "dark" else "#c62828"
+            self.update_icon(col)
+            super().enterEvent(event)
+            return
+
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        color = self.get_random_emotion_color()
+        self.update_icon(color)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        if self is getattr(self.main_window, 'toggle_chat_btn', None) and getattr(self.main_window, 'window_mode', 'normal') == 'extended':
+            self.update_icon(self.get_locked_color())
+            super().leaveEvent(event)
+            return
+
+        self.update_icon()
+        super().leaveEvent(event)
+        
 
 class AudioVisualizerWorker(QThread):
     audio_data_signal = pyqtSignal(float, float, bool)
@@ -192,7 +323,7 @@ class AudioVisualizerWorker(QThread):
     def stop(self):
         self.running = False
         if self.isRunning():
-            self.wait(200)
+            self.wait(1000)
 
 
 class CommandWorker(QThread):
@@ -1396,7 +1527,6 @@ class MainWindow(QWidget):
         self.presence_manager = None
 
         self.is_muted = self.config.get("is_muted", False) if isinstance(self.config, dict) else False
-        self.is_whisper_mode = self.config.get("is_whisper_mode", False) if isinstance(self.config, dict) else False
 
         self.absence_start_time = None
         self.warned_battery_50 = False
@@ -1453,78 +1583,49 @@ class MainWindow(QWidget):
     ]
 
     def randomize_mini_placeholder(self):
-        phrase = random.choice(self.MINI_PLACEHOLDERS)
-        self.mini_input_field.setPlaceholderText(phrase)
+        if hasattr(self, 'mini_window'):
+            self.mini_window.randomize_placeholder()
 
     def update_title_icons(self):
-        icon_color = "#ded7c4" if self.current_theme == "dark" else "#111318"
-        icon_sz = 15
-
         if hasattr(self, 'exit_btn'):
-            self.exit_btn.setText("")
-            self.exit_btn.setIcon(render_svg_icon(SVG_POWER, icon_color, icon_sz))
-            self.exit_btn.setIconSize(QSize(icon_sz, icon_sz))
+            self.exit_btn.update_icon()
 
         if hasattr(self, 'settings_btn'):
-            self.settings_btn.setText("")
-            self.settings_btn.setIcon(render_svg_icon(SVG_SETTINGS, icon_color, icon_sz))
-            self.settings_btn.setIconSize(QSize(icon_sz, icon_sz))
+            self.settings_btn.update_icon()
 
         if hasattr(self, 'studio_btn'):
-            self.studio_btn.setText("")
             studio_svg = SVG_STUDIO_COLLAPSE if getattr(self, 'window_mode', 'normal') == 'extended' else SVG_STUDIO
-            self.studio_btn.setIcon(render_svg_icon(studio_svg, icon_color, icon_sz))
-            self.studio_btn.setIconSize(QSize(icon_sz, icon_sz))
+            self.studio_btn.set_svg(studio_svg)
             self.studio_btn.setToolTip("Свернуть студию" if getattr(self, 'window_mode', 'normal') == 'extended' else "Режим студии")
 
         if hasattr(self, 'mini_mode_btn'):
-            self.mini_mode_btn.setText("")
-            self.mini_mode_btn.setIcon(render_svg_icon(SVG_MINI, icon_color, icon_sz))
-            self.mini_mode_btn.setIconSize(QSize(icon_sz, icon_sz))
+            self.mini_mode_btn.update_icon()
 
         if hasattr(self, 'toggle_chat_btn'):
-            self.toggle_chat_btn.setText("")
-            self.toggle_chat_btn.setIcon(render_svg_icon(SVG_CHAT, icon_color, icon_sz))
-            self.toggle_chat_btn.setIconSize(QSize(icon_sz, icon_sz))
+            if getattr(self, 'window_mode', 'normal') == 'extended':
+                self.toggle_chat_btn.update_icon()
+                self.toggle_chat_btn.setToolTip("Чат уже открыт в студии")
+            else:
+                self.toggle_chat_btn.update_icon()
+                self.toggle_chat_btn.setToolTip("Открыть чат")
 
         if hasattr(self, 'mute_btn'):
-            self.mute_btn.setText("")
             mute_svg = SVG_MUTE if self.is_muted else SVG_VOLUME
-            self.mute_btn.setIcon(render_svg_icon(mute_svg, icon_color, icon_sz))
-            self.mute_btn.setIconSize(QSize(icon_sz, icon_sz))
+            self.mute_btn.set_svg(mute_svg)
             self.mute_btn.setToolTip("Включить голос Акиры!" if self.is_muted else "Выключить голос Акиры!")
 
-        if hasattr(self, 'whisper_btn'):
-            self.whisper_btn.setText("")
-            whisper_svg = SVG_WHISPER if self.is_whisper_mode else SVG_LOUD
-            self.whisper_btn.setIcon(render_svg_icon(whisper_svg, icon_color, icon_sz))
-            self.whisper_btn.setIconSize(QSize(icon_sz, icon_sz))
-            self.whisper_btn.setToolTip(
-                "Выключить разговор шепотом" if self.is_whisper_mode else "Включить разговор только шепотом"
-            )
+        if hasattr(self, 'update_badge_btn'):
+            self.update_badge_btn.update_icon()
 
-        if hasattr(self, 'mini_exit_btn'):
-            self.mini_exit_btn.setText("")
-            self.mini_exit_btn.setIcon(render_svg_icon(SVG_POWER, icon_color, icon_sz))
-            self.mini_exit_btn.setIconSize(QSize(icon_sz, icon_sz))
+        if hasattr(self, 'min_btn'):
+            self.min_btn.update_icon()
 
-        if hasattr(self, 'mini_restore_btn'):
-            self.mini_restore_btn.setText("")
-            self.mini_restore_btn.setIcon(render_svg_icon(SVG_RESTORE, icon_color, icon_sz))
-            self.mini_restore_btn.setIconSize(QSize(icon_sz, icon_sz))
-
-        if hasattr(self, 'mini_send_button'):
-            send_name = "send_icon_black.png" if self.current_theme == "light" else "send_icon.png"
-            send_path = get_resource_path("assets", "img", send_name)
-            if not os.path.exists(send_path):
-                send_path = get_resource_path("assets", "img", "send_icon.png")
-            self.mini_send_button.setIcon(QIcon(send_path))
-            self.mini_send_button.setIconSize(QSize(16, 16))
+        if hasattr(self, 'close_btn'):
+            self.close_btn.update_icon()
 
     def apply_theme(self, theme: str, initial: bool = False):
         if not initial and hasattr(self, 'theme_overlay'):
             old_pixmap = self.grab()
-
             if hasattr(self, 'settings_panel') and hasattr(self.settings_panel, 'theme_combo') and self.settings_panel.isVisible():
                 combo = self.settings_panel.theme_combo
                 center = combo.mapTo(self, combo.rect().center())
@@ -1535,12 +1636,13 @@ class MainWindow(QWidget):
         self.bg_frame.setStyleSheet(get_main_style(theme))
         self.bg_frame.set_theme(theme)
         self.left_panel.set_theme(theme)
-        self.mini_left_panel.set_theme(theme)
         self.right_panel.set_theme(theme)
         self.settings_panel.set_theme(theme)
         if hasattr(self, 'studio_panel'):
             self.studio_panel.set_theme(theme)
-        self.studio_panel.set_theme(theme)
+
+        self.mini_window.setStyleSheet(get_main_style(theme))
+        self.mini_window.set_theme(theme)
         self.update_title_icons()
 
         if enable_window_acrylic:
@@ -1556,7 +1658,6 @@ class MainWindow(QWidget):
             if isinstance(self.config, dict):
                 self.config["theme"] = theme
             save_config(cfg)
-
             if hasattr(self, 'theme_overlay'):
                 self.theme_overlay.start_reveal(old_pixmap, center)
 
@@ -1565,7 +1666,8 @@ class MainWindow(QWidget):
         msg = f"Время вышло! {text} завершён ⏳"
         self.chat_history.append(f"Акира: {msg}\n")
         self.left_panel.set_emotion("surprise")
-        self.mini_left_panel.set_emotion("surprise")
+        if hasattr(self, 'mini_window'):
+            self.mini_window.mini_mic.set_emotion("surprise")
         self.right_panel.set_emotion("surprise")
 
     def _on_alarm_fired(self, task):
@@ -1573,7 +1675,8 @@ class MainWindow(QWidget):
         self.chat_history.append(f"Акира: {msg}\n")
         self.speak_reply("Будильник! Пора просыпаться.")
         self.left_panel.set_emotion("happy")
-        self.mini_left_panel.set_emotion("happy")
+        if hasattr(self, 'mini_window'):
+            self.mini_window.mini_mic.set_emotion("happy")
         self.right_panel.set_emotion("happy")
 
     def _on_reminder_fired(self, task):
@@ -1582,7 +1685,8 @@ class MainWindow(QWidget):
         self.chat_history.append(f"Акира: {msg}\n")
         self.speak_reply(f"Напоминаю: {text}")
         self.left_panel.set_emotion("happy")
-        self.mini_left_panel.set_emotion("happy")
+        if hasattr(self, 'mini_window'):
+            self.mini_window.mini_mic.set_emotion("happy")
         self.right_panel.set_emotion("happy")
 
     def _on_missed_reminders(self, missed_list):
@@ -1611,15 +1715,22 @@ class MainWindow(QWidget):
         self.activateWindow()
     
     def show_animated(self):
+        if getattr(self, 'is_mini_mode', False) and hasattr(self, 'mini_window'):
+            screen = QGuiApplication.primaryScreen().availableGeometry()
+            x = screen.right() - 460 - 20
+            y = screen.bottom() - 56 - 20
+            self.mini_window.show_at(x, y)
+            self._window_ready = True
+            self._check_and_reveal()
+            return
+
         if hasattr(self, 'closing_anim') and self.closing_anim.state() == QPropertyAnimation.State.Running:
             self.closing_anim.stop()
 
         self._is_animating_window = True
-
         screen = QGuiApplication.primaryScreen()
         avail = screen.availableGeometry()
 
-        # Правый край корпуса всегда прижат к (avail.right - 20)
         w = self.EXTENDED_WIDTH
         h = self.WINDOW_HEIGHT
         x = avail.x() + avail.width() - w - 20
@@ -1695,8 +1806,8 @@ class MainWindow(QWidget):
 
     def on_update_found(self, new_ver: str, changelog: str, download_url: str):
         self.settings_panel.set_update_available(new_ver, changelog, download_url)
-        self.update_badge_btn.setText(f"v{new_ver}")
         self.update_badge_btn.setToolTip(f"Доступна новая версия v{new_ver}!\nНажми, чтобы перейти в настройки.")
+        self.update_badge_btn.update_icon()
         self.update_badge_btn.show()
 
     def open_settings_for_update(self):
@@ -1747,7 +1858,7 @@ class MainWindow(QWidget):
             
             def on_expand_finished():
                 self.bg_frame.setGeometry(0, 0, self.EXTENDED_WIDTH, self.WINDOW_HEIGHT)
-                self.clearMask()  # Окно полностью раскрыто — маска кликов занимает все 880px
+                self.clearMask()
                 
                 self.studio_panel.show()
                 try:
@@ -1772,7 +1883,6 @@ class MainWindow(QWidget):
         else:
             self.command_parser.llm.set_model("gigachat")
             
-            # Фаза 1: Растворяем студию
             try:
                 self.studio_fade_anim.finished.disconnect()
             except Exception:
@@ -1809,108 +1919,111 @@ class MainWindow(QWidget):
             self.studio_fade_anim.start()
 
     def toggle_mini_mode(self):
-        self.is_mini_mode = not self.is_mini_mode
-        pos = self.pos()
-
-        self.hide()
-        flags = self.windowFlags()
+        if getattr(self, '_is_mode_animating', False):
+            return
 
         if self.is_mini_mode:
-            flags |= Qt.WindowType.WindowStaysOnTopHint
-            self.setWindowFlags(flags)
-            self.clearMask()
-            self.right_area.hide()
-            self.mini_mode_container.show()
-            self.setFixedSize(460, 56)
-            self.bg_frame.setGeometry(0, 0, 460, 56)
-            self.bg_frame.set_mic_widget(self.mini_left_panel)
-        else:
-            flags &= ~Qt.WindowType.WindowStaysOnTopHint
-            self.setWindowFlags(flags)
-            self.mini_mode_container.hide()
-            self.right_area.show()
-            self.setFixedSize(self.EXTENDED_WIDTH, self.WINDOW_HEIGHT)
+            self.restore_from_mini()
+            return
+
+        screen = QGuiApplication.primaryScreen().availableGeometry()
+        cur_pos = self.pos()
+
+        # Правый нижний угол видимого окна
+        visible_x = cur_pos.x() + (self.EXTENDED_WIDTH - self.NORMAL_WIDTH)
+        visible_y = cur_pos.y()
+        target_x = visible_x + (self.NORMAL_WIDTH - 460)
+        target_y = visible_y + (self.WINDOW_HEIGHT - 56)
+
+        target_x = max(screen.left() + 10, min(target_x, screen.right() - 470))
+        target_y = max(screen.top() + 10, min(target_y, screen.bottom() - 66))
+
+        if self.window_mode == "extended":
+            self.window_mode = "normal"
+            self.studio_panel.hide()
+            self.studio_opacity.setOpacity(0.0)
             init_x = self.EXTENDED_WIDTH - self.NORMAL_WIDTH
             self.bg_frame.setGeometry(init_x, 0, self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
             self._update_click_mask(self.NORMAL_WIDTH)
-            self.bg_frame.set_mic_widget(self.left_panel)
 
-        self.move(pos)
-        self.show()
-
-        cfg = load_config()
-        cfg["is_mini_mode"] = self.is_mini_mode
-        if isinstance(self.config, dict):
-            self.config["is_mini_mode"] = self.is_mini_mode
-        save_config(cfg)
-
-    def toggle_mini_mode(self):
-        self.is_mini_mode = not self.is_mini_mode
-        pos = self.pos()
+        self.is_mini_mode = True
+        self.window_mode = "mini"
+        self.update_title_icons()
 
         self.hide()
-        flags = self.windowFlags()
-
-        if self.is_mini_mode:
-            flags |= Qt.WindowType.WindowStaysOnTopHint
-            self.setWindowFlags(flags)
-            self.right_area.hide()
-            self.mini_mode_container.show()
-            self.resize(460, 56)
-            self.bg_frame.setGeometry(0, 0, 460, 56)
-            self.bg_frame.set_mic_widget(self.mini_left_panel)
-        else:
-            flags &= ~Qt.WindowType.WindowStaysOnTopHint
-            self.setWindowFlags(flags)
-            self.mini_mode_container.hide()
-            self.right_area.show()
-            self.resize(self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
-            self.bg_frame.setGeometry(0, 0, self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
-            self.bg_frame.set_mic_widget(self.left_panel)
-
-        self.move(pos)
-        self.show()
+        self.mini_window.show_at(target_x, target_y)
 
         cfg = load_config()
-        cfg["is_mini_mode"] = self.is_mini_mode
+        cfg["is_mini_mode"] = True
         if isinstance(self.config, dict):
-            self.config["is_mini_mode"] = self.is_mini_mode
+            self.config["is_mini_mode"] = True
         save_config(cfg)
 
-    def send_mini_message(self):
-        if not self.ui_revealed:
+    def restore_from_mini(self):
+        screen = QGuiApplication.primaryScreen().availableGeometry()
+        mini_pos = self.mini_window.pos()
+
+        target_x = mini_pos.x() + 460 - self.EXTENDED_WIDTH
+        target_y = mini_pos.y() + 56 - self.WINDOW_HEIGHT
+
+        target_x = max(screen.left() + 10, min(target_x, screen.right() - self.EXTENDED_WIDTH - 10))
+        target_y = max(screen.top() + 10, min(target_y, screen.bottom() - self.WINDOW_HEIGHT - 10))
+
+        self.is_mini_mode = False
+        self.window_mode = "normal"
+        self.update_title_icons()
+
+        self.mini_window.hide()
+
+        init_x = self.EXTENDED_WIDTH - self.NORMAL_WIDTH
+        self.bg_frame.setGeometry(init_x, 0, self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
+        self._update_click_mask(self.NORMAL_WIDTH)
+
+        self.move(target_x, target_y)
+        super().show()
+        self.raise_()
+        self.activateWindow()
+
+        if enable_window_acrylic:
+            try:
+                tint = "20E8EEF5" if self.current_theme == "light" else "25080805"
+                enable_window_acrylic(int(self.winId()), tint)
+            except Exception:
+                pass
+
+        cfg = load_config()
+        cfg["is_mini_mode"] = False
+        if isinstance(self.config, dict):
+            self.config["is_mini_mode"] = False
+        save_config(cfg)
+
+    def send_mini_message(self, text: str):
+        if not self.ui_revealed or not text.strip():
             return
 
         if hasattr(self, 'tts_thread') and self.tts_thread.isRunning():
             self.tts_thread.stop()
-        if hasattr(self, 'left_panel'):
-            self.left_panel.set_speaking(False)
-        if hasattr(self, 'mini_left_panel'):
-            self.mini_left_panel.set_speaking(False)
+        self.left_panel.set_speaking(False)
+        self.mini_window.mini_mic.set_speaking(False)
 
-        text = self.mini_input_field.text().strip()
-        if text:
-            self.chat_history.append(f"Вы: {text}")
+        self.chat_history.append(f"Вы: {text}")
 
-            text_low = text.lower()
-            if any(w in text_low for w in ["заблокируй", "залочь", "заблокировать", "залочить"]):
-                self.absence_start_time = time.time()
-                if self.presence_manager:
-                    self.presence_manager.set_manual_absence(grace_period=10)
+        text_low = text.lower()
+        if any(w in text_low for w in ["заблокируй", "залочь", "заблокировать", "залочить"]):
+            self.absence_start_time = time.time()
+            if self.presence_manager:
+                self.presence_manager.set_manual_absence(grace_period=10)
 
-            self.mini_input_field.clear()
-            self.mini_input_field.setEnabled(False)
-            self.mini_send_button.setEnabled(False)
+        self.mini_window.clear_input()
+        self.mini_window.set_input_enabled(False)
 
-            self.mini_text_worker = CommandWorker(self.command_parser, text, is_voice=False, parent=self)
-            self.mini_text_worker.result_ready.connect(self.on_mini_text_command_finished)
-            self.mini_text_worker.start()
+        self.mini_text_worker = CommandWorker(self.command_parser, text, is_voice=False, parent=self)
+        self.mini_text_worker.result_ready.connect(self.on_mini_text_command_finished)
+        self.mini_text_worker.start()
 
     def on_mini_text_command_finished(self, response):
-        self.randomize_mini_placeholder()
-        self.mini_input_field.setEnabled(True)
-        self.mini_send_button.setEnabled(True)
-        self.mini_input_field.setFocus()
+        self.mini_window.randomize_placeholder()
+        self.mini_window.set_input_enabled(True)
 
         if response:
             if isinstance(response, dict):
@@ -1922,7 +2035,7 @@ class MainWindow(QWidget):
                 emotion = getattr(self.command_parser, "last_emotion", "neutral")
 
             self.left_panel.set_emotion(emotion)
-            self.mini_left_panel.set_emotion(emotion)
+            self.mini_window.mini_mic.set_emotion(emotion)
             self.right_panel.set_emotion(emotion)
 
             if chat_text:
@@ -1947,19 +2060,19 @@ class MainWindow(QWidget):
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
-        # Окно ОС сразу фиксируется в максимальной ширине 880px
+        # Окно ОС всегда зафиксировано на EXTENDED_WIDTH (Zero-Move)
         self.setFixedSize(self.EXTENDED_WIDTH, self.WINDOW_HEIGHT)
 
-        # Корпус Акиры размещается внутри окна напрямую
+        # Корпус Акиры
         self.bg_frame = BackgroundFrame(self)
         self.bg_frame.setObjectName("CentralWidget")
         
-        # В компактном режиме корпус стоит у правого края окна (x = 500)
         init_x = self.EXTENDED_WIDTH - self.NORMAL_WIDTH
         self.bg_frame.setGeometry(init_x, 0, self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
+        self._update_click_mask(self.NORMAL_WIDTH)
 
         container_layout = QHBoxLayout(self.bg_frame)
-        container_layout.setContentsMargins(6, 6, 6, 6)
+        container_layout.setContentsMargins(2, 2, 2, 2)
         container_layout.setSpacing(0)
 
         # 1. Левая панель студии (Extended Mode)
@@ -1973,99 +2086,64 @@ class MainWindow(QWidget):
         self.studio_panel.setGraphicsEffect(self.studio_opacity)
         container_layout.addWidget(self.studio_panel, 1)
 
-        # 2. Правая часть со сферой (зафиксирована на 368px)
+        # 2. Правая часть со сферой (основное тело)
         self.right_area = QWidget()
-        self.right_area.setFixedWidth(self.NORMAL_WIDTH - 12)
+        self.right_area.setFixedWidth(self.NORMAL_WIDTH - 4)
         right_area_layout = QVBoxLayout(self.right_area)
         right_area_layout.setContentsMargins(0, 0, 0, 0)
         right_area_layout.setSpacing(0)
 
+        # Горизонтальная плашка кнопок с отступом снизу в 8px до контента
         title_bar = QHBoxLayout()
-        title_bar.setContentsMargins(10, 0, 10, 0)
+        title_bar.setContentsMargins(0, 2, 6, 8)
+        title_bar.addStretch()
 
         self.title_btns_widget = QWidget()
         self.title_btns_widget.setObjectName("TitleBtnsWidget")
         title_btns_layout = QHBoxLayout(self.title_btns_widget)
         title_btns_layout.setContentsMargins(4, 2, 4, 2)
-        title_btns_layout.setSpacing(4)
+        title_btns_layout.setSpacing(3)
 
-        self.exit_btn = QPushButton()
+        self.exit_btn = EmotionHoverButton(SVG_POWER, "Завершить работу Акиры", main_window=self)
         self.exit_btn.setObjectName("ExitBtn")
-        self.exit_btn.setFixedSize(28, 28)
-        self.exit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.exit_btn.setToolTip("Закрыть Акиру")
         self.exit_btn.clicked.connect(self.exit_app)
         title_btns_layout.addWidget(self.exit_btn)
 
-        self.settings_btn = QPushButton()
-        self.settings_btn.setObjectName("TitleBtn")
-        self.settings_btn.setToolTip("Настройки")
-        self.settings_btn.setFixedSize(28, 28)
-        self.settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.settings_btn = EmotionHoverButton(SVG_SETTINGS, "Настройки", main_window=self)
         self.settings_btn.clicked.connect(self.toggle_settings)
         title_btns_layout.addWidget(self.settings_btn)
 
-        self.studio_btn = QPushButton()
-        self.studio_btn.setObjectName("TitleBtn")
-        self.studio_btn.setFixedSize(28, 28)
-        self.studio_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.studio_btn.setToolTip("Режим студии")
+        self.studio_btn = EmotionHoverButton(SVG_STUDIO, "Режим студии", main_window=self)
         self.studio_btn.clicked.connect(self.toggle_extended_mode)
         title_btns_layout.addWidget(self.studio_btn)
 
-        self.mini_mode_btn = QPushButton()
-        self.mini_mode_btn.setObjectName("TitleBtn")
-        self.mini_mode_btn.setFixedSize(28, 28)
-        self.mini_mode_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.mini_mode_btn.setToolTip("Мини-режим (поверх окон)")
+        self.mini_mode_btn = EmotionHoverButton(SVG_MINI, "Мини-режим (поверх окон)", main_window=self)
         self.mini_mode_btn.clicked.connect(self.toggle_mini_mode)
         title_btns_layout.addWidget(self.mini_mode_btn)
 
-        self.toggle_chat_btn = QPushButton()
-        self.toggle_chat_btn.setObjectName("TitleBtn")
-        self.toggle_chat_btn.setToolTip("Открыть чат")
-        self.toggle_chat_btn.setFixedSize(28, 28)
-        self.toggle_chat_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.toggle_chat_btn = EmotionHoverButton(SVG_CHAT, "Открыть чат", main_window=self)
         self.toggle_chat_btn.clicked.connect(self.toggle_chat)
         title_btns_layout.addWidget(self.toggle_chat_btn)
 
-        self.mute_btn = QPushButton()
-        self.mute_btn.setObjectName("TitleBtn")
-        self.mute_btn.setFixedSize(28, 28)
-        self.mute_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.mute_btn = EmotionHoverButton(SVG_VOLUME, "Выключить голос Акиры!", main_window=self)
         self.mute_btn.clicked.connect(self.toggle_mute)
         title_btns_layout.addWidget(self.mute_btn)
 
-        self.whisper_btn = QPushButton()
-        self.whisper_btn.setObjectName("TitleBtn")
-        self.whisper_btn.setFixedSize(28, 28)
-        self.whisper_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.whisper_btn.clicked.connect(self.toggle_whisper_mode)
-        title_btns_layout.addWidget(self.whisper_btn)
-
-        self.update_badge_btn = QPushButton("v4.0.0")
+        self.update_badge_btn = EmotionHoverButton(SVG_UPDATE, "Доступно обновление!", main_window=self)
         self.update_badge_btn.setObjectName("UpdateNotificationBadge")
-        self.update_badge_btn.setFont(QFont(self.font_family, 9, QFont.Weight.Bold))
-        self.update_badge_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.update_badge_btn.clicked.connect(self.open_settings_for_update)
         self.update_badge_btn.hide()
         title_btns_layout.addWidget(self.update_badge_btn)
 
+        self.min_btn = EmotionHoverButton(SVG_MINIMIZE, "Свернуть", main_window=self)
+        self.min_btn.clicked.connect(self.minimize_animated)
+        title_btns_layout.addWidget(self.min_btn)
+
+        self.close_btn = EmotionHoverButton(SVG_CLOSE, "Закрыть", main_window=self)
+        self.close_btn.clicked.connect(self.close_animated)
+        title_btns_layout.addWidget(self.close_btn)
+
         title_bar.addWidget(self.title_btns_widget)
-        title_bar.addStretch()
-
-        min_btn = QPushButton("—")
-        min_btn.setObjectName("MinBtn")
-        min_btn.setFixedWidth(30)
-        min_btn.clicked.connect(self.minimize_animated)
-        title_bar.addWidget(min_btn)
-
-        close_btn = QPushButton("✕")
-        close_btn.setObjectName("CloseBtn")
-        close_btn.setFixedWidth(30)
-        close_btn.clicked.connect(self.close_animated)
-        title_bar.addWidget(close_btn)
-
         right_area_layout.addLayout(title_bar)
 
         self.content_layout = QGridLayout()
@@ -2081,7 +2159,6 @@ class MainWindow(QWidget):
         left_layout = QVBoxLayout(self.left_panel)
         left_layout.setContentsMargins(15, 0, 0, 12)
         left_layout.addStretch()
-
         mic_chat_layout.addWidget(self.left_panel)
 
         self.right_panel = ChatFrame()
@@ -2092,9 +2169,10 @@ class MainWindow(QWidget):
 
         self.content_layout.addWidget(self.mic_chat_container, 0, 0)
 
+        # Панель настроек: открывается под плашкой кнопок
         self.settings_panel = SettingsFrame()
         self.settings_panel.setObjectName("SettingsPanel")
-        self.settings_panel.setFixedHeight(508)
+        self.settings_panel.setFixedHeight(500)
         self.settings_panel.setMinimumWidth(0)
         self.settings_panel.setMaximumWidth(0)
         self.settings_panel.hide()
@@ -2103,7 +2181,7 @@ class MainWindow(QWidget):
         self.settings_panel.fps_changed.connect(self.apply_framerate)
 
         self.content_layout.addWidget(self.settings_panel, 0, 0,
-                                      Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom)
+                                      Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
 
         right_area_layout.addLayout(self.content_layout)
         container_layout.addWidget(self.right_area, 0, Qt.AlignmentFlag.AlignRight)
@@ -2142,61 +2220,15 @@ class MainWindow(QWidget):
         self._is_chat_animating = False
         self._pending_action = None
 
-        self.mini_mode_container = QWidget(self)
-        self.mini_mode_container.hide()
-        mini_layout = QHBoxLayout(self.mini_mode_container)
-        mini_layout.setContentsMargins(8, 0, 8, 0)
-        mini_layout.setSpacing(8)
+        self.bg_frame.set_mic_widget(self.left_panel)
 
-        self.mini_exit_btn = QPushButton()
-        self.mini_exit_btn.setObjectName("TitleBtn")
-        self.mini_exit_btn.setFixedSize(28, 28)
-        self.mini_exit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.mini_exit_btn.setToolTip("Закрыть Акиру")
-        self.mini_exit_btn.clicked.connect(self.exit_app)
-        mini_layout.addWidget(self.mini_exit_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
+        self.mini_window = MiniWindow(theme=self.current_theme, font_family=self.font_family)
+        self.mini_window.message_sent.connect(self.send_mini_message)
+        self.mini_window.restore_requested.connect(self.restore_from_mini)
+        self.mini_window.exit_requested.connect(self.exit_app)
+        self.mini_window.mini_mic.clicked.connect(self.toggle_manual_listen)
 
-        self.mini_restore_btn = QPushButton()
-        self.mini_restore_btn.setObjectName("TitleBtn")
-        self.mini_restore_btn.setFixedSize(28, 28)
-        self.mini_restore_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.mini_restore_btn.setToolTip("Вернуться в полный режим")
-        self.mini_restore_btn.clicked.connect(self.toggle_mini_mode)
-        mini_layout.addWidget(self.mini_restore_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
-
-        self.mini_left_panel = AkiraMiniMicWidget(self)
-        self.mini_left_panel.setFixedSize(40, 40)
-        mini_layout.addWidget(self.mini_left_panel, alignment=Qt.AlignmentFlag.AlignVCenter)
-
-        self.mini_input_field = QLineEdit()
-        self.mini_input_field.setObjectName("InputField")
-        self.mini_input_field.setFixedHeight(34)
-        self.randomize_mini_placeholder()
-        self.mini_input_field.setFont(QFont(self.font_family, 12))
-        self.mini_input_field.returnPressed.connect(self.send_mini_message)
-        mini_layout.addWidget(self.mini_input_field, 1, alignment=Qt.AlignmentFlag.AlignVCenter)
-
-        self.mini_send_button = QPushButton()
-        self.mini_send_button.setObjectName("AttachBtn")
-        self.mini_send_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.mini_send_button.setFixedSize(30, 30)
-        self.mini_send_button.clicked.connect(self.send_mini_message)
-        mini_layout.addWidget(self.mini_send_button, alignment=Qt.AlignmentFlag.AlignVCenter)
-
-        self.bg_frame.set_mic_widget(self.mini_left_panel if self.is_mini_mode else self.left_panel)
-
-        if self.is_mini_mode:
-            self.right_area.setVisible(False)
-            self.mini_mode_container.setVisible(True)
-            self.setFixedSize(460, 56)
-            self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
-            self.clearMask()
-        else:
-            self.mini_mode_container.setVisible(False)
-            self.right_area.setVisible(True)
-            self.setFixedSize(self.EXTENDED_WIDTH, self.WINDOW_HEIGHT)
-            # В компактном режиме прозрачные 500px слева прозрачны для кликов мыши сквозь окно
-            self._update_click_mask(self.NORMAL_WIDTH)
+        self.mini_left_panel = self.mini_window.mini_mic
 
     def check_battery_status(self):
         try:
@@ -2308,19 +2340,24 @@ class MainWindow(QWidget):
         self.speak_reply(msg)
 
     def set_ui_interactive(self, enabled: bool):
-        self.exit_btn.setEnabled(enabled)
-        self.settings_btn.setEnabled(enabled)
-        self.toggle_chat_btn.setEnabled(enabled)
-        if hasattr(self, 'mute_btn'):
-            self.mute_btn.setEnabled(enabled)
-        if hasattr(self, 'whisper_btn'):
-            self.whisper_btn.setEnabled(enabled)
+        if hasattr(self, 'close_btn'):
+            self.close_btn.setEnabled(enabled)
+        if hasattr(self, 'min_btn'):
+            self.min_btn.setEnabled(enabled)
+        if hasattr(self, 'exit_btn'):
+            self.exit_btn.setEnabled(enabled)
+        if hasattr(self, 'settings_btn'):
+            self.settings_btn.setEnabled(enabled)
         if hasattr(self, 'studio_btn'):
             self.studio_btn.setEnabled(enabled)
         if hasattr(self, 'mini_mode_btn'):
             self.mini_mode_btn.setEnabled(enabled)
-        if hasattr(self, 'mini_exit_btn'):
-            self.mini_exit_btn.setEnabled(enabled)
+        if hasattr(self, 'toggle_chat_btn'):
+            self.toggle_chat_btn.setEnabled(enabled)
+        if hasattr(self, 'mute_btn'):
+            self.mute_btn.setEnabled(enabled)
+        if hasattr(self, 'update_badge_btn'):
+            self.update_badge_btn.setEnabled(enabled)
 
     def toggle_mute(self):
         self.is_muted = not self.is_muted
@@ -2329,8 +2366,8 @@ class MainWindow(QWidget):
                 self.tts_thread.stop()
             if hasattr(self, 'left_panel'):
                 self.left_panel.set_speaking(False)
-            if hasattr(self, 'mini_left_panel'):
-                self.mini_left_panel.set_speaking(False)
+            if hasattr(self, 'mini_window'):
+                self.mini_window.mini_mic.set_speaking(False)
 
         self.update_title_icons()
 
@@ -2340,18 +2377,10 @@ class MainWindow(QWidget):
             self.config["is_muted"] = self.is_muted
         save_config(cfg)
 
-    def toggle_whisper_mode(self):
-        self.is_whisper_mode = not self.is_whisper_mode
-        self.update_title_icons()
-
-        cfg = load_config()
-        cfg["is_whisper_mode"] = self.is_whisper_mode
-        if isinstance(self.config, dict):
-            self.config["is_whisper_mode"] = self.is_whisper_mode
-        save_config(cfg)
-
     def exit_app(self):
         self._save_exit_timestamp()
+        if hasattr(self, 'mini_window'):
+            self.mini_window.hide()
         self.hide()
         try:
             self.shutdown()
@@ -2364,7 +2393,8 @@ class MainWindow(QWidget):
         if not self.ui_revealed:
             return
 
-        if self.left_panel.is_listening or self.mini_left_panel.is_listening:
+        mini_listening = self.mini_window.mini_mic.is_listening if hasattr(self, 'mini_window') else False
+        if self.left_panel.is_listening or mini_listening:
             if hasattr(self.stt_thread, 'stop_listening'):
                 self.stt_thread.stop_listening()
             elif hasattr(self.stt_thread, 'cancel_manual_listen'):
@@ -2378,9 +2408,10 @@ class MainWindow(QWidget):
                 self.stt_thread.manual_listen = False
 
             self.left_panel.set_listening(False)
-            self.mini_left_panel.set_listening(False)
             self.left_panel.set_processing(False)
-            self.mini_left_panel.set_processing(False)
+            if hasattr(self, 'mini_window'):
+                self.mini_window.mini_mic.set_listening(False)
+                self.mini_window.mini_mic.set_processing(False)
         else:
             if hasattr(self, 'tts_thread') and self.tts_thread.isRunning():
                 self.tts_thread.stop()
@@ -2472,7 +2503,7 @@ class MainWindow(QWidget):
         self.stt_thread = STTThread(parent=self)
         self.stt_thread.text_recognized.connect(self.on_speech_recognized)
         self.stt_thread.listening_state_changed.connect(self.left_panel.set_listening)
-        self.stt_thread.listening_state_changed.connect(self.mini_left_panel.set_listening)
+        self.stt_thread.listening_state_changed.connect(self.mini_window.mini_mic.set_listening)
         self.stt_thread.error_occurred.connect(self.on_stt_error)
         self.stt_thread.start()
 
@@ -2489,22 +2520,21 @@ class MainWindow(QWidget):
         self.tts_thread.speaking_started.connect(lambda: volume_ducker.duck(factor=0.05))
         self.tts_thread.speaking_finished.connect(volume_ducker.restore)
 
-        self.tts_thread.speaking_started.connect(lambda: self.mini_left_panel.set_speaking(True))
-        self.tts_thread.speaking_finished.connect(lambda: self.mini_left_panel.set_speaking(False))
+        self.tts_thread.speaking_started.connect(lambda: self.mini_window.mini_mic.set_speaking(True))
+        self.tts_thread.speaking_finished.connect(lambda: self.mini_window.mini_mic.set_speaking(False))
 
-        self.mini_left_panel.clicked.connect(self.toggle_manual_listen)
         self.left_panel.clicked.connect(self.toggle_manual_listen)
 
         self.audio_worker = AudioVisualizerWorker(parent=self)
         self.audio_worker.audio_data_signal.connect(self.left_panel.on_audio_data)
-        self.audio_worker.audio_data_signal.connect(self.mini_left_panel.on_audio_data)
+        self.audio_worker.audio_data_signal.connect(self.mini_window.mini_mic.on_audio_data)
         self.audio_worker.start()
 
         self.initial_greeting_text = self._generate_smart_greeting()
 
         self.tts_thread.start_warmup(
             greeting_text=self.initial_greeting_text,
-            is_whisper=self.is_whisper_mode
+            is_whisper=False
         )
 
     def on_warmup_completed(self):
@@ -2524,7 +2554,7 @@ class MainWindow(QWidget):
             self.title_btns_widget.show()
             self.title_btns_anim.start()
             self.left_panel.start_intro_animation(duration=3800)
-            self.mini_left_panel.start_intro_animation(duration=3800)
+            self.mini_window.mini_mic.start_intro_animation(duration=3800)
 
     def play_initial_greeting(self):
         if not self.is_muted:
@@ -2597,8 +2627,7 @@ class MainWindow(QWidget):
 
     def speak_reply(self, text, is_whisper=False):
         if text and not getattr(self, 'is_muted', False):
-            force_whisper = getattr(self, 'is_whisper_mode', False) or is_whisper
-            self.tts_thread.say(text, is_whisper=force_whisper)
+            self.tts_thread.say(text, is_whisper=is_whisper)
 
     def on_speech_recognized(self, text, audio_data=None):
         if not self.ui_revealed:
@@ -2618,7 +2647,8 @@ class MainWindow(QWidget):
                 self.presence_manager.set_manual_absence(grace_period=10)
 
         self.left_panel.set_processing(True)
-        self.mini_left_panel.set_processing(True)
+        if hasattr(self, 'mini_window'):
+            self.mini_window.mini_mic.set_processing(True)
 
         self.voice_worker = CommandWorker(self.command_parser, text, audio_data=audio_data, is_voice=True, parent=self)
         self.voice_worker.result_ready.connect(self.on_voice_command_finished)
@@ -2628,13 +2658,15 @@ class MainWindow(QWidget):
 
     def on_wake_word_detected(self):
         self.left_panel.trigger_wake_effect()
-        self.mini_left_panel.trigger_wake_effect()
+        if hasattr(self, 'mini_window'):
+            self.mini_window.mini_mic.trigger_wake_effect()
 
     def on_tts_finished(self):
         self.left_panel.set_processing(False)
-        self.mini_left_panel.set_processing(False)
         self.left_panel.set_speaking(False)
-        self.mini_left_panel.set_speaking(False)
+        if hasattr(self, 'mini_window'):
+            self.mini_window.mini_mic.set_processing(False)
+            self.mini_window.mini_mic.set_speaking(False)
         if getattr(self, 'pending_followup', False):
             self.pending_followup = False
             self.stt_thread.start_followup(timeout=3.0)
@@ -2657,7 +2689,8 @@ class MainWindow(QWidget):
                 emotion = getattr(self.command_parser, "last_emotion", "neutral")
 
             self.left_panel.set_emotion(emotion)
-            self.mini_left_panel.set_emotion(emotion)
+            if hasattr(self, 'mini_window'):
+                self.mini_window.mini_mic.set_emotion(emotion)
             self.right_panel.set_emotion(emotion)
 
             if user_display:
@@ -2674,14 +2707,18 @@ class MainWindow(QWidget):
                 self.speak_reply(voice_text, is_whisper=is_whisper)
             else:
                 self.left_panel.set_processing(False)
-                self.mini_left_panel.set_processing(False)
+                if hasattr(self, 'mini_window'):
+                    self.mini_window.mini_mic.set_processing(False)
         else:
             self.left_panel.set_processing(False)
-            self.mini_left_panel.set_processing(False)
+            if hasattr(self, 'mini_window'):
+                self.mini_window.mini_mic.set_processing(False)
             if hasattr(self, 'voice_worker') and self.voice_worker.text:
                 self.chat_history.append(f"Вы (голос): {self.voice_worker.text}")
             emotion = getattr(self.command_parser, "last_emotion", "neutral")
             self.left_panel.set_emotion(emotion)
+            if hasattr(self, 'mini_window'):
+                self.mini_window.mini_mic.set_emotion(emotion)
             self.right_panel.set_emotion(emotion)
 
     def stream_text_to_chat(self, text: str, prefix: str = "Акира: "):
@@ -2753,8 +2790,8 @@ class MainWindow(QWidget):
             self.tts_thread.stop()
         if hasattr(self, 'left_panel'):
             self.left_panel.set_speaking(False)
-        if hasattr(self, 'mini_left_panel'):
-            self.mini_left_panel.set_speaking(False)
+        if hasattr(self, 'mini_window'):
+            self.mini_window.mini_mic.set_speaking(False)
 
         text = self.input_field.text().strip()
         attached_file = self.right_panel.attached_file
@@ -2804,7 +2841,8 @@ class MainWindow(QWidget):
                 emotion = getattr(self.command_parser, "last_emotion", "neutral")
 
             self.left_panel.set_emotion(emotion)
-            self.mini_left_panel.set_emotion(emotion)
+            if hasattr(self, 'mini_window'):
+                self.mini_window.mini_mic.set_emotion(emotion)
             self.right_panel.set_emotion(emotion)
 
             if chat_text:
@@ -2821,21 +2859,34 @@ class MainWindow(QWidget):
 
     def shutdown(self):
         volume_ducker.force_restore()
+
         if hasattr(self, 'battery_timer') and self.battery_timer.isActive():
             self.battery_timer.stop()
+
         if hasattr(self, 'audio_worker') and self.audio_worker.isRunning():
             self.audio_worker.stop()
+
         if hasattr(self, 'tts_thread') and self.tts_thread.isRunning():
             self.tts_thread.stop()
+            self.tts_thread.wait(1000)
+
         self.stop_vision()
+        if hasattr(self, 'vision_thread') and self.vision_thread and self.vision_thread.isRunning():
+            self.vision_thread.wait(1000)
+
         if hasattr(self, 'stt_thread') and self.stt_thread.isRunning():
             self.stt_thread.stop_thread()
+            self.stt_thread.wait(1000)
+
         if hasattr(self, 'telegram_thread') and self.telegram_thread and self.telegram_thread.isRunning():
             self.telegram_thread.stop()
+
         if hasattr(self, 'command_parser') and hasattr(self.command_parser, 'reminder_manager'):
             self.command_parser.reminder_manager.stop_ringing()
 
     def toggle_settings(self):
+        if getattr(self, 'is_mini_mode', False):
+            return
         is_opening = not (self.settings_panel.isVisible() and self.settings_panel.maximumWidth() > 0)
         if is_opening and self.right_panel.isVisible() and self.right_panel.height() > 10:
             self._pending_action = "settings"
@@ -2860,7 +2911,8 @@ class MainWindow(QWidget):
         anim_settings_max.setEasingCurve(QEasingCurve.Type.OutCubic)
 
         cur_w = self.settings_panel.width() if self.settings_panel.isVisible() else 0
-        target_w = self.width() - 20
+        # Четкая граница ширины обычного окна (368px - 12px отступы = 356px)
+        target_w = (self.NORMAL_WIDTH - 12) - 12
 
         if is_opening:
             self.settings_panel.reset_border()
@@ -2895,7 +2947,13 @@ class MainWindow(QWidget):
             self._do_toggle_chat()
 
     def toggle_chat(self):
-        if getattr(self, '_is_chat_animating', False):
+        if getattr(self, 'is_mini_mode', False) or getattr(self, '_is_chat_animating', False):
+            return
+
+        # Запрет открытия чата в режиме студии с эффектом отказа
+        if getattr(self, 'window_mode', 'normal') == "extended":
+            if hasattr(self, 'toggle_chat_btn'):
+                self.toggle_chat_btn.trigger_denied_effect()
             return
 
         is_opening = not (self.right_panel.isVisible() and self.right_panel.height() > 10)
