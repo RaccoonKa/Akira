@@ -300,8 +300,20 @@ class TelegramBotThread(QThread):
         asyncio.set_event_loop(self.loop)
         try:
             self.loop.run_until_complete(self._client_loop())
+        except (asyncio.CancelledError, RuntimeError):
+            pass
         finally:
-            self.loop.close()
+            try:
+                # Даём отменённым задачам корректно завершиться
+                pending = asyncio.all_tasks(self.loop)
+                if pending:
+                    for task in pending:
+                        task.cancel()
+                    self.loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            except Exception:
+                pass
+            finally:
+                self.loop.close()
 
     async def _client_loop(self):
         global pending_token_registration, outgoing_queue
@@ -313,7 +325,6 @@ class TelegramBotThread(QThread):
 
         while self._running:
             try:
-                # Короткий ping_interval 10с для мгновенного обнаружения переключения VPN
                 async with websockets.connect(
                         ws_url,
                         open_timeout=5,
@@ -478,5 +489,9 @@ class TelegramBotThread(QThread):
         if hasattr(self, 'download_watcher'):
             self.download_watcher.stop()
         if self.loop and self.loop.is_running():
-            self.loop.call_soon_threadsafe(self.loop.stop)
+            # Отменяем все задачи внутри цикла событий вместо грубой остановки loop.stop()
+            def _cancel_all():
+                for task in asyncio.all_tasks(self.loop):
+                    task.cancel()
+            self.loop.call_soon_threadsafe(_cancel_all)
         self.wait(3000)
