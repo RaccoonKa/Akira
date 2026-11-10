@@ -1668,6 +1668,8 @@ class MainWindow(QWidget):
         self.left_panel.set_emotion("surprise")
         if hasattr(self, 'mini_window'):
             self.mini_window.mini_mic.set_emotion("surprise")
+        if hasattr(self, 'studio_panel'):
+            self.studio_panel.set_emotion("surprise")
         self.right_panel.set_emotion("surprise")
 
     def _on_alarm_fired(self, task):
@@ -1677,6 +1679,8 @@ class MainWindow(QWidget):
         self.left_panel.set_emotion("happy")
         if hasattr(self, 'mini_window'):
             self.mini_window.mini_mic.set_emotion("happy")
+        if hasattr(self, 'studio_panel'):
+            self.studio_panel.set_emotion("happy")
         self.right_panel.set_emotion("happy")
 
     def _on_reminder_fired(self, task):
@@ -1687,6 +1691,8 @@ class MainWindow(QWidget):
         self.left_panel.set_emotion("happy")
         if hasattr(self, 'mini_window'):
             self.mini_window.mini_mic.set_emotion("happy")
+        if hasattr(self, 'studio_panel'):
+            self.studio_panel.set_emotion("happy")
         self.right_panel.set_emotion("happy")
 
     def _on_missed_reminders(self, missed_list):
@@ -2044,7 +2050,7 @@ class MainWindow(QWidget):
                 self.speak_reply(voice_text, is_whisper=False)
 
     def init_ui(self):
-        font_path = get_resource_path("assets", "fonts", "Schiffbauer-Regular.otf")
+        font_path = get_resource_path("assets", "fonts", "SSFBreakthrough-Regular.ttf")
         font_id = QFontDatabase.addApplicationFont(font_path)
 
         if font_id != -1:
@@ -2691,6 +2697,8 @@ class MainWindow(QWidget):
             self.left_panel.set_emotion(emotion)
             if hasattr(self, 'mini_window'):
                 self.mini_window.mini_mic.set_emotion(emotion)
+            if hasattr(self, 'studio_panel'):
+                self.studio_panel.set_emotion(emotion)
             self.right_panel.set_emotion(emotion)
 
             if user_display:
@@ -2719,6 +2727,8 @@ class MainWindow(QWidget):
             self.left_panel.set_emotion(emotion)
             if hasattr(self, 'mini_window'):
                 self.mini_window.mini_mic.set_emotion(emotion)
+            if hasattr(self, 'studio_panel'):
+                self.studio_panel.set_emotion(emotion)
             self.right_panel.set_emotion(emotion)
 
     def stream_text_to_chat(self, text: str, prefix: str = "Акира: "):
@@ -2843,6 +2853,8 @@ class MainWindow(QWidget):
             self.left_panel.set_emotion(emotion)
             if hasattr(self, 'mini_window'):
                 self.mini_window.mini_mic.set_emotion(emotion)
+            if hasattr(self, 'studio_panel'):
+                self.studio_panel.set_emotion(emotion)
             self.right_panel.set_emotion(emotion)
 
             if chat_text:

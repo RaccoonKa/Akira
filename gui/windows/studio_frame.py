@@ -1,43 +1,818 @@
-from PyQt6.QtWidgets import QFrame, QVBoxLayout, QLabel, QSizePolicy
-from PyQt6.QtCore import Qt, QSize
+import os
+import re
+import math
+import random
+from PyQt6.QtWidgets import (
+    QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QScrollArea, QWidget, QFileDialog, QSizePolicy, QComboBox,
+    QTextEdit, QGraphicsOpacityEffect
+)
+from PyQt6.QtCore import (
+    Qt, QTimer, QSize, QRectF, QPointF, pyqtSignal, QThread,
+    QVariantAnimation, QEasingCurve, QByteArray
+)
+from PyQt6.QtGui import (
+    QPainter, QPen, QColor, QLinearGradient, QRadialGradient,
+    QBrush, QPainterPath, QFont, QFontDatabase, QIcon, QPixmap,
+    QTextCursor, QGuiApplication
+)
+from PyQt6.QtSvg import QSvgRenderer
+from core.utils.config import get_resource_path, load_config
+from gui.styles import get_main_style
+
+SVG_SIDEBAR = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/>
+</svg>"""
+
+SVG_PAPERCLIP = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+</svg>"""
+
+SVG_SEND = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+</svg>"""
+
+STUDIO_PLACEHOLDERS = [
+    "Доверься мне...",
+    "Какие мысли на сегодня?..",
+    "Напиши мне что-нибудь...",
+    "Рассказывай, я на связи...",
+    "Жду твоих указаний...",
+    "Чем займемся прямо сейчас?..",
+    "Спроси меня о чем угодно...",
+    "Внимательно слушаю...",
+    "Шепни мне задачу...",
+    "Давай сотворим что-то крутое..."
+]
+
+THINKING_PHRASES = [
+    "Варю мысли под синтвейв...",
+    "Перебираю полочки в памяти...",
+    "Секунду, шезлонг видеокарты нагревается...",
+    "Строю дерево вероятностей...",
+    "Ищу красивое решение без костылей...",
+    "Разгоняю кулеры ради ответа...",
+    "Проверяю гипотезы в фоновом потоке...",
+    "Вчитываюсь в суть вопроса...",
+    "Пересобираю логику на лету..."
+]
+
+THINKING_FILE_PHRASES = [
+    "Сканирую прикрепленный документ...",
+    "Вчитываюсь в строки файла...",
+    "Разбираю структуру данных...",
+    "Выделяю главное из документа..."
+]
+
+
+def _render_svg(svg_xml: str, color: str, size: int = 14) -> QIcon:
+    xml = svg_xml.replace("{color}", color)
+    renderer = QSvgRenderer(QByteArray(xml.encode("utf-8")))
+    pixmap = QPixmap(size * 2, size * 2)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    renderer.render(painter)
+    painter.end()
+    pixmap.setDevicePixelRatio(2)
+    return QIcon(pixmap)
+
+
+class StudioWorker(QThread):
+    result_ready = pyqtSignal(object)
+
+    def __init__(self, parser, text, attached_file=None, model="hikari", parent=None):
+        super().__init__(parent)
+        self.parser = parser
+        self.text = text
+        self.attached_file = attached_file
+        self.model = model
+
+    def run(self):
+        model_map = {
+            "hikari": "gigachat",
+            "kasumi": "gigachat-plus",
+            "ginga": "gigachat-pro",
+            "uchuu": "gigachat-max"
+        }
+        target_model = model_map.get(self.model, self.model)
+        if hasattr(self.parser, 'llm') and hasattr(self.parser.llm, 'set_model'):
+            try:
+                self.parser.llm.set_model(target_model)
+            except Exception:
+                pass
+
+        response = self.parser.process_command(
+            self.text,
+            is_voice=False,
+            attached_file=self.attached_file
+        )
+        self.result_ready.emit(response)
+
+
+class CodeBlockWidget(QFrame):
+    """Монолитная парящая пластина с кодом, языковым тегом и кнопкой копирования."""
+    def __init__(self, language: str, code: str, font_family: str, parent=None):
+        super().__init__(parent)
+        self.code = code
+        self.font_family = font_family
+        self.setObjectName("CodeBlockWidget")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(6)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+
+        self.lang_label = QLabel(f">_ {language.upper() if language else 'CODE'}")
+        self.lang_label.setObjectName("CodeLangLabel")
+        self.lang_label.setFont(QFont(self.font_family, 8, QFont.Weight.Bold))
+        header.addWidget(self.lang_label)
+        header.addStretch()
+
+        self.copy_btn = QPushButton("КОПИРОВАТЬ")
+        self.copy_btn.setObjectName("CodeCopyBtn")
+        self.copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.copy_btn.setFont(QFont(self.font_family, 8, QFont.Weight.Bold))
+        self.copy_btn.setFixedHeight(20)
+        self.copy_btn.clicked.connect(self._copy_code)
+        header.addWidget(self.copy_btn)
+
+        layout.addLayout(header)
+
+        self.code_edit = QTextEdit()
+        self.code_edit.setObjectName("CodeTextEdit")
+        self.code_edit.setReadOnly(True)
+        self.code_edit.setFont(QFont("Consolas", 10))
+        self.code_edit.setPlainText(code.strip())
+        self.code_edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.code_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        lines_count = max(2, min(24, len(code.strip().splitlines())))
+        self.code_edit.setFixedHeight(lines_count * 17 + 16)
+        layout.addWidget(self.code_edit)
+
+    def _copy_code(self):
+        QGuiApplication.clipboard().setText(self.code)
+        self.copy_btn.setText("✓ СКОПИРОВАНО")
+        QTimer.singleShot(1800, lambda: self.copy_btn.setText("КОПИРОВАТЬ"))
+
+
+class StudioUserMessage(QWidget):
+    """Воздушное сообщение пользователя: справа с белым неоновым рельсом."""
+    def __init__(self, text: str, user_name: str, font_family: str, theme: str = "dark", attached_file: str = None, parent=None):
+        super().__init__(parent)
+        self.font_family = font_family
+        self.current_theme = theme
+
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(0, 4, 0, 4)
+        main_layout.setSpacing(10)
+
+        # Распорка слева прижимает контент вправо
+        main_layout.addStretch(1)
+
+        content_col = QVBoxLayout()
+        content_col.setContentsMargins(0, 0, 0, 0)
+        content_col.setSpacing(4)
+        content_col.setAlignment(Qt.AlignmentFlag.AlignRight)
+
+        display_name = user_name.strip() if user_name else "СВЯТ"
+        self.header = QLabel(display_name)
+        self.header.setObjectName("StudioUserHeader")
+        self.header.setFont(QFont(self.font_family, 8, QFont.Weight.Bold))
+        self.header.setAlignment(Qt.AlignmentFlag.AlignRight)
+        content_col.addWidget(self.header)
+
+        self.body = QLabel(text)
+        self.body.setObjectName("StudioUserBody")
+        self.body.setWordWrap(True)
+        self.body.setFont(QFont(self.font_family, 11))
+        self.body.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.body.setMaximumWidth(400)
+        content_col.addWidget(self.body)
+
+        if attached_file:
+            fname = os.path.basename(attached_file)
+            self.file_pill = QLabel(f"📎 {fname}")
+            self.file_pill.setObjectName("StudioFilePill")
+            self.file_pill.setFont(QFont(self.font_family, 9, QFont.Weight.Bold))
+            self.file_pill.setAlignment(Qt.AlignmentFlag.AlignRight)
+            content_col.addWidget(self.file_pill)
+
+        main_layout.addLayout(content_col)
+
+        # Белая вертикальная неоновая полоска гарантированной видимости
+        self.rail = QFrame()
+        self.rail.setObjectName("StudioUserRail")
+        self.rail.setFixedWidth(2)
+        self.rail.setMinimumHeight(24)
+        rail_col = "#ffffff" if theme == "dark" else "#111318"
+        self.rail.setStyleSheet(f"background-color: {rail_col}; border-radius: 1px;")
+        main_layout.addWidget(self.rail)
+
+
+class StudioAkiraStream(QWidget):
+    """Поток мыслей Акиры: слева со светящимся неоновым рельсом цвета эмоции."""
+    def __init__(self, text: str, emotion_color: QColor, font_family: str, parent=None):
+        super().__init__(parent)
+        self.emotion_color = emotion_color
+        self.font_family = font_family
+
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(0, 4, 0, 4)
+        main_layout.setSpacing(10)
+
+        self.rail = QFrame()
+        self.rail.setFixedWidth(2)
+        self.rail.setStyleSheet(f"background-color: {emotion_color.name()}; border-radius: 1px;")
+        main_layout.addWidget(self.rail)
+
+        content_col = QVBoxLayout()
+        content_col.setContentsMargins(0, 0, 0, 0)
+        content_col.setSpacing(6)
+
+        header = QLabel("Аки")
+        header.setFont(QFont(self.font_family, 8, QFont.Weight.Bold))
+        header.setStyleSheet(f"color: {emotion_color.name()}; letter-spacing: 1.2px;")
+        content_col.addWidget(header)
+
+        blocks = self._parse_markdown(text)
+        for b_type, b_val in blocks:
+            if b_type == "code":
+                lang, code_body = b_val
+                cb = CodeBlockWidget(lang, code_body, font_family=self.font_family, parent=self)
+                content_col.addWidget(cb)
+            else:
+                lbl = QLabel(b_val)
+                lbl.setObjectName("StudioAkiraBody")
+                lbl.setWordWrap(True)
+                lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+                lbl.setFont(QFont(self.font_family, 11))
+                lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+                content_col.addWidget(lbl)
+
+        # Занимает всю ширину без сужения в квадрат
+        main_layout.addLayout(content_col, 1)
+
+    def _parse_markdown(self, raw_text: str):
+        pattern = re.compile(r'```([a-zA-Z0-9_\-\+#]*)\n?(.*?)```', re.DOTALL)
+        blocks = []
+        last_end = 0
+        for match in pattern.finditer(raw_text):
+            start, end = match.span()
+            if start > last_end:
+                t = raw_text[last_end:start].strip()
+                if t:
+                    blocks.append(("text", t))
+            lang = match.group(1).strip() or "code"
+            code = match.group(2)
+            blocks.append(("code", (lang, code)))
+            last_end = end
+        if last_end < len(raw_text):
+            rem = raw_text[last_end:].strip()
+            if rem:
+                blocks.append(("text", rem))
+        return blocks if blocks else [("text", raw_text)]
+
+
+class StudioTextEdit(QTextEdit):
+    """Поле ввода с автоподгонкой высоты от 1 до 2 строк, центрированием и отправкой по Enter."""
+    send_requested = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("StudioInputEdit")
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.document().setDocumentMargin(0)
+        self.textChanged.connect(self.adjust_height)
+        self.setFixedHeight(32)
+
+    def adjust_height(self):
+        doc_h = self.document().size().height()
+        if doc_h > 20:
+            target_h = 50
+            self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        else:
+            target_h = 32
+            self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        if self.height() != target_h:
+            self.setFixedHeight(target_h)
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                super().keyPressEvent(event)
+            else:
+                self.send_requested.emit()
+                event.accept()
+                return
+        else:
+            super().keyPressEvent(event)
+
+
+class StudioFloatingDock(QFrame):
+    """Парящий остров ввода внизу студии."""
+    submit_requested = pyqtSignal(str, str, str)
+
+    def __init__(self, font_family: str, parent=None):
+        super().__init__(parent)
+        self.setObjectName("StudioFloatingDock")
+        self.font_family = font_family
+        self.attached_file = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setSpacing(4)
+
+        self.file_chip = QWidget()
+        file_l = QHBoxLayout(self.file_chip)
+        file_l.setContentsMargins(0, 0, 0, 0)
+        file_l.setSpacing(6)
+
+        self.file_name_lbl = QLabel("")
+        self.file_name_lbl.setObjectName("StudioFileNameLabel")
+        self.file_name_lbl.setFont(QFont(self.font_family, 9, QFont.Weight.Bold))
+        file_l.addWidget(self.file_name_lbl)
+
+        self.file_remove_btn = QPushButton("✕")
+        self.file_remove_btn.setObjectName("StudioFileRemoveBtn")
+        self.file_remove_btn.setFixedSize(16, 16)
+        self.file_remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.file_remove_btn.clicked.connect(self.clear_attachment)
+        file_l.addWidget(self.file_remove_btn)
+        file_l.addStretch()
+
+        self.file_chip.hide()
+        layout.addWidget(self.file_chip)
+
+        dock_row = QHBoxLayout()
+        dock_row.setContentsMargins(0, 0, 0, 0)
+        dock_row.setSpacing(6)
+
+        # Модели на латинице
+        self.model_combo = QComboBox()
+        self.model_combo.setObjectName("ModelSelectorCombo")
+        self.model_combo.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.model_combo.setFont(QFont(self.font_family, 9, QFont.Weight.Bold))
+        self.model_combo.addItem("Hikari", "hikari")
+        self.model_combo.addItem("Kasumi", "kasumi")
+        self.model_combo.addItem("Ginga", "ginga")
+        self.model_combo.addItem("Uchū", "uchuu")
+        self.model_combo.setToolTip("Выбор нейросетевого ядра (от базового к флагманскому)")
+        dock_row.addWidget(self.model_combo, alignment=Qt.AlignmentFlag.AlignVCenter)
+
+        self.attach_btn = QPushButton()
+        self.attach_btn.setObjectName("StudioDockBtn")
+        self.attach_btn.setFixedSize(28, 28)
+        self.attach_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.attach_btn.setToolTip("Прикрепить документ или файл с кодом")
+        self.attach_btn.clicked.connect(self._select_file)
+        dock_row.addWidget(self.attach_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
+
+        self.input_edit = StudioTextEdit()
+        self.input_edit.setFont(QFont(self.font_family, 11))
+        self.randomize_placeholder()
+        self.input_edit.send_requested.connect(self._submit)
+        dock_row.addWidget(self.input_edit, 1, alignment=Qt.AlignmentFlag.AlignVCenter)
+
+        self.send_btn = QPushButton()
+        self.send_btn.setObjectName("StudioDockBtn")
+        self.send_btn.setFixedSize(28, 28)
+        self.send_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.send_btn.setToolTip("Отправить (Enter)")
+        self.send_btn.clicked.connect(self._submit)
+        dock_row.addWidget(self.send_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
+
+        layout.addLayout(dock_row)
+
+    def randomize_placeholder(self):
+        phrase = random.choice(STUDIO_PLACEHOLDERS)
+        self.input_edit.setPlaceholderText(phrase)
+
+    def _select_file(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Выберите файл для Студии",
+            "",
+            "Все поддерживаемые (*.py *.cs *.txt *.md *.json *.log *.pdf *.docx *.png *.jpg);;Все файлы (*.*)"
+        )
+        if path:
+            self.attached_file = path
+            self.file_name_lbl.setText(f"📎 {os.path.basename(path)}")
+            self.file_chip.show()
+
+    def clear_attachment(self):
+        self.attached_file = None
+        self.file_name_lbl.setText("")
+        self.file_chip.hide()
+
+    def _submit(self):
+        text = self.input_edit.toPlainText().strip()
+        if not text and not self.attached_file:
+            return
+        model = self.model_combo.currentData()
+        f_path = self.attached_file
+        self.input_edit.clear()
+        self.input_edit.adjust_height()
+        self.clear_attachment()
+        self.randomize_placeholder()
+        self.submit_requested.emit(text, f_path, model)
+
+    def set_active(self, enabled: bool):
+        self.input_edit.setEnabled(enabled)
+        self.send_btn.setEnabled(enabled)
+        self.attach_btn.setEnabled(enabled)
+        if enabled:
+            self.input_edit.setFocus()
+
+    def update_icons(self, theme: str):
+        icon_col = "#111318" if theme == "light" else "#ded7c4"
+        self.attach_btn.setIcon(_render_svg(SVG_PAPERCLIP, icon_col, 15))
+        self.send_btn.setIcon(_render_svg(SVG_SEND, icon_col, 15))
+
+
+class StudioHistoryDrawer(QFrame):
+    """Выдвигающееся слева меню истории чатов (каркас)."""
+    close_requested = pyqtSignal()
+    new_chat_requested = pyqtSignal()
+
+    def __init__(self, font_family: str, parent=None):
+        super().__init__(parent)
+        self.font_family = font_family
+        self.setObjectName("StudioHistoryDrawer")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setMinimumWidth(0)
+        self.setMaximumWidth(0)
+        self.hide()
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+
+        title = QLabel("ИСТОРИЯ ЧАТОВ")
+        title.setObjectName("StudioDrawerTitle")
+        title.setFont(QFont(self.font_family, 10, QFont.Weight.Bold))
+        header_row.addWidget(title)
+        header_row.addStretch()
+
+        self.close_btn = QPushButton("✕")
+        self.close_btn.setObjectName("StudioDrawerCloseBtn")
+        self.close_btn.setFixedSize(22, 22)
+        self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.close_btn.clicked.connect(self.close_requested.emit)
+        header_row.addWidget(self.close_btn)
+
+        layout.addLayout(header_row)
+
+        self.btn_new_chat = QPushButton("+ НОВЫЙ ДИАЛОГ")
+        self.btn_new_chat.setObjectName("StudioNewChatBtn")
+        self.btn_new_chat.setFixedHeight(30)
+        self.btn_new_chat.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_new_chat.setFont(QFont(self.font_family, 9, QFont.Weight.Bold))
+        self.btn_new_chat.clicked.connect(self.new_chat_requested.emit)
+        layout.addWidget(self.btn_new_chat)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("background: transparent; border: none;")
+
+        list_container = QWidget()
+        list_container.setStyleSheet("background: transparent;")
+        list_layout = QVBoxLayout(list_container)
+        list_layout.setContentsMargins(0, 4, 0, 4)
+        list_layout.setSpacing(6)
+        list_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        mock_sessions = [
+            ("Текущий диалог", "Сейчас активен"),
+            ("Анализ проекта Астра", "Вчера в 19:40"),
+            ("Оптимизация .NET C#", "8 ноября"),
+            ("Конфигурация аудио потоков", "5 ноября")
+        ]
+
+        for s_title, s_time in mock_sessions:
+            item_btn = QPushButton()
+            item_btn.setObjectName("HistoryItemCard")
+            item_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            item_l = QVBoxLayout(item_btn)
+            item_l.setContentsMargins(8, 6, 8, 6)
+            item_l.setSpacing(2)
+
+            t_lbl = QLabel(s_title)
+            t_lbl.setObjectName("HistoryItemTitle")
+            t_lbl.setFont(QFont(self.font_family, 9, QFont.Weight.Bold))
+            item_l.addWidget(t_lbl)
+
+            d_lbl = QLabel(s_time)
+            d_lbl.setObjectName("HistoryItemTime")
+            d_lbl.setFont(QFont(self.font_family, 8))
+            item_l.addWidget(d_lbl)
+
+            list_layout.addWidget(item_btn)
+
+        scroll.setWidget(list_container)
+        layout.addWidget(scroll, 1)
+
+        note = QLabel("Каркас для привязки к БД диалогов")
+        note.setObjectName("HistoryDrawerNote")
+        note.setFont(QFont(self.font_family, 8))
+        note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(note)
+
 
 class StudioFrame(QFrame):
+    """Студия Акиры с историей чатов, парящим кодом и аурой присутствия."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("StudioFrame")
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.current_theme = "dark"
-        
+        self.main_window = parent
+
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
-        
+
+        font_path = get_resource_path("assets", "fonts", "SSFBreakthrough-Regular.ttf")
+        if not os.path.exists(font_path):
+            font_path = get_resource_path("assets", "fonts", "SSFBreakthrough-Regular.otf")
+
+        font_id = QFontDatabase.addApplicationFont(font_path)
+        if font_id != -1:
+            families = QFontDatabase.applicationFontFamilies(font_id)
+            self.font_family = families[0] if families else "Arial"
+        else:
+            self.font_family = "Arial"
+
+        self.setFont(QFont(self.font_family, 11))
+
+        self.dark_palette = {
+            "happy": (45.0, 230.0, 255.0),
+            "sad": (198.0, 220.0, 255.0),
+            "angry": (352.0, 235.0, 255.0),
+            "surprise": (280.0, 220.0, 255.0),
+            "neutral": (42.0, 50.0, 220.0),
+        }
+        self.light_palette = {
+            "happy": (35.0, 235.0, 115.0),
+            "sad": (218.0, 220.0, 110.0),
+            "angry": (352.0, 230.0, 110.0),
+            "surprise": (282.0, 215.0, 100.0),
+            "neutral": (215.0, 60.0, 60.0),
+        }
+        self.palette = self.dark_palette
+        self.cur_h, self.cur_s, self.cur_v = self.palette["neutral"]
+        self.target_h, self.target_s, self.target_v = self.palette["neutral"]
+
+        self.anim_timer = QTimer(self)
+        self.anim_timer.timeout.connect(self._animate_aura)
+        self.anim_timer.start(25)
+
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 15, 15, 15)
-        
-        self.placeholder_label = QLabel(
-            "Студия\n\n"
-            "Здесь будет просторный терминал с кодом,\n"
-            "прикрепление файлов и селектор мощных моделей."
-        )
-        self.placeholder_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.placeholder_label.setWordWrap(True)
-        self.placeholder_label.setMinimumWidth(0)
-        self.placeholder_label.setStyleSheet(
-            "color: #888; font-size: 15px; border: 2px dashed #555; border-radius: 12px; padding: 20px;"
-        )
-        layout.addWidget(self.placeholder_label)
-        
+        layout.setContentsMargins(14, 8, 14, 10)
+        layout.setSpacing(6)
+
+        # Верхняя панель: кнопка вызова истории диалогов слева
+        top_bar = QHBoxLayout()
+        top_bar.setContentsMargins(0, 0, 0, 2)
+
+        self.btn_history = QPushButton()
+        self.btn_history.setObjectName("StudioHistoryBtn")
+        self.btn_history.setFixedSize(26, 26)
+        self.btn_history.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_history.setToolTip("История чатов")
+        self.btn_history.clicked.connect(self.toggle_drawer)
+        top_bar.addWidget(self.btn_history, alignment=Qt.AlignmentFlag.AlignLeft)
+        top_bar.addStretch()
+
+        layout.addLayout(top_bar)
+
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll.setStyleSheet("background: transparent; border: none;")
+
+        self.feed_widget = QWidget()
+        self.feed_widget.setStyleSheet("background: transparent;")
+        self.feed_layout = QVBoxLayout(self.feed_widget)
+        self.feed_layout.setContentsMargins(0, 4, 4, 8)
+        self.feed_layout.setSpacing(12)
+        self.feed_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        self.scroll.setWidget(self.feed_widget)
+        layout.addWidget(self.scroll, 1)
+
+        # Индикатор генерации со сменой фраз
+        self.thinking_status = QLabel("")
+        self.thinking_status.setFont(QFont(self.font_family, 9, QFont.Weight.Bold))
+        self.thinking_status.hide()
+        layout.addWidget(self.thinking_status)
+
+        self.thinking_cycle_timer = QTimer(self)
+        self.thinking_cycle_timer.setInterval(2600)
+        self.thinking_cycle_timer.timeout.connect(self._cycle_thinking_phrase)
+        self._current_thinking_pool = THINKING_PHRASES
+        self._last_phrase = ""
+
+        # Парящий остров ввода
+        self.dock = StudioFloatingDock(font_family=self.font_family, parent=self)
+        self.dock.submit_requested.connect(self._on_user_submit)
+        layout.addWidget(self.dock)
+
+        # Выдвижное меню истории
+        self.drawer = StudioHistoryDrawer(font_family=self.font_family, parent=self)
+        self.drawer.close_requested.connect(self.close_drawer)
+        self.drawer.new_chat_requested.connect(self._clear_feed)
+
+        self.drawer_anim = QVariantAnimation(self)
+        self.drawer_anim.setDuration(260)
+        self.drawer_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.drawer_anim.valueChanged.connect(self._on_drawer_step)
+        self.drawer_anim.finished.connect(self._on_drawer_finished)
+        self._is_drawer_open = False
+
+        self.set_theme(self.current_theme)
+
+    def _get_user_name(self) -> str:
+        try:
+            cfg = load_config()
+            return cfg.get("user_name", "СВЯТ")
+        except Exception:
+            return "СВЯТ"
+
+    def _animate_aura(self):
+        rate = 0.045
+        h_diff = (self.target_h - self.cur_h + 180.0) % 360.0 - 180.0
+        self.cur_h = (self.cur_h + h_diff * rate) % 360.0
+        self.cur_s += (self.target_s - self.cur_s) * rate
+        self.cur_v += (self.target_v - self.cur_v) * rate
+        self.update()
+
+    def set_emotion(self, emotion: str):
+        emo = emotion if emotion in self.palette else "neutral"
+        self.target_h, self.target_s, self.target_v = self.palette[emo]
+
     def set_theme(self, theme: str):
         self.current_theme = theme
-        if theme == "light":
-            self.placeholder_label.setStyleSheet(
-                "color: #666; font-size: 15px; border: 2px dashed #bbb; border-radius: 12px; padding: 20px;"
-            )
-        else:
-            self.placeholder_label.setStyleSheet(
-                "color: #888; font-size: 15px; border: 2px dashed #555; border-radius: 12px; padding: 20px;"
-            )
+        self.palette = self.light_palette if theme == "light" else self.dark_palette
+        self.target_h, self.target_s, self.target_v = self.palette["neutral"]
+
+        icon_col = "#111318" if theme == "light" else "#ded7c4"
+        self.btn_history.setIcon(_render_svg(SVG_SIDEBAR, icon_col, 15))
+        self.dock.update_icons(theme)
+
+        self.setStyleSheet(get_main_style(theme))
         self.update()
+
+    def toggle_drawer(self):
+        if self._is_drawer_open:
+            self.close_drawer()
+        else:
+            self.open_drawer()
+
+    def open_drawer(self):
+        self._is_drawer_open = True
+        self.drawer.setMaximumWidth(260)
+        self.drawer.show()
+        self.drawer.raise_()
+        self.drawer_anim.stop()
+        self.drawer_anim.setStartValue(self.drawer.width())
+        self.drawer_anim.setEndValue(260)
+        self.drawer_anim.start()
+
+    def close_drawer(self):
+        self._is_drawer_open = False
+        self.drawer_anim.stop()
+        self.drawer_anim.setStartValue(self.drawer.width())
+        self.drawer_anim.setEndValue(0)
+        self.drawer_anim.start()
+
+    def _on_drawer_step(self, val):
+        w = int(val)
+        self.drawer.setMaximumWidth(w)
+        self.drawer.setFixedWidth(w)
+        self.drawer.setGeometry(0, 0, w, self.height())
+
+    def _on_drawer_finished(self):
+        if not self._is_drawer_open:
+            self.drawer.hide()
+            self.drawer.setMaximumWidth(0)
+        else:
+            self.drawer.setGeometry(0, 0, 260, self.height())
+            self.drawer.raise_()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, 'drawer'):
+            w = 260 if self._is_drawer_open else 0
+            self.drawer.setGeometry(0, 0, w, self.height())
+
+    def _clear_feed(self):
+        while self.feed_layout.count():
+            item = self.feed_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+        self.close_drawer()
+
+    def _cycle_thinking_phrase(self):
+        candidates = [p for p in self._current_thinking_pool if p != self._last_phrase]
+        new_phrase = random.choice(candidates) if candidates else self._current_thinking_pool[0]
+        self._last_phrase = new_phrase
+        self.thinking_status.setText(f"⚡ {new_phrase}")
+        accent = QColor.fromHsv(int(self.cur_h), int(self.cur_s), int(self.cur_v)).name()
+        self.thinking_status.setStyleSheet(f"color: {accent}; letter-spacing: 0.8px;")
+
+    def _on_user_submit(self, text: str, attached_file: str, model: str):
+        current_name = self._get_user_name()
+        u_msg = StudioUserMessage(
+            text,
+            user_name=current_name,
+            font_family=self.font_family,
+            theme=self.current_theme,
+            attached_file=attached_file,
+            parent=self.feed_widget
+        )
+        self.feed_layout.addWidget(u_msg)
+
+        # Выбор пула фраз генерации как в chat_window
+        self._current_thinking_pool = THINKING_FILE_PHRASES if attached_file else THINKING_PHRASES
+        self._last_phrase = random.choice(self._current_thinking_pool)
+        self.thinking_status.setText(f"⚡ {self._last_phrase}")
+        accent = QColor.fromHsv(int(self.cur_h), int(self.cur_s), int(self.cur_v)).name()
+        self.thinking_status.setStyleSheet(f"color: {accent}; letter-spacing: 0.8px;")
+        self.thinking_status.show()
+        self.thinking_cycle_timer.start()
+
+        self.dock.set_active(False)
+        self._scroll_bottom()
+
+        parser = getattr(self.main_window, 'command_parser', None)
+        if parser:
+            self.worker = StudioWorker(parser, text, attached_file=attached_file, model=model, parent=self)
+            self.worker.result_ready.connect(self._on_worker_finished)
+            self.worker.start()
+        else:
+            self.thinking_cycle_timer.stop()
+            self.thinking_status.hide()
+            self.dock.set_active(True)
+
+    def _on_worker_finished(self, response):
+        self.thinking_cycle_timer.stop()
+        self.thinking_status.hide()
+        self.dock.set_active(True)
+
+        if response:
+            if isinstance(response, dict):
+                chat_text = response.get("chat", "") or response.get("voice", "")
+                voice_text = response.get("voice", "")
+                emotion = response.get("emotion", "neutral")
+            else:
+                chat_text = str(response)
+                voice_text = chat_text
+                emotion = "neutral"
+
+            self.set_emotion(emotion)
+            emo_col = QColor.fromHsv(int(self.target_h), int(self.target_s), int(self.target_v))
+            akira_stream = StudioAkiraStream(
+                chat_text,
+                emo_col,
+                font_family=self.font_family,
+                parent=self.feed_widget
+            )
+            self.feed_layout.addWidget(akira_stream)
+            self._scroll_bottom()
+
+            # Озвучивание ответов Акиры в студии
+            if voice_text and hasattr(self.main_window, 'speak_reply'):
+                self.main_window.speak_reply(voice_text, is_whisper=False)
+
+    def _scroll_bottom(self):
+        QTimer.singleShot(50, lambda: self.scroll.verticalScrollBar().setValue(
+            self.scroll.verticalScrollBar().maximum()
+        ))
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+
+        aura = QRadialGradient(w * 0.5, 0, w * 0.75)
+        aura_alpha = 18 if self.current_theme == "light" else 28
+        c_glow = QColor.fromHsv(int(self.cur_h), int(self.cur_s), int(self.cur_v), aura_alpha)
+        c_fade = QColor.fromHsv(int(self.cur_h), int(self.cur_s), int(self.cur_v), 0)
+        aura.setColorAt(0.0, c_glow)
+        aura.setColorAt(0.7, c_fade)
+        aura.setColorAt(1.0, c_fade)
+        painter.fillRect(self.rect(), aura)
 
     def minimumSizeHint(self) -> QSize:
         return QSize(0, 0)

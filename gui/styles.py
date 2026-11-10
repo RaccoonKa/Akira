@@ -701,6 +701,144 @@ QPushButton#ExitBtn {
 QPushButton#ExitBtn:hover {
     background-color: rgba(255, 82, 82, 0.22);
 }
+QFrame#CodeBlockWidget {
+    background-color: rgba(9, 10, 14, 0.88);
+    border: 1px solid rgba(120, 115, 95, 0.35);
+    border-radius: 9px;
+}
+QLabel#CodeLangLabel {
+    color: #ded7c4;
+    letter-spacing: 1px;
+}
+QPushButton#CodeCopyBtn {
+    background-color: rgba(120, 115, 95, 0.22);
+    color: #ded7c4;
+    border: 1px solid #78735f;
+    border-radius: 4px;
+    padding: 2px 8px;
+}
+QPushButton#CodeCopyBtn:hover {
+    background-color: rgba(222, 215, 196, 0.25);
+    color: #ffffff;
+    border: 1px solid #9e9780;
+}
+QTextEdit#CodeTextEdit {
+    background: transparent;
+    color: #e6edf3;
+    border: none;
+}
+
+QFrame#StudioUserRail {
+    background-color: #ded7c4;
+    border-radius: 1px;
+}
+QLabel#StudioUserHeader {
+    color: #ded7c4;
+    letter-spacing: 1.2px;
+}
+QLabel#StudioUserBody {
+    color: #fffde7;
+    line-height: 1.45;
+}
+QLabel#StudioFilePill {
+    color: #ded7c4;
+}
+
+QLabel#StudioAkiraBody {
+    color: #fffde7;
+    line-height: 1.45;
+}
+
+QFrame#StudioFloatingDock {
+    background-color: rgba(12, 13, 16, 0.88);
+    border: 1px solid rgba(120, 115, 95, 0.32);
+    border-radius: 14px;
+}
+QTextEdit#StudioInputEdit {
+    background: transparent;
+    color: #fffde7;
+    border: none;
+    padding: 5px 6px 3px 6px;
+}
+QPushButton#StudioDockBtn {
+    background-color: transparent;
+    border: none;
+    border-radius: 6px;
+}
+QPushButton#StudioDockBtn:hover {
+    background-color: rgba(222, 215, 196, 0.14);
+}
+QLabel#StudioFileNameLabel {
+    color: #ded7c4;
+}
+QPushButton#StudioFileRemoveBtn {
+    background-color: transparent;
+    color: #ff5252;
+    font-size: 11px;
+    font-weight: bold;
+    border: none;
+    border-radius: 8px;
+    padding: 0px;
+}
+QPushButton#StudioFileRemoveBtn:hover {
+    background-color: rgba(255, 82, 82, 0.2);
+    color: #ff7b7b;
+}
+
+QFrame#StudioHistoryDrawer {
+    background-color: rgba(8, 9, 12, 0.96);
+    border-right: 1px solid rgba(120, 115, 95, 0.35);
+}
+QLabel#StudioDrawerTitle {
+    color: #fffde7;
+}
+QPushButton#StudioDrawerCloseBtn {
+    background: transparent;
+    color: #ded7c4;
+    border: none;
+    border-radius: 4px;
+}
+QPushButton#StudioDrawerCloseBtn:hover {
+    background-color: rgba(120, 115, 95, 0.20);
+}
+QPushButton#StudioNewChatBtn {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ede8db, stop:1 #d6cebe);
+    color: #121008;
+    font-weight: bold;
+    border: none;
+    border-radius: 6px;
+}
+QPushButton#StudioNewChatBtn:hover {
+    background: #ffffff;
+}
+QPushButton#HistoryItemCard {
+    background-color: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(120, 115, 95, 0.22);
+    border-radius: 6px;
+    text-align: left;
+}
+QPushButton#HistoryItemCard:hover {
+    background-color: rgba(255, 255, 255, 0.09);
+    border: 1px solid rgba(222, 215, 196, 0.35);
+}
+QLabel#HistoryItemTitle {
+    color: #fffde7;
+}
+QLabel#HistoryItemTime {
+    color: rgba(255, 253, 231, 0.45);
+}
+QLabel#HistoryDrawerNote {
+    color: rgba(120, 115, 95, 0.60);
+}
+
+QPushButton#StudioHistoryBtn {
+    background: transparent;
+    border: none;
+    border-radius: 5px;
+}
+QPushButton#StudioHistoryBtn:hover {
+    background-color: rgba(120, 115, 95, 0.22);
+}
 """
 
 LIGHT_STYLE = """
@@ -1238,6 +1376,7 @@ QPushButton#ExitBtn {
 QPushButton#ExitBtn:hover {
     background-color: rgba(229, 57, 53, 0.18);
 }
+
 """
 
 
