@@ -580,7 +580,7 @@ class OnboardingWizard(QDialog):
         self._init_window_icon()
         self.setWindowTitle("Akira")
 
-        font_path = get_resource_path("assets", "fonts", "Schiffbauer-Regular.otf")
+        font_path = get_resource_path("assets", "fonts", "SSFBreakthrough-Regular.ttf")
         font_id = QFontDatabase.addApplicationFont(font_path)
         if font_id != -1:
             self.font_family = QFontDatabase.applicationFontFamilies(font_id)[0]

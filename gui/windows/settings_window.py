@@ -724,7 +724,7 @@ class SettingsFrame(QFrame):
         self.yandex_iot_token = ""
         self._is_loading = True
 
-        font_path = get_resource_path("assets", "fonts", "Schiffbauer-Regular.otf")
+        font_path = get_resource_path("assets", "fonts", "SSFBreakthrough-Regular.ttf")
         font_id = QFontDatabase.addApplicationFont(font_path)
         if font_id != -1:
             self.font_family = QFontDatabase.applicationFontFamilies(font_id)[0]
