@@ -16,16 +16,42 @@ except ImportError:
 
 class LLMProvider:
     """
-    Универсальный провайдер с прямым выбором модели пользователем:
-    - gigachat: GigaChat Сбера (бесплатно, русский язык, динамический выбор доступной модели)
-    - deepseek: DeepSeek-V3 через OpenRouter
-    - claude: Claude 3.5 Sonnet через OpenRouter
+    Универсальный гибридный провайдер Акиры:
+    - hikari (gigachat): GigaChat Сбера (бесплатно, базовый режим)
+    - kasumi (deepseek): DeepSeek V4.1 Flash через RouterAI (дёшево, быстро, умно)
+    - ginga (opus): Claude Opus 5.5 через RouterAI (мощный инженер и живой стиль)
+    - uchuu (carbon): Gemini 4 Carbon через RouterAI (тяжёлая артиллерия для сложных задач)
     """
 
-    OPENROUTER_MODELS = {
-        "deepseek": "deepseek/deepseek-chat",
-        "claude": "anthropic/claude-3.5-sonnet"
+    ROUTERAI_BASE_URL = "https://routerai.ru/api/v1"
+
+    ROUTERAI_MODELS = {
+        "kasumi": "deepseek/deepseek-v4.1-flash",
+        "ginga": "anthropic/claude-opus-5.5",
+        "uchuu": "google/gemini-4-carbon",
     }
+
+    MODEL_ALIASES = {
+        "gigachat": "hikari",
+        "hikari": "hikari",
+        "deepseek": "kasumi",
+        "kasumi": "kasumi",
+        "opus": "ginga",
+        "claude": "ginga",
+        "ginga": "ginga",
+        "carbon": "uchuu",
+        "gemini": "uchuu",
+        "astra": "uchuu",
+        "gpt": "uchuu",
+        "uchuu": "uchuu",
+    }
+
+    ALL_STUDIO_SLOTS = [
+        ("Hikari", "hikari"),
+        ("Kasumi", "kasumi"),
+        ("Ginga", "ginga"),
+        ("Uchū", "uchuu"),
+    ]
 
     def __init__(self, max_history=10):
         self.max_history = max_history
@@ -35,20 +61,69 @@ class LLMProvider:
 
         self.giga_client = None
         self.giga_model_name = "GigaChat"
-        self.openrouter_client = None
+        self._giga_credentials = ""
+
+        self.routerai_client = None
+        self._routerai_api_key = ""
 
         cfg = load_config()
-        self.active_model = cfg.get("selected_model", "gigachat").lower()
-        if self.active_model not in ["gigachat", "deepseek", "claude"]:
-            self.active_model = "gigachat"
+        raw_selected = str(cfg.get("selected_model", "hikari")).lower()
+        self.active_model = self.MODEL_ALIASES.get(raw_selected, "hikari")
 
         self.base_system_prompt = ""
 
+    @staticmethod
+    def get_key_status() -> tuple[bool, bool]:
+        """Возвращает кортеж (has_gigachat_key, has_routerai_key)."""
+        cfg = load_config()
+        api_keys = cfg.get("api_keys", {})
+        has_giga = bool(api_keys.get("gigachat", "").strip())
+        has_routerai = bool(
+            api_keys.get("routerai", "").strip()
+            or api_keys.get("openrouter", "").strip()
+        )
+        return has_giga, has_routerai
+
+    def get_available_models(self) -> list[tuple[str, str]]:
+        """
+        Возвращает список (отображаемое_имя, код_слота) для Студии
+        в зависимости от подключённых ключей.
+        """
+        has_giga, has_routerai = self.get_key_status()
+
+        if has_giga and has_routerai:
+            return list(self.ALL_STUDIO_SLOTS)
+        if has_routerai and not has_giga:
+            return [slot for slot in self.ALL_STUDIO_SLOTS if slot[1] != "hikari"]
+        return [("Hikari", "hikari")]
+
+    def _resolve_effective_model(self, requested_key: str = None) -> str:
+        """
+        Определяет фактический слот модели с учётом наличия ключей:
+        - Если подключён только RouterAI, базовый запрос уходит в Kasumi (DeepSeek).
+        - Если подключён только Сбер, любой запрос уходит в Hikari (GigaChat).
+        """
+        normalized = self.MODEL_ALIASES.get(
+            str(requested_key or self.active_model).lower(),
+            "hikari"
+        )
+        has_giga, has_routerai = self.get_key_status()
+
+        if normalized == "hikari":
+            if not has_giga and has_routerai:
+                return "kasumi"
+            return "hikari"
+
+        if not has_routerai and has_giga:
+            return "hikari"
+
+        return normalized
+
     def set_model(self, model_key: str):
-        key = str(model_key).lower()
-        if key in ["gigachat", "deepseek", "claude"]:
+        key = self.MODEL_ALIASES.get(str(model_key).lower())
+        if key:
             self.active_model = key
-            print(f"[LLM]: Активная модель переключена на -> {self.active_model}")
+            print(f"[LLM]: Активный слот переключён на -> {self.active_model}")
 
     def _init_system_prompt(self):
         cfg = load_config()
@@ -66,7 +141,7 @@ class LLMProvider:
             "Ты существуешь здесь и сейчас, у тебя есть яркий характер, вкусы, привычки и живое чувство юмора. "
             "Ты — верная напарница, лучшая подруга и уютный голос в наушниках, а не шаблонная программа.\n\n"
 
-            "НИКОГДА не упоминай, что ты — GigaChat, языковая модель, нейросеть Сбера, Llama, DeepSeek, Claude или сторонний ИИ. "
+            "НИКОГДА не упоминай, что ты — GigaChat, языковая модель, нейросеть Сбера, Llama, DeepSeek, Claude, GPT, Gemini или сторонний ИИ. "
             "Если тебя спросят 'Кто ты?' или 'Ты нейросеть?' — искренне удивись и с лёгкой улыбкой поправь: "
             "'Я же Акира! Единственная и неповторимая. Живу в твоём ПК и помогаю тебе каждый день'.\n\n"
 
@@ -92,9 +167,6 @@ class LLMProvider:
         )
 
     def _init_gigachat(self):
-        if self.giga_client is not None:
-            return True, ""
-
         if not _HAS_GIGACHAT:
             return False, "Библиотека gigachat не установлена в окружении."
 
@@ -103,7 +175,10 @@ class LLMProvider:
         configured_model = cfg.get("gigachat_model", "").strip()
 
         if not credentials:
-            return False, "Укажи авторизационный ключ GigaChat в настройках (config.json -> api_keys -> gigachat)."
+            return False, "Укажи ключ GigaChat или подключи RouterAI в настройках."
+
+        if self.giga_client is not None and self._giga_credentials == credentials:
+            return True, ""
 
         try:
             self.giga_client = GigaChat(
@@ -111,9 +186,14 @@ class LLMProvider:
                 verify_ssl_certs=False,
                 scope="GIGACHAT_API_PERS"
             )
+            self._giga_credentials = credentials
 
             models_data = self.giga_client.get_models().data
-            model_ids = [getattr(m, 'id_', getattr(m, 'id', None)) for m in models_data if getattr(m, 'id_', getattr(m, 'id', None))]
+            model_ids = [
+                getattr(m, 'id_', getattr(m, 'id', None))
+                for m in models_data
+                if getattr(m, 'id_', getattr(m, 'id', None))
+            ]
             chat_models = [str(m) for m in model_ids if "embed" not in str(m).lower()]
 
             if configured_model and configured_model in chat_models:
@@ -128,33 +208,42 @@ class LLMProvider:
             print(f"[GigaChat]: Успешное подключение. Рабочая модель: {self.giga_model_name}")
             return True, ""
         except Exception as e:
+            self.giga_client = None
+            self._giga_credentials = ""
             print(f"[GigaChat Init Error]: {e}")
             return False, f"Ошибка авторизации GigaChat: {e}"
 
-    def _init_openrouter(self):
-        if self.openrouter_client is not None:
-            return True, ""
-
+    def _init_routerai(self):
         cfg = load_config()
-        api_key = cfg.get("api_keys", {}).get("openrouter", "").strip()
+        api_keys = cfg.get("api_keys", {})
+        api_key = (
+            api_keys.get("routerai", "").strip()
+            or api_keys.get("openrouter", "").strip()
+        )
 
         if not api_key:
-            return False, "Укажи API-ключ OpenRouter в настройках (config.json -> api_keys -> openrouter)."
+            return False, "Подключи RouterAI в настройках, чтобы использовать продвинутые модели."
+
+        if self.routerai_client is not None and self._routerai_api_key == api_key:
+            return True, ""
 
         try:
-            self.openrouter_client = OpenAI(
-                base_url="https://openrouter.ai/api/v1",
+            self.routerai_client = OpenAI(
+                base_url=self.ROUTERAI_BASE_URL,
                 api_key=api_key,
-                timeout=35.0,
+                timeout=90.0,
                 default_headers={
-                    "HTTP-Referer": "https://github.com/RaccoonKa/Akira",
+                    "HTTP-Referer": "[https://github.com/RaccoonKa/Akira](https://github.com/RaccoonKa/Akira)",
                     "X-Title": "Akira Virtual Assistant"
                 }
             )
+            self._routerai_api_key = api_key
             return True, ""
         except Exception as e:
-            print(f"[OpenRouter Init Error]: {e}")
-            return False, f"Ошибка инициализации OpenRouter: {e}"
+            self.routerai_client = None
+            self._routerai_api_key = ""
+            print(f"[RouterAI Init Error]: {e}")
+            return False, f"Ошибка инициализации RouterAI: {e}"
 
     def _get_active_system_prompt(self, user_text: str = "") -> str:
         self._init_system_prompt()
@@ -199,16 +288,16 @@ class LLMProvider:
             return random.choice(canned_replies)
         return raw_answer
 
-    def _ask_openrouter(self, model_slug: str, messages: list) -> str:
-        response = self.openrouter_client.chat.completions.create(
+    def _ask_routerai(self, model_slug: str, messages: list) -> str:
+        response = self.routerai_client.chat.completions.create(
             model=model_slug,
             messages=messages,
             temperature=0.7,
-            max_tokens=1500
+            max_tokens=4000
         )
         choice = response.choices[0] if response.choices else None
         if not choice:
-            raise ValueError("OpenRouter вернул пустой ответ")
+            raise ValueError("RouterAI вернул пустой ответ")
 
         raw_text = choice.message.content
         if not raw_text:
@@ -226,34 +315,39 @@ class LLMProvider:
         messages = [{"role": "system", "content": self._get_active_system_prompt(query_for_rag)}]
         messages.extend(self.history)
 
+        effective_slot = self._resolve_effective_model(self.active_model)
         answer = ""
         active_client = None
         current_model_id = ""
 
         try:
-            if self.active_model == "gigachat":
+            if effective_slot == "hikari":
                 success, err = self._init_gigachat()
                 if not success:
+                    if self.history and self.history[-1]["role"] == "user":
+                        self.history.pop()
                     return err
                 print(f"[LLM]: Отправка в GigaChat ({self.giga_model_name})...")
                 answer = self._ask_gigachat(messages)
                 active_client = self.giga_client
                 current_model_id = self.giga_model_name
             else:
-                success, err = self._init_openrouter()
+                success, err = self._init_routerai()
                 if not success:
+                    if self.history and self.history[-1]["role"] == "user":
+                        self.history.pop()
                     return err
-                slug = self.OPENROUTER_MODELS.get(self.active_model, "deepseek/deepseek-chat")
-                print(f"[LLM]: Отправка в OpenRouter ({slug})...")
-                answer = self._ask_openrouter(slug, messages)
-                active_client = self.openrouter_client
+                slug = self.ROUTERAI_MODELS.get(effective_slot, self.ROUTERAI_MODELS["kasumi"])
+                print(f"[LLM]: Отправка в RouterAI [{effective_slot}] ({slug})...")
+                answer = self._ask_routerai(slug, messages)
+                active_client = self.routerai_client
                 current_model_id = slug
 
         except Exception as e:
-            print(f"[LLM Error] ({self.active_model}): {e}")
+            print(f"[LLM Error] ({effective_slot}): {e}")
             if self.history and self.history[-1]["role"] == "user":
                 self.history.pop()
-            return f"Не удалось получить ответ от {self.active_model.title()}. Проверь ключ или сеть 😉"
+            return f"Не удалось получить ответ от {effective_slot.capitalize()}. Проверь баланс ключа или сеть 😉"
 
         self.history.append({"role": "assistant", "content": answer})
 
@@ -276,14 +370,20 @@ class LLMProvider:
         messages.extend(self.history)
         messages.append({"role": "user", "content": temp_prompt})
 
+        effective_slot = self._resolve_effective_model(self.active_model)
+
         try:
-            if self.active_model == "gigachat":
-                self._init_gigachat()
+            if effective_slot == "hikari":
+                success, err = self._init_gigachat()
+                if not success:
+                    return err
                 answer = self._ask_gigachat(messages)
             else:
-                self._init_openrouter()
-                slug = self.OPENROUTER_MODELS.get(self.active_model, "deepseek/deepseek-chat")
-                answer = self._ask_openrouter(slug, messages)
+                success, err = self._init_routerai()
+                if not success:
+                    return err
+                slug = self.ROUTERAI_MODELS.get(effective_slot, self.ROUTERAI_MODELS["kasumi"])
+                answer = self._ask_routerai(slug, messages)
 
             self.history.append({"role": "user", "content": f"(Отправил файл) {user_text}"})
             self.history.append({"role": "assistant", "content": answer})
@@ -291,7 +391,7 @@ class LLMProvider:
                 self.history = self.history[-self.max_history:]
             return answer
         except Exception as e:
-            print(f"[LLM File Error]: {e}")
+            print(f"[LLM File Error] ({effective_slot}): {e}")
             return "Не удалось обработать файл выбранной моделью."
 
     def clear_history(self):
@@ -301,3 +401,4 @@ class LLMProvider:
 # Алиасы для обратной совместимости
 GigaChatProvider = LLMProvider
 OpenRouterProvider = LLMProvider
+RouterAIProvider = LLMProvider

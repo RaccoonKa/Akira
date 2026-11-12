@@ -34,6 +34,13 @@ SVG_SEND = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="
 <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
 </svg>"""
 
+ALL_STUDIO_MODELS = [
+    ("Hikari", "hikari"),
+    ("Kasumi", "kasumi"),
+    ("Ginga", "ginga"),
+    ("Uchū", "uchuu"),
+]
+
 STUDIO_PLACEHOLDERS = [
     "Доверься мне...",
     "Какие мысли на сегодня?..",
@@ -78,6 +85,26 @@ STUDIO_NEW_CHAT_PHRASES = [
 ]
 
 
+def _get_available_studio_models() -> list[tuple[str, str]]:
+    """Возвращает доступные слоты моделей в зависимости от настроенных ключей."""
+    try:
+        cfg = load_config()
+        api_keys = cfg.get("api_keys", {})
+        has_giga = bool(api_keys.get("gigachat", "").strip())
+        has_routerai = bool(
+            api_keys.get("routerai", "").strip()
+            or api_keys.get("openrouter", "").strip()
+        )
+    except Exception:
+        has_giga, has_routerai = True, False
+
+    if has_giga and has_routerai:
+        return list(ALL_STUDIO_MODELS)
+    if has_routerai and not has_giga:
+        return [m for m in ALL_STUDIO_MODELS if m[1] != "hikari"]
+    return [("Hikari", "hikari")]
+
+
 def _render_svg(svg_xml: str, color: str, size: int = 14) -> QIcon:
     xml = svg_xml.replace("{color}", color)
     renderer = QSvgRenderer(QByteArray(xml.encode("utf-8")))
@@ -102,16 +129,9 @@ class StudioWorker(QThread):
         self.model = model
 
     def run(self):
-        model_map = {
-            "hikari": "gigachat",
-            "kasumi": "gigachat-plus",
-            "ginga": "gigachat-pro",
-            "uchuu": "gigachat-max"
-        }
-        target_model = model_map.get(self.model, self.model)
         if hasattr(self.parser, 'llm') and hasattr(self.parser.llm, 'set_model'):
             try:
-                self.parser.llm.set_model(target_model)
+                self.parser.llm.set_model(self.model)
             except Exception:
                 pass
 
@@ -147,24 +167,26 @@ class StudioTitleWorker(QThread):
 
         title = ""
         try:
-            client = getattr(self.parser, 'llm', None)
-            if client:
-                if hasattr(client, "chat") and callable(client.chat):
-                    res = client.chat({
-                        "model": "GigaChat",
-                        "messages": [{"role": "user", "content": prompt}]
-                    })
-                    if res and getattr(res, "choices", None):
-                        title = getattr(res.choices[0].message, "content", "")
-                elif hasattr(client, "chat") and hasattr(client.chat, "completions"):
-                    response = client.chat.completions.create(
-                        model="deepseek/deepseek-chat",
+            llm = getattr(self.parser, 'llm', None)
+            if llm:
+                # Приоритет — быстрый и дешёвый DeepSeek V4.1 Flash через RouterAI
+                if hasattr(llm, "_init_routerai") and llm._init_routerai()[0]:
+                    slug = llm.ROUTERAI_MODELS.get("kasumi", "deepseek/deepseek-v4.1-flash")
+                    response = llm.routerai_client.chat.completions.create(
+                        model=slug,
                         messages=[{"role": "user", "content": prompt}],
                         temperature=0.3,
                         max_tokens=30
                     )
                     if response and getattr(response, "choices", None):
-                        title = getattr(response.choices[0].message, "content", "")
+                        title = getattr(response.choices[0].message, "content", "") or ""
+                elif hasattr(llm, "_init_gigachat") and llm._init_gigachat()[0]:
+                    res = llm.giga_client.chat({
+                        "model": llm.giga_model_name,
+                        "messages": [{"role": "user", "content": prompt}]
+                    })
+                    if res and getattr(res, "choices", None):
+                        title = getattr(res.choices[0].message, "content", "") or ""
         except Exception:
             pass
 
@@ -494,7 +516,7 @@ class ModelItemRow(QFrame):
 
 
 class ModelSelectorPopup(QFrame):
-    """Анимированное всплывающее окно выбора моделей, открывающееся чуть выше кнопок."""
+    """Анимированное всплывающее окно выбора моделей, подстраивающее высоту под число слотов."""
     closed = pyqtSignal()
     model_selected = pyqtSignal(int)
     emotion_triggered = pyqtSignal(str)
@@ -526,7 +548,7 @@ class ModelSelectorPopup(QFrame):
         "angry": QColor("#e11d48")
     }
 
-    def __init__(self, font_family: str, parent=None):
+    def __init__(self, font_family: str, parent=None, models: list[tuple[str, str]] = None):
         super().__init__(parent)
         self.font_family = font_family
         self.setObjectName("ModelSelectorPopup")
@@ -541,30 +563,35 @@ class ModelSelectorPopup(QFrame):
         self.target_geom = QRect()
         self.start_y = 0
         self._anim_progress = 0.0
+        self._selected_index = 0
 
-        layout = QVBoxLayout(self)
-        layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(3)
+        self.rows_layout = QVBoxLayout(self)
+        self.rows_layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
+        self.rows_layout.setContentsMargins(6, 6, 6, 6)
+        self.rows_layout.setSpacing(3)
 
         self.rows = []
-        models = [
-            ("Hikari", "hikari"),
-            ("Kasumi", "kasumi"),
-            ("Ginga", "ginga"),
-            ("Uchū", "uchuu")
-        ]
-        for i, (name, code) in enumerate(models):
-            row = ModelItemRow(i, name, code, self.font_family, self)
-            row.clicked.connect(self._on_row_clicked)
-            row.hovered.connect(self._on_row_hovered)
-            layout.addWidget(row)
-            self.rows.append(row)
+        self.set_models(models if models is not None else _get_available_studio_models())
 
         self.anim = QVariantAnimation(self)
         self.anim.setDuration(240)
         self.anim.valueChanged.connect(self._on_anim_step)
         self.anim.finished.connect(self._on_anim_finished)
+
+    def set_models(self, models: list[tuple[str, str]]):
+        for r in self.rows:
+            self.rows_layout.removeWidget(r)
+            r.deleteLater()
+        self.rows.clear()
+
+        for i, (name, code) in enumerate(models):
+            row = ModelItemRow(i, name, code, self.font_family, self)
+            row.set_theme(self.current_theme)
+            row.set_selected(i == self._selected_index)
+            row.clicked.connect(self._on_row_clicked)
+            row.hovered.connect(self._on_row_hovered)
+            self.rows_layout.addWidget(row)
+            self.rows.append(row)
 
     def set_theme(self, theme: str):
         self.current_theme = theme
@@ -573,6 +600,7 @@ class ModelSelectorPopup(QFrame):
         self.update()
 
     def set_selected_index(self, index: int):
+        self._selected_index = index
         for r in self.rows:
             r.set_selected(r.index == index)
 
@@ -603,8 +631,9 @@ class ModelSelectorPopup(QFrame):
         self.show()
         self.raise_()
 
+        count = max(1, len(self.rows))
         target_w = 122
-        target_h = 142
+        target_h = 13 + count * 30 + (count - 1) * 3
         gap = 12
         final_y = btn_y - target_h - gap
 
@@ -660,7 +689,7 @@ class ModelSelectorPopup(QFrame):
 
 
 class StudioModelSelector(QPushButton):
-    """Кастомный селектор модели с защитой от обрезки текста и курсором-пальцем."""
+    """Кастомный селектор модели с динамическим фильтром по активным ключам."""
     currentIndexChanged = pyqtSignal(int)
 
     def __init__(self, font_family: str, studio_frame, parent=None):
@@ -672,19 +701,15 @@ class StudioModelSelector(QPushButton):
         self.setFixedHeight(28)
         self.setFixedWidth(104)
 
-        self.models = [
-            ("Hikari", "hikari"),
-            ("Kasumi", "kasumi"),
-            ("Ginga", "ginga"),
-            ("Uchū", "uchuu")
-        ]
+        self.models = _get_available_studio_models()
         self._current_index = 0
         self.current_theme = "dark"
 
-        self.popup = ModelSelectorPopup(self.font_family, self.studio_frame)
+        self.popup = ModelSelectorPopup(self.font_family, self.studio_frame, models=self.models)
         self.popup.model_selected.connect(self.setCurrentIndex)
         self.popup.emotion_triggered.connect(self.studio_frame.set_emotion)
         self.popup.closed.connect(self.update)
+        self.popup.set_selected_index(0)
 
         self.clicked.connect(self._toggle_popup)
         self._update_button_text()
@@ -693,7 +718,26 @@ class StudioModelSelector(QPushButton):
         if self.studio_frame:
             self.studio_frame.installEventFilter(self)
 
+    def refresh_models(self):
+        """Синхронизирует список доступных слотов с актуальными ключами в config.json."""
+        new_models = _get_available_studio_models()
+        if new_models == self.models:
+            return
+
+        prev_code = self.currentData()
+        self.models = new_models
+        self.popup.set_models(self.models)
+
+        new_idx = self.findData(prev_code)
+        if new_idx == -1:
+            new_idx = 0
+
+        self._current_index = new_idx
+        self._update_button_text()
+        self.popup.set_selected_index(new_idx)
+
     def _toggle_popup(self):
+        self.refresh_models()
         if self.popup.is_open:
             self.popup.close_animated()
         else:
@@ -722,10 +766,14 @@ class StudioModelSelector(QPushButton):
         super().mouseMoveEvent(event)
 
     def currentData(self) -> str:
-        return self.models[self._current_index][1]
+        if 0 <= self._current_index < len(self.models):
+            return self.models[self._current_index][1]
+        return self.models[0][1]
 
     def currentText(self) -> str:
-        return self.models[self._current_index][0]
+        if 0 <= self._current_index < len(self.models):
+            return self.models[self._current_index][0]
+        return self.models[0][0]
 
     def currentIndex(self) -> int:
         return self._current_index
@@ -745,11 +793,12 @@ class StudioModelSelector(QPushButton):
 
     def set_theme(self, theme: str):
         self.current_theme = theme
+        self.refresh_models()
         self.popup.set_theme(theme)
         self.update_style()
 
     def _update_button_text(self):
-        name = self.models[self._current_index][0]
+        name = self.currentText()
         self.setText(f"{name}  ▾")
 
     def update_style(self):
@@ -825,7 +874,6 @@ class StudioFloatingDock(QFrame):
         dock_row.setContentsMargins(0, 0, 0, 0)
         dock_row.setSpacing(6)
 
-        # Интеграция обновленного селектора моделей
         self.model_combo = StudioModelSelector(font_family=self.font_family, studio_frame=parent, parent=self)
         self.model_combo.setToolTip("Выбор нейросетевого ядра")
         dock_row.addWidget(self.model_combo, alignment=Qt.AlignmentFlag.AlignVCenter)
@@ -878,6 +926,7 @@ class StudioFloatingDock(QFrame):
         text = self.input_edit.toPlainText().strip()
         if not text and not self.attached_file:
             return
+        self.model_combo.refresh_models()
         model = self.model_combo.currentData()
         f_path = self.attached_file
         self.input_edit.clear()
@@ -905,6 +954,13 @@ class HistorySessionCard(QFrame):
     """Карточка отдельного чата с крупным шрифтом, временем и кнопкой удаления."""
     clicked = pyqtSignal(int)
     delete_requested = pyqtSignal(int)
+
+    MODEL_DISPLAY_NAMES = {
+        "hikari": "Hikari",
+        "kasumi": "Kasumi",
+        "ginga": "Ginga",
+        "uchuu": "Uchū",
+    }
 
     def __init__(self, session_data: dict, font_family: str, is_active: bool = False, theme: str = "dark", parent=None):
         super().__init__(parent)
@@ -934,7 +990,8 @@ class HistorySessionCard(QFrame):
 
         raw_time = session_data.get("updated_at", "")
         time_display = self._format_time(raw_time)
-        model_name = session_data.get("model", "hikari").capitalize()
+        raw_model = str(session_data.get("model", "hikari")).lower()
+        model_name = self.MODEL_DISPLAY_NAMES.get(raw_model, raw_model.capitalize())
 
         self.sub_lbl = QLabel(f"{time_display} • {model_name}")
         self.sub_lbl.setFont(QFont(self.font_family, 9))
@@ -1197,7 +1254,7 @@ class StudioHistoryDrawer(QFrame):
 
 
 class StudioFrame(QFrame):
-    """Студия Акиры с историей диалогов, парящим меню и анимированным селектором моделей."""
+    """Студия Акиры с историей диалогов, парящим меню и динамическим селектором моделей."""
     DRAWER_TARGET_WIDTH = 275
 
     def __init__(self, parent=None):
@@ -1312,6 +1369,11 @@ class StudioFrame(QFrame):
         self.set_theme(self.current_theme)
         self._init_session_from_db()
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        if hasattr(self, 'dock') and hasattr(self.dock, 'model_combo'):
+            self.dock.model_combo.refresh_models()
+
     def _init_session_from_db(self):
         sessions = studio_db.get_sessions()
         if sessions:
@@ -1320,7 +1382,8 @@ class StudioFrame(QFrame):
             self.create_new_dialog()
 
     def create_new_dialog(self):
-        model = self.dock.model_combo.currentData() or "hikari"
+        self.dock.model_combo.refresh_models()
+        model = self.dock.model_combo.currentData()
         new_id = studio_db.create_session(title="Новый диалог", model=model)
         self.load_session(new_id)
         if self._is_drawer_open:
@@ -1329,6 +1392,7 @@ class StudioFrame(QFrame):
     def load_session(self, session_id: int):
         self.current_session_id = session_id
         self._clear_feed()
+        self.dock.model_combo.refresh_models()
 
         msgs = studio_db.get_messages(session_id)
         current_name = self._get_user_name()
@@ -1364,8 +1428,7 @@ class StudioFrame(QFrame):
         if session_data:
             s_model = session_data.get("model", "hikari")
             idx = self.dock.model_combo.findData(s_model)
-            if idx != -1:
-                self.dock.model_combo.setCurrentIndex(idx)
+            self.dock.model_combo.setCurrentIndex(idx if idx != -1 else 0)
 
         self._scroll_bottom()
         self.drawer.update_active_highlight(session_id)
