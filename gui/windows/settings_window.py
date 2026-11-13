@@ -27,6 +27,7 @@ from gui.dialogs.yandex_auth_dialog import YandexAuthDialog
 from gui.dialogs.yandex_iot_auth_dialog import YandexIotAuthDialog
 from gui.dialogs.spotify_auth_dialog import SpotifyAuthDialog
 from gui.dialogs.gigachat_auth_dialog import GigaChatAuthDialog
+from gui.dialogs.routerai_auth_dialog import RouterAiAuthDialog
 from services.spotify.spotify_manager import SpotifyManager
 from gui.dialogs.mode_config_dialog import ModeConfigDialog
 from gui.dialogs.face_manager_dialog import FaceManagerDialog
@@ -129,6 +130,7 @@ SPEECH_HINTS = {
     "eye_tracking": "С этой функцией, я смогу следить за твоими глазками. Если замечу, что часто моргаешь или долго сидишь с закрытыми глазами — я заботливо предложу отдохнуть!",
     "gestures": "С жестами я смогу понимать тебя без слов. Покажешь кулак — заблокирую твой компьютер, чтобы никто не получил к нему доступ кроме тебя. Покажешь ладонь — поставлю музыку на паузу. Почти магия!",
     "music_service": "Выбери, где мне включать музыку! Если переключатель включен — я буду ставить треки и запускать твою волну рекомендаций в Спотике, а если выключен — в Яндексе.",
+    "routerai": "Подключив RouterAI, ты откроешь для меня продвинутые нейросети в Студии: быстрый DeepSeek, умный Claude Opus и мощный Gemini Carbon! Вход займёт пару секунд через Яндекс или ВК, а ключ подтянется сам.",
     "gigachat": "Это мой главный ум и вдохновение! Подключив GigaChat, ты дашь мне возможность болтать с тобой обо всём на свете, шутить и отвечать на любые вопросы.",
     "yandex": "Доверь мне свой плейлист! Я смогу запускать твою волну, включать треки под настроение и ставить лайки.",
     "yandex_iot": "Подключив Умный дом, я смогу управлять твоим освещением, розетками и сценариями Дома с Алисой.",
@@ -142,6 +144,13 @@ API_GUIDES = {
                 "2. Отсканируй появившийся QR-код камерой телефона или нажми 'Открыть в Telegram'.\n"
                 "3. В открывшемся диалоге нажми кнопку 'Старт' (Start).\n"
                 "4. Акира автоматически сохранит профиль и привяжет удалённый пульт управления к твоему аккаунту!"
+    },
+    "routerai": {
+        "title": "Подключение RouterAI (Продвинутые модели)",
+        "text": "1. Нажми кнопку 'ПОДКЛЮЧИТЬ' в карточке RouterAI.\n"
+                "2. В окне нажми 'Войти через Яндекс / VK (в 1 клик)' — откроется страница авторизации RouterAI.\n"
+                "3. Войди через Яндекс ID, VK ID или почту и при необходимости пополни баланс (от 100 ₽ через СБП или карту РФ).\n"
+                "4. Нажми 'Разрешить / Выдать ключ' — Акира сама получит API-ключ и активирует слоты Kasumi, Ginga и Uchū в Студии!"
     },
     "gigachat": {
         "title": "Подключение GigaChat API",
@@ -720,6 +729,7 @@ class SettingsFrame(QFrame):
         self.work_apps = []
         self.rest_apps = []
         self.gigachat_key = ""
+        self.routerai_key = ""
         self.yandex_music_token = ""
         self.yandex_iot_token = ""
         self._is_loading = True
@@ -949,27 +959,6 @@ class SettingsFrame(QFrame):
 
         self.card_sys.add_layout(row_sys_top)
 
-        row_sys_second = QHBoxLayout()
-        row_sys_second.setSpacing(8)
-
-        cell_fps = QFrame(self.card_sys.content_widget)
-        cell_fps.setObjectName("BentoCell")
-        cell_fps_l = QHBoxLayout(cell_fps)
-        cell_fps_l.setContentsMargins(8, 6, 8, 6)
-        lbl_fps = QLabel("FPS")
-        lbl_fps.setObjectName("ToggleLabel")
-        lbl_fps.setFont(QFont(self.font_family, 10))
-        cell_fps_l.addWidget(lbl_fps)
-        cell_fps_l.addStretch()
-        self.fps_combo = NoScrollComboBox(cell_fps)
-        self.fps_combo.setObjectName("SettingCombo")
-        self.fps_combo.setFont(QFont(self.font_family, 9))
-        self.fps_combo.setFixedWidth(82)
-        self.fps_combo.addItem("60", 60)
-        self.fps_combo.addItem("120", 120)
-        cell_fps_l.addWidget(self.fps_combo)
-        row_sys_second.addWidget(cell_fps, 1)
-
         cell_vpn = QFrame(self.card_sys.content_widget)
         cell_vpn.setObjectName("BentoCell")
         cell_vpn_l = QHBoxLayout(cell_vpn)
@@ -986,9 +975,7 @@ class SettingsFrame(QFrame):
         for name, key in [("Нет", "none"), ("Sota", "sota"), ("Happ", "happ"), ("V2Ray", "v2ray"), ("WG", "wireguard")]:
             self.vpn_combo.addItem(name, key)
         cell_vpn_l.addWidget(self.vpn_combo)
-        row_sys_second.addWidget(cell_vpn, 1)
-
-        self.card_sys.add_layout(row_sys_second)
+        self.card_sys.add_widget(cell_vpn)
 
         row_vol = QFrame(self.card_sys.content_widget)
         row_vol.setObjectName("BentoCell")
@@ -1244,6 +1231,14 @@ class SettingsFrame(QFrame):
             l.addWidget(btn)
             return cell
 
+        self.lbl_routerai_status = QLabel("НЕ ПОДКЛЮЧЕН (Яндекс / VK)")
+        self.lbl_routerai_status.setObjectName("BentoStatusIdle")
+        self.btn_routerai_auth = QPushButton("ПОДКЛЮЧИТЬ")
+        self.btn_routerai_auth.setObjectName("BentoActionBtn")
+        self.btn_routerai_auth.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_routerai_auth.clicked.connect(self._open_routerai_auth)
+        self.card_cloud.add_widget(_make_service_cell("ROUTERAI (PRO ИИ)", "routerai", "routerai", self.lbl_routerai_status, self.btn_routerai_auth))
+
         self.lbl_gigachat_status = QLabel("НЕ ПРИВЯЗАН")
         self.lbl_gigachat_status.setObjectName("BentoStatusIdle")
         self.btn_gigachat_auth = QPushButton("НАСТРОИТЬ")
@@ -1333,7 +1328,6 @@ class SettingsFrame(QFrame):
         self.gender_combo.currentIndexChanged.connect(self.auto_save)
         self.autostart_toggle.toggled.connect(self.auto_save)
         self.theme_combo.currentIndexChanged.connect(self.auto_save)
-        self.fps_combo.currentIndexChanged.connect(self.auto_save)
         self.voice_slider.sliderReleased.connect(self.auto_save)
         self.alarm_sound_combo.currentIndexChanged.connect(self.auto_save)
         self.vpn_combo.currentIndexChanged.connect(self.auto_save)
@@ -1599,6 +1593,38 @@ class SettingsFrame(QFrame):
         self._update_modes_status_ui()
         self.auto_save()
 
+    def _refresh_studio_models_if_open(self):
+        win = self.window()
+        if win and hasattr(win, "studio_panel") and hasattr(win.studio_panel, "dock"):
+            win.studio_panel.dock.model_combo.refresh_models()
+
+    def _open_routerai_auth(self):
+        dialog = RouterAiAuthDialog(font_family=self.font_family, parent=self.window())
+        dialog.key_saved.connect(self._on_routerai_key_saved)
+        dialog.exec()
+        if self.window():
+            self.window().activateWindow()
+            self.window().raise_()
+            self.window().setFocus()
+
+    def _on_routerai_key_saved(self, key: str):
+        self.routerai_key = key.strip()
+        self._update_routerai_status_ui()
+        self.auto_save()
+        self._refresh_studio_models_if_open()
+
+    def _update_routerai_status_ui(self):
+        active_col, idle_col = self._get_status_colors()
+        if self.routerai_key:
+            masked = f"{self.routerai_key[:6]}...{self.routerai_key[-4:]}" if len(self.routerai_key) > 12 else "АКТИВЕН"
+            self.lbl_routerai_status.setText(f"ПОДКЛЮЧЕН ✓ ({masked})")
+            self.lbl_routerai_status.setStyleSheet(f"color: {active_col}; font-weight: bold;")
+            self.btn_routerai_auth.setText("ИЗМЕНИТЬ")
+        else:
+            self.lbl_routerai_status.setText("НЕ ПОДКЛЮЧЕН (Яндекс / VK)")
+            self.lbl_routerai_status.setStyleSheet(f"color: {idle_col};")
+            self.btn_routerai_auth.setText("ПОДКЛЮЧИТЬ")
+
     def _open_gigachat_auth(self):
         dialog = GigaChatAuthDialog(font_family=self.font_family, parent=self.window())
         dialog.key_saved.connect(self._on_gigachat_key_saved)
@@ -1612,6 +1638,7 @@ class SettingsFrame(QFrame):
         self.gigachat_key = key
         self._update_gigachat_status_ui()
         self.auto_save()
+        self._refresh_studio_models_if_open()
 
     def _update_gigachat_status_ui(self):
         active_col, idle_col = self._get_status_colors()
@@ -1708,6 +1735,7 @@ class SettingsFrame(QFrame):
 
     def _update_all_statuses_ui(self):
         self._update_modes_status_ui()
+        self._update_routerai_status_ui()
         self._update_gigachat_status_ui()
         self._update_yandex_status_ui()
         self._update_yandex_iot_status_ui()
@@ -1752,7 +1780,7 @@ class SettingsFrame(QFrame):
             """
             action_buttons = [
                 self.btn_enroll_owner, self.btn_manage_faces, self.pair_btn,
-                self.btn_gigachat_auth, self.btn_ya_auth, self.btn_ya_iot_auth, self.btn_spotify_auth
+                self.btn_routerai_auth, self.btn_gigachat_auth, self.btn_ya_auth, self.btn_ya_iot_auth, self.btn_spotify_auth
             ]
             for btn in action_buttons:
                 btn.setStyleSheet(action_css)
@@ -1802,7 +1830,7 @@ class SettingsFrame(QFrame):
             """
             action_buttons = [
                 self.btn_enroll_owner, self.btn_manage_faces, self.pair_btn,
-                self.btn_gigachat_auth, self.btn_ya_auth, self.btn_ya_iot_auth, self.btn_spotify_auth
+                self.btn_routerai_auth, self.btn_gigachat_auth, self.btn_ya_auth, self.btn_ya_iot_auth, self.btn_spotify_auth
             ]
             for btn in action_buttons:
                 btn.setStyleSheet(action_css)
@@ -1820,8 +1848,6 @@ class SettingsFrame(QFrame):
     def _update_theme_ui(self):
         for tog in (self.autostart_toggle, self.spotify_toggle, self.face_rec_toggle, self.eye_tracking_toggle, self.gestures_toggle):
             tog.set_theme(self.current_theme)
-        for combo in (self.theme_combo, self.fps_combo, self.vpn_combo, self.alarm_sound_combo, self.gender_combo):
-            combo.set_theme(self.current_theme)
         if hasattr(self, 'cards'):
             for card in self.cards:
                 card.set_theme(self.current_theme)
@@ -1865,11 +1891,6 @@ class SettingsFrame(QFrame):
         self.custom_alarm_path = cfg.get("custom_alarm_path", "")
         self.btn_choose_custom_alarm.setVisible(alarm_sound_val == "custom")
 
-        fps_val = int(cfg.get("target_fps", 60))
-        idx_fps = self.fps_combo.findData(fps_val)
-        if idx_fps != -1:
-            self.fps_combo.setCurrentIndex(idx_fps)
-
         gender_val = cfg.get("user_gender", "male").lower()
         idx_g = self.gender_combo.findData(gender_val)
         if idx_g != -1:
@@ -1890,6 +1911,12 @@ class SettingsFrame(QFrame):
         self.rest_apps = [x.strip() for x in r_apps.split(",") if x.strip()] if isinstance(r_apps, str) else list(r_apps)
 
         self._update_modes_status_ui()
+
+        self.routerai_key = (
+            api_keys.get("routerai", "").strip()
+            or api_keys.get("openrouter", "").strip()
+        )
+        self._update_routerai_status_ui()
 
         self.gigachat_key = api_keys.get("gigachat", "")
         self._update_gigachat_status_ui()
@@ -1948,11 +1975,6 @@ class SettingsFrame(QFrame):
             self.theme_changed.emit(theme_val)
             self.update()
 
-        fps_val = self.fps_combo.currentData()
-        config_data["target_fps"] = fps_val
-
-        self.fps_changed.emit(fps_val)
-
         config_data["voice_volume"] = self.voice_slider.value()
         config_data["alarm_sound"] = self.alarm_sound_combo.currentData()
         config_data["custom_alarm_path"] = self.custom_alarm_path
@@ -1965,9 +1987,14 @@ class SettingsFrame(QFrame):
         config_data["work_apps"] = self.work_apps
         config_data["rest_apps"] = self.rest_apps
 
+        config_data["api_keys"]["routerai"] = self.routerai_key
+        if not self.routerai_key:
+            config_data["api_keys"]["openrouter"] = ""
         config_data["api_keys"]["gigachat"] = self.gigachat_key
         config_data["api_keys"]["yandex_music_token"] = self.yandex_music_token
         config_data["api_keys"]["yandex_iot_token"] = self.yandex_iot_token
+
+        config_data["modules"]["routerai"] = bool(self.routerai_key)
 
         config_data["modules"]["gigachat"] = bool(self.gigachat_key)
         config_data["modules"]["telegram"] = bool(config_data["api_keys"].get("telegram_admin_id", 0))

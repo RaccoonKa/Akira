@@ -47,9 +47,13 @@ DEFAULT_CONFIG = {
         "face_recognition": False,
         "eye_tracking": False,
         "telegram": False,
+        "gigachat": False,
+        "routerai": False,
         "memory": True
     },
     "api_keys": {
+        "gigachat": "",
+        "routerai": "",
         "openrouter": "",
         "telegram_token": "",
         "telegram_admin_id": 0,

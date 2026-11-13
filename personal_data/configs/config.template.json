@@ -30,11 +30,12 @@
         "eye_tracking": false,
         "telegram": false,
         "gigachat": false,
+        "routerai": false,
         "memory": true
     },
     "api_keys": {
         "gigachat": "",
-        "openrouter": "",
+        "routerai": "",
         "telegram_token": "",
         "telegram_admin_id": 0,
         "yandex_music_token": "",
