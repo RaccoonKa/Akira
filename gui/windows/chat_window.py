@@ -415,6 +415,7 @@ class AkiraMicWidget(QFrame):
         self.reset_emotion_timer.timeout.connect(self._reset_to_neutral)
 
         self.intro_progress = 0.0
+        self.morph_scale = 1.0
         self.particles = []
         self.total_particles = 320
         self._init_particles()
@@ -488,6 +489,17 @@ class AkiraMicWidget(QFrame):
 
         self.intro_anim.valueChanged.connect(_on_val)
         self.intro_anim.start()
+
+    def trigger_morph_bloom(self, start_scale: float = 0.35, duration: int = 480):
+        self.intro_progress = 1.0
+        self.morph_scale = start_scale
+        self.morph_anim = QVariantAnimation(self)
+        self.morph_anim.setDuration(duration)
+        self.morph_anim.setStartValue(start_scale)
+        self.morph_anim.setEndValue(1.0)
+        self.morph_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.morph_anim.valueChanged.connect(lambda v: (setattr(self, 'morph_scale', float(v)), self.update()))
+        self.morph_anim.start()
 
     def set_listening(self, state: bool):
         self.is_listening = state
@@ -650,7 +662,7 @@ class AkiraMicWidget(QFrame):
 
             cur_angle = p['accum_angle']
             rad_focus = -8.0 if self.is_processing else 0.0
-            target_rad = p['r'] + rad_focus + (p_val * (1 if p['size'] > 1.2 else -1)) + (active_impulse * 22.0)
+            target_rad = (p['r'] + rad_focus + (p_val * (1 if p['size'] > 1.2 else -1)) + (active_impulse * 22.0)) * self.morph_scale
             target_x = cx + math.cos(cur_angle) * target_rad
             target_y = cy + math.sin(cur_angle) * target_rad
 
@@ -1516,6 +1528,7 @@ class MainWindow(QWidget):
         self.EXTENDED_WIDTH = 880
         self.WINDOW_HEIGHT = 560
         self._is_mode_animating = False
+        self._mini_transition_refs = []
 
         # Анимация перемещения внутреннего корпуса (Zero-Move)
         self.expand_anim = QVariantAnimation(self)
@@ -1565,8 +1578,10 @@ class MainWindow(QWidget):
 
         QTimer.singleShot(3000, self._check_updates)
 
-        initial_fps = self.config.get("target_fps", 60) if isinstance(self.config, dict) else 60
-        self.apply_framerate(initial_fps)
+        screen = QGuiApplication.primaryScreen()
+        raw_hz = int(round(screen.refreshRate())) if screen else 144
+        auto_fps = max(60, min(144, raw_hz)) if raw_hz > 0 else 144
+        self.apply_framerate(auto_fps)
 
         self.apply_theme(self.current_theme, initial=True)
 
@@ -1705,6 +1720,10 @@ class MainWindow(QWidget):
             self.left_panel.set_framerate(fps)
         if hasattr(self, 'bg_frame'):
             self.bg_frame.set_framerate(fps)
+        if hasattr(self, 'studio_panel'):
+            self.studio_panel.set_framerate(fps)
+        if hasattr(self, 'mini_window'):
+            self.mini_window.set_framerate(fps)
 
     def changeEvent(self, event):
         if event.type() == QEvent.Type.WindowStateChange:
@@ -1932,10 +1951,60 @@ class MainWindow(QWidget):
             self.restore_from_mini()
             return
 
+        self._is_mode_animating = True
+
+        # Если открыт маленький чат или настройки — мягко закрываем их перед уходом в мини-режим
+        if self.right_panel.isVisible() and self.right_panel.height() > 10:
+            self._do_toggle_chat(force_close=True)
+        if self.settings_panel.isVisible() and self.settings_panel.maximumWidth() > 0:
+            self._do_toggle_settings(force_close=True)
+
+        # Фаза 1: если открыта Студия, сначала растворяем её и сворачиваем корпус до 380 px
+        if self.window_mode == "extended":
+            self.window_mode = "normal"
+            self.update_title_icons()
+            self.command_parser.llm.set_model("gigachat")
+
+            try:
+                self.studio_fade_anim.finished.disconnect()
+            except Exception:
+                pass
+            self.studio_fade_anim.stop()
+            self.studio_fade_anim.setDuration(170)
+            self.studio_fade_anim.setEasingCurve(QEasingCurve.Type.InQuad)
+            self.studio_fade_anim.setStartValue(self.studio_opacity.opacity())
+            self.studio_fade_anim.setEndValue(0.0)
+
+            def _after_studio_fade():
+                self.studio_panel.hide()
+                try:
+                    self.expand_anim.finished.disconnect()
+                except Exception:
+                    pass
+                self.expand_anim.stop()
+                self.expand_anim.setDuration(280)
+                self.expand_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+                self.expand_anim.setStartValue(float(self.EXTENDED_WIDTH))
+                self.expand_anim.setEndValue(float(self.NORMAL_WIDTH))
+
+                def _after_studio_collapse():
+                    init_x = self.EXTENDED_WIDTH - self.NORMAL_WIDTH
+                    self.bg_frame.setGeometry(init_x, 0, self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
+                    self._update_click_mask(self.NORMAL_WIDTH)
+                    self._start_mini_enter_transition()
+
+                self.expand_anim.finished.connect(_after_studio_collapse)
+                self.expand_anim.start()
+
+            self.studio_fade_anim.finished.connect(_after_studio_fade)
+            self.studio_fade_anim.start()
+        else:
+            self._start_mini_enter_transition()
+
+    def _start_mini_enter_transition(self):
         screen = QGuiApplication.primaryScreen().availableGeometry()
         cur_pos = self.pos()
 
-        # Правый нижний угол видимого окна
         visible_x = cur_pos.x() + (self.EXTENDED_WIDTH - self.NORMAL_WIDTH)
         visible_y = cur_pos.y()
         target_x = visible_x + (self.NORMAL_WIDTH - 460)
@@ -1944,20 +2013,67 @@ class MainWindow(QWidget):
         target_x = max(screen.left() + 10, min(target_x, screen.right() - 470))
         target_y = max(screen.top() + 10, min(target_y, screen.bottom() - 66))
 
-        if self.window_mode == "extended":
-            self.window_mode = "normal"
-            self.studio_panel.hide()
-            self.studio_opacity.setOpacity(0.0)
-            init_x = self.EXTENDED_WIDTH - self.NORMAL_WIDTH
-            self.bg_frame.setGeometry(init_x, 0, self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
-            self._update_click_mask(self.NORMAL_WIDTH)
-
         self.is_mini_mode = True
         self.window_mode = "mini"
         self.update_title_icons()
 
-        self.hide()
-        self.mini_window.show_at(target_x, target_y)
+        # Лёгкое стягивание частиц большой сферы к ядру перед растворением
+        self.left_panel.set_processing(True)
+
+        # Фаза 2А: большое окно плавно опускается вниз и растворяется
+        main_pos_anim = QPropertyAnimation(self, b"pos")
+        main_pos_anim.setDuration(290)
+        main_pos_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        main_pos_anim.setStartValue(cur_pos)
+        main_pos_anim.setEndValue(QPoint(cur_pos.x(), cur_pos.y() + 26))
+
+        main_op_anim = QPropertyAnimation(self, b"windowOpacity")
+        main_op_anim.setDuration(270)
+        main_op_anim.setEasingCurve(QEasingCurve.Type.InCubic)
+        main_op_anim.setStartValue(1.0)
+        main_op_anim.setEndValue(0.0)
+
+        def _on_main_faded():
+            self.hide()
+            self.move(cur_pos)
+            self.setWindowOpacity(1.0)
+            self.left_panel.set_processing(False)
+
+        main_op_anim.finished.connect(_on_main_faded)
+
+        # Фаза 2Б: с нахлёстом 110 мс снизу вверх выплывает мини-капсула
+        def _spawn_mini():
+            self.mini_window.mini_mic.set_emotion(self.left_panel.target_emotion)
+            self.mini_window.mini_mic.trigger_morph_bloom(start_scale=0.30, duration=420)
+            self.mini_window.setWindowOpacity(0.0)
+            self.mini_window.show_at(target_x, target_y + 22)
+
+            mini_pos_anim = QPropertyAnimation(self.mini_window, b"pos")
+            mini_pos_anim.setDuration(300)
+            mini_pos_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+            mini_pos_anim.setStartValue(QPoint(target_x, target_y + 22))
+            mini_pos_anim.setEndValue(QPoint(target_x, target_y))
+
+            mini_op_anim = QPropertyAnimation(self.mini_window, b"windowOpacity")
+            mini_op_anim.setDuration(280)
+            mini_op_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+            mini_op_anim.setStartValue(0.0)
+            mini_op_anim.setEndValue(1.0)
+
+            def _on_mini_shown():
+                self.mini_window.setWindowOpacity(1.0)
+                self._is_mode_animating = False
+                self._mini_transition_refs.clear()
+
+            mini_pos_anim.finished.connect(_on_mini_shown)
+            self._mini_transition_refs.extend([mini_pos_anim, mini_op_anim])
+            mini_pos_anim.start()
+            mini_op_anim.start()
+
+        self._mini_transition_refs = [main_pos_anim, main_op_anim]
+        main_pos_anim.start()
+        main_op_anim.start()
+        QTimer.singleShot(110, _spawn_mini)
 
         cfg = load_config()
         cfg["is_mini_mode"] = True
@@ -1966,6 +2082,10 @@ class MainWindow(QWidget):
         save_config(cfg)
 
     def restore_from_mini(self):
+        if getattr(self, '_is_mode_animating', False):
+            return
+
+        self._is_mode_animating = True
         screen = QGuiApplication.primaryScreen().availableGeometry()
         mini_pos = self.mini_window.pos()
 
@@ -1979,23 +2099,73 @@ class MainWindow(QWidget):
         self.window_mode = "normal"
         self.update_title_icons()
 
-        self.mini_window.hide()
+        # Фаза 1: мини-капсула мягко опускается вниз и растворяется
+        mini_pos_anim = QPropertyAnimation(self.mini_window, b"pos")
+        mini_pos_anim.setDuration(230)
+        mini_pos_anim.setEasingCurve(QEasingCurve.Type.InCubic)
+        mini_pos_anim.setStartValue(mini_pos)
+        mini_pos_anim.setEndValue(QPoint(mini_pos.x(), mini_pos.y() + 20))
 
-        init_x = self.EXTENDED_WIDTH - self.NORMAL_WIDTH
-        self.bg_frame.setGeometry(init_x, 0, self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
-        self._update_click_mask(self.NORMAL_WIDTH)
+        mini_op_anim = QPropertyAnimation(self.mini_window, b"windowOpacity")
+        mini_op_anim.setDuration(210)
+        mini_op_anim.setEasingCurve(QEasingCurve.Type.InCubic)
+        mini_op_anim.setStartValue(1.0)
+        mini_op_anim.setEndValue(0.0)
 
-        self.move(target_x, target_y)
-        super().show()
-        self.raise_()
-        self.activateWindow()
+        def _on_mini_hidden():
+            self.mini_window.hide()
+            self.mini_window.setWindowOpacity(1.0)
 
-        if enable_window_acrylic:
-            try:
-                tint = "20E8EEF5" if self.current_theme == "light" else "25080805"
-                enable_window_acrylic(int(self.winId()), tint)
-            except Exception:
-                pass
+        mini_op_anim.finished.connect(_on_mini_hidden)
+
+        # Фаза 2: с нахлёстом 95 мс вверх выплывает основной корпус, а сфера распускается из ядра
+        def _spawn_main():
+            init_x = self.EXTENDED_WIDTH - self.NORMAL_WIDTH
+            self.bg_frame.setGeometry(init_x, 0, self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
+            self._update_click_mask(self.NORMAL_WIDTH)
+
+            self.left_panel.set_emotion(self.mini_window.mini_mic.target_emotion)
+            self.left_panel.trigger_morph_bloom(start_scale=0.35, duration=480)
+
+            self.setWindowOpacity(0.0)
+            self.move(target_x, target_y + 26)
+            QWidget.show(self)
+            self.raise_()
+            self.activateWindow()
+
+            if enable_window_acrylic:
+                try:
+                    tint = "20E8EEF5" if self.current_theme == "light" else "25080805"
+                    enable_window_acrylic(int(self.winId()), tint)
+                except Exception:
+                    pass
+
+            main_pos_anim = QPropertyAnimation(self, b"pos")
+            main_pos_anim.setDuration(320)
+            main_pos_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+            main_pos_anim.setStartValue(QPoint(target_x, target_y + 26))
+            main_pos_anim.setEndValue(QPoint(target_x, target_y))
+
+            main_op_anim = QPropertyAnimation(self, b"windowOpacity")
+            main_op_anim.setDuration(300)
+            main_op_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+            main_op_anim.setStartValue(0.0)
+            main_op_anim.setEndValue(1.0)
+
+            def _on_main_shown():
+                self.setWindowOpacity(1.0)
+                self._is_mode_animating = False
+                self._mini_transition_refs.clear()
+
+            main_pos_anim.finished.connect(_on_main_shown)
+            self._mini_transition_refs.extend([main_pos_anim, main_op_anim])
+            main_pos_anim.start()
+            main_op_anim.start()
+
+        self._mini_transition_refs = [mini_pos_anim, mini_op_anim]
+        mini_pos_anim.start()
+        mini_op_anim.start()
+        QTimer.singleShot(95, _spawn_main)
 
         cfg = load_config()
         cfg["is_mini_mode"] = False

@@ -95,6 +95,7 @@ class AkiraMiniMicWidget(QWidget):
         self.reset_emotion_timer.timeout.connect(self._reset_to_neutral)
 
         self.intro_progress = 0.0
+        self.morph_scale = 1.0
         self.particles = []
         self.total_particles = 90
         self._init_particles()
@@ -145,6 +146,17 @@ class AkiraMiniMicWidget(QWidget):
         self.intro_anim.setEasingCurve(QEasingCurve.Type.InOutSine)
         self.intro_anim.valueChanged.connect(lambda v: (setattr(self, 'intro_progress', float(v)), self.update()))
         self.intro_anim.start()
+
+    def trigger_morph_bloom(self, start_scale: float = 0.30, duration: int = 420):
+        self.intro_progress = 1.0
+        self.morph_scale = start_scale
+        self.morph_anim = QVariantAnimation(self)
+        self.morph_anim.setDuration(duration)
+        self.morph_anim.setStartValue(start_scale)
+        self.morph_anim.setEndValue(1.0)
+        self.morph_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.morph_anim.valueChanged.connect(lambda v: (setattr(self, 'morph_scale', float(v)), self.update()))
+        self.morph_anim.start()
 
     def set_listening(self, state: bool):
         self.is_listening = state
@@ -223,6 +235,22 @@ class AkiraMiniMicWidget(QWidget):
         elif self.target_emotion != "neutral":
             target_h, target_s, target_v = self.emotion_palette[self.target_emotion]
             color_rate = 0.045 * self.speed_mult
+        elif self.is_processing:
+            target_h = 42.0
+            target_s = 180.0 if self.current_theme == "light" else 80.0
+            target_v = 100.0 if self.current_theme == "light" else 255.0
+            color_rate = 0.05 * self.speed_mult
+        elif self.sound_presence > 0.05 or (self.beat_impulse > 0.01 and self.music_blend > 0.1):
+            target_h = self.music_flow_hue
+            if self.current_theme == "light":
+                target_s = 220.0
+                target_v = 110.0
+            else:
+                base_s = 45.0
+                max_s = 225.0
+                target_s = base_s + (max_s - base_s) * min(1.0, self.sound_presence * 1.5)
+                target_v = 255.0
+            color_rate = 0.035 * self.speed_mult
         else:
             target_h, target_s, target_v = self.emotion_palette["neutral"]
             color_rate = 0.03 * self.speed_mult
@@ -272,7 +300,7 @@ class AkiraMiniMicWidget(QWidget):
             u = math.sin(local_t * (math.pi / 2))
             cur_angle = p['accum_angle']
             rad_focus = -3.0 if self.is_processing else 0.0
-            target_rad = p['r'] + rad_focus + p_val + (active_impulse * 5.0)
+            target_rad = (p['r'] + rad_focus + p_val + (active_impulse * 5.0)) * self.morph_scale
             target_x = cx + math.cos(cur_angle) * target_rad
             target_y = cy + math.sin(cur_angle) * target_rad
 
