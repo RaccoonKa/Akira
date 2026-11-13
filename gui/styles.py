@@ -701,32 +701,6 @@ QPushButton#ExitBtn {
 QPushButton#ExitBtn:hover {
     background-color: rgba(255, 82, 82, 0.22);
 }
-QFrame#CodeBlockWidget {
-    background-color: rgba(9, 10, 14, 0.88);
-    border: 1px solid rgba(120, 115, 95, 0.35);
-    border-radius: 9px;
-}
-QLabel#CodeLangLabel {
-    color: #ded7c4;
-    letter-spacing: 1px;
-}
-QPushButton#CodeCopyBtn {
-    background-color: rgba(120, 115, 95, 0.22);
-    color: #ded7c4;
-    border: 1px solid #78735f;
-    border-radius: 4px;
-    padding: 2px 8px;
-}
-QPushButton#CodeCopyBtn:hover {
-    background-color: rgba(222, 215, 196, 0.25);
-    color: #ffffff;
-    border: 1px solid #9e9780;
-}
-QTextEdit#CodeTextEdit {
-    background: transparent;
-    color: #e6edf3;
-    border: none;
-}
 
 QFrame#StudioUserRail {
     background-color: #ded7c4;

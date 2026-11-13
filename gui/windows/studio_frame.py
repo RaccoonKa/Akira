@@ -21,6 +21,12 @@ from PyQt6.QtSvg import QSvgRenderer
 from core.utils.config import get_resource_path, load_config
 from gui.styles import get_main_style
 from core.database.chat_db import studio_db
+from gui.widgets.code_formatter import (
+    CodeBlockWidget,
+    parse_message_blocks,
+    markdown_to_rich_html,
+    print_markdown_console,
+)
 
 SVG_SIDEBAR = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/>
@@ -76,12 +82,12 @@ THINKING_FILE_PHRASES = [
 STUDIO_NEW_CHAT_PHRASES = [
     "+ Хадзиме!",
     "+ Новая история...",
-    "К звёздам...",
-    "Поехали!",
-    "Расскажи, я тут!",
-    "Чмок!",
+    "+ К звёздам...",
+    "+ Поехали!",
+    "+ Расскажи, я тут!",
+    "+ Чмок!",
     "+ Пойдём болтать!",
-    "Всегда рядом!"
+    "+ Всегда рядом!"
 ]
 
 
@@ -116,6 +122,107 @@ def _render_svg(svg_xml: str, color: str, size: int = 14) -> QIcon:
     painter.end()
     pixmap.setDevicePixelRatio(2)
     return QIcon(pixmap)
+
+class SmoothScrollArea(QScrollArea):
+    """Плавный инерционный скролл колёсиком мыши и мягкая автопрокрутка вниз."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._current_pos = 0.0
+        self._velocity = 0.0
+        self._friction = 0.935
+        self._auto_target = None
+
+        self._timer = QTimer(self)
+        self._timer.setInterval(12)
+        self._timer.timeout.connect(self._on_smooth_step)
+
+        v_bar = self.verticalScrollBar()
+        v_bar.sliderPressed.connect(self._on_slider_pressed)
+
+    def _on_slider_pressed(self):
+        self._timer.stop()
+        self._velocity = 0.0
+        self._auto_target = None
+        self._current_pos = float(self.verticalScrollBar().value())
+
+    def smooth_scroll_to_bottom(self):
+        v_bar = self.verticalScrollBar()
+        max_val = float(v_bar.maximum())
+        if max_val <= 0:
+            return
+        self._current_pos = float(v_bar.value())
+        self._velocity = 0.0
+        self._auto_target = max_val
+        if not self._timer.isActive():
+            self._timer.start()
+
+    def wheelEvent(self, event):
+        v_bar = self.verticalScrollBar()
+        min_val = float(v_bar.minimum())
+        max_val = float(v_bar.maximum())
+
+        if min_val >= max_val:
+            super().wheelEvent(event)
+            return
+
+        self._auto_target = None
+        if not self._timer.isActive():
+            self._current_pos = float(v_bar.value())
+            self._velocity = 0.0
+
+        p_delta = event.pixelDelta().y()
+        a_delta = event.angleDelta().y()
+
+        if p_delta != 0:
+            impulse = -p_delta * 0.45
+        elif a_delta != 0:
+            impulse = -(a_delta / 120.0) * 8.5
+        else:
+            super().wheelEvent(event)
+            return
+
+        self._velocity += impulse
+        self._velocity = max(-40.0, min(40.0, self._velocity))
+
+        if not self._timer.isActive():
+            self._timer.start()
+
+        event.accept()
+
+    def _on_smooth_step(self):
+        v_bar = self.verticalScrollBar()
+        min_val = float(v_bar.minimum())
+        max_val = float(v_bar.maximum())
+
+        if self._auto_target is not None:
+            target = float(v_bar.maximum())
+            diff = target - self._current_pos
+            if abs(diff) < 1.0:
+                self._current_pos = target
+                v_bar.setValue(int(round(target)))
+                self._auto_target = None
+                self._timer.stop()
+                return
+            self._current_pos += diff * 0.18
+            v_bar.setValue(int(round(self._current_pos)))
+            return
+
+        self._current_pos += self._velocity
+        self._velocity *= self._friction
+
+        if self._current_pos <= min_val:
+            self._current_pos = min_val
+            self._velocity = 0.0
+        elif self._current_pos >= max_val:
+            self._current_pos = max_val
+            self._velocity = 0.0
+
+        v_bar.setValue(int(round(self._current_pos)))
+
+        if abs(self._velocity) < 0.2:
+            self._velocity = 0.0
+            self._timer.stop()
 
 
 class StudioWorker(QThread):
@@ -201,55 +308,6 @@ class StudioTitleWorker(QThread):
         self.title_ready.emit(self.session_id, clean_title)
 
 
-class CodeBlockWidget(QFrame):
-    """Монолитная парящая пластина с кодом, языковым тегом и кнопкой копирования."""
-    def __init__(self, language: str, code: str, font_family: str, parent=None):
-        super().__init__(parent)
-        self.code = code
-        self.font_family = font_family
-        self.setObjectName("CodeBlockWidget")
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(6)
-
-        header = QHBoxLayout()
-        header.setContentsMargins(0, 0, 0, 0)
-
-        self.lang_label = QLabel(f">_ {language.upper() if language else 'CODE'}")
-        self.lang_label.setObjectName("CodeLangLabel")
-        self.lang_label.setFont(QFont(self.font_family, 8, QFont.Weight.Bold))
-        header.addWidget(self.lang_label)
-        header.addStretch()
-
-        self.copy_btn = QPushButton("КОПИРОВАТЬ")
-        self.copy_btn.setObjectName("CodeCopyBtn")
-        self.copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.copy_btn.setFont(QFont(self.font_family, 8, QFont.Weight.Bold))
-        self.copy_btn.setFixedHeight(20)
-        self.copy_btn.clicked.connect(self._copy_code)
-        header.addWidget(self.copy_btn)
-
-        layout.addLayout(header)
-
-        self.code_edit = QTextEdit()
-        self.code_edit.setObjectName("CodeTextEdit")
-        self.code_edit.setReadOnly(True)
-        self.code_edit.setFont(QFont("Consolas", 10))
-        self.code_edit.setPlainText(code.strip())
-        self.code_edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.code_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-
-        lines_count = max(2, min(24, len(code.strip().splitlines())))
-        self.code_edit.setFixedHeight(lines_count * 17 + 16)
-        layout.addWidget(self.code_edit)
-
-    def _copy_code(self):
-        QGuiApplication.clipboard().setText(self.code)
-        self.copy_btn.setText("✓ СКОПИРОВАНО")
-        QTimer.singleShot(1800, lambda: self.copy_btn.setText("КОПИРОВАТЬ"))
-
-
 class StudioUserMessage(QWidget):
     """Воздушное сообщение пользователя с неоновым рельсом справа."""
     def __init__(self, text: str, user_name: str, font_family: str, theme: str = "dark", attached_file: str = None, parent=None):
@@ -304,10 +362,13 @@ class StudioUserMessage(QWidget):
 
 class StudioAkiraStream(QWidget):
     """Поток мыслей Акиры: слева со светящимся неоновым рельсом цвета эмоции."""
-    def __init__(self, text: str, emotion_color: QColor, font_family: str, parent=None):
+    def __init__(self, text: str, emotion_color: QColor, font_family: str, theme: str = "dark", parent=None):
         super().__init__(parent)
         self.emotion_color = emotion_color
         self.font_family = font_family
+        self.current_theme = theme
+        self.code_blocks = []
+        self.text_labels = []
 
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(0, 4, 0, 4)
@@ -327,42 +388,40 @@ class StudioAkiraStream(QWidget):
         header.setStyleSheet(f"color: {emotion_color.name()}; letter-spacing: 1.2px;")
         content_col.addWidget(header)
 
-        blocks = self._parse_markdown(text)
+        blocks = parse_message_blocks(text)
         for b_type, b_val in blocks:
             if b_type == "code":
                 lang, code_body = b_val
-                cb = CodeBlockWidget(lang, code_body, font_family=self.font_family, parent=self)
+                cb = CodeBlockWidget(
+                    lang,
+                    code_body,
+                    font_family=self.font_family,
+                    theme=self.current_theme,
+                    parent=self
+                )
                 content_col.addWidget(cb)
+                self.code_blocks.append(cb)
             else:
-                lbl = QLabel(b_val)
+                lbl = QLabel()
                 lbl.setObjectName("StudioAkiraBody")
+                lbl.setTextFormat(Qt.TextFormat.RichText)
+                lbl.setOpenExternalLinks(True)
+                lbl.setText(markdown_to_rich_html(b_val, theme=self.current_theme))
                 lbl.setWordWrap(True)
                 lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
                 lbl.setFont(QFont(self.font_family, 11))
                 lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
                 content_col.addWidget(lbl)
+                self.text_labels.append((lbl, b_val))
 
         main_layout.addLayout(content_col, 1)
 
-    def _parse_markdown(self, raw_text: str):
-        pattern = re.compile(r'```([a-zA-Z0-9_\-\+#]*)\n?(.*?)```', re.DOTALL)
-        blocks = []
-        last_end = 0
-        for match in pattern.finditer(raw_text):
-            start, end = match.span()
-            if start > last_end:
-                t = raw_text[last_end:start].strip()
-                if t:
-                    blocks.append(("text", t))
-            lang = match.group(1).strip() or "code"
-            code = match.group(2)
-            blocks.append(("code", (lang, code)))
-            last_end = end
-        if last_end < len(raw_text):
-            rem = raw_text[last_end:].strip()
-            if rem:
-                blocks.append(("text", rem))
-        return blocks if blocks else [("text", raw_text)]
+    def set_theme(self, theme: str):
+        self.current_theme = theme
+        for cb in self.code_blocks:
+            cb.set_theme(theme)
+        for lbl, raw_md in self.text_labels:
+            lbl.setText(markdown_to_rich_html(raw_md, theme=theme))
 
 
 class StudioTextEdit(QTextEdit):
@@ -1125,7 +1184,7 @@ class StudioHistoryDrawer(QFrame):
         layout.addWidget(self.btn_new_chat)
         self.randomize_new_chat_text()
 
-        self.scroll = QScrollArea()
+        self.scroll = SmoothScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.scroll.setStyleSheet("background: transparent; border: none;")
@@ -1299,9 +1358,10 @@ class StudioFrame(QFrame):
         self.cur_h, self.cur_s, self.cur_v = self.palette["neutral"]
         self.target_h, self.target_s, self.target_v = self.palette["neutral"]
 
+        self.aura_speed_mult = 1.0
         self.anim_timer = QTimer(self)
         self.anim_timer.timeout.connect(self._animate_aura)
-        self.anim_timer.start(25)
+        self.anim_timer.start(16)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 8, 14, 10)
@@ -1321,7 +1381,7 @@ class StudioFrame(QFrame):
 
         layout.addLayout(top_bar)
 
-        self.scroll = QScrollArea()
+        self.scroll = SmoothScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.scroll.setStyleSheet("background: transparent; border: none;")
@@ -1420,6 +1480,7 @@ class StudioFrame(QFrame):
                     content,
                     emo_col,
                     font_family=self.font_family,
+                    theme=self.current_theme,
                     parent=self.feed_widget
                 )
                 self.feed_layout.addWidget(akira_stream)
@@ -1450,8 +1511,12 @@ class StudioFrame(QFrame):
         except Exception:
             return "СВЯТ"
 
+    def set_framerate(self, fps: int):
+     self.aura_speed_mult = 60.0 / max(1, fps)
+     self.anim_timer.setInterval(max(1, int(1000 / fps)))
+
     def _animate_aura(self):
-        rate = 0.045
+        rate = min(1.0, 0.045 * self.aura_speed_mult)
         h_diff = (self.target_h - self.cur_h + 180.0) % 360.0 - 180.0
         self.cur_h = (self.cur_h + h_diff * rate) % 360.0
         self.cur_s += (self.target_s - self.cur_s) * rate
@@ -1472,6 +1537,12 @@ class StudioFrame(QFrame):
         self.dock.update_icons(theme)
         if hasattr(self, 'drawer'):
             self.drawer.set_theme(theme)
+
+        if hasattr(self, 'feed_layout'):
+            for i in range(self.feed_layout.count()):
+                w = self.feed_layout.itemAt(i).widget()
+                if w and hasattr(w, 'set_theme'):
+                    w.set_theme(theme)
 
         self.setStyleSheet(get_main_style(theme))
         self.update()
@@ -1610,6 +1681,7 @@ class StudioFrame(QFrame):
                 chat_text,
                 emo_col,
                 font_family=self.font_family,
+                theme=self.current_theme,
                 parent=self.feed_widget
             )
             self.feed_layout.addWidget(akira_stream)
@@ -1640,9 +1712,7 @@ class StudioFrame(QFrame):
             self.drawer.refresh_sessions(sessions, self.current_session_id)
 
     def _scroll_bottom(self):
-        QTimer.singleShot(50, lambda: self.scroll.verticalScrollBar().setValue(
-            self.scroll.verticalScrollBar().maximum()
-        ))
+        QTimer.singleShot(40, self.scroll.smooth_scroll_to_bottom)
 
     def paintEvent(self, event):
         painter = QPainter(self)
