@@ -23,6 +23,10 @@ SVG_RESTORE = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fil
 <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
 </svg>"""
 
+SVG_SEND = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+</svg>"""
+
 def _render_svg_icon(svg_xml: str, color: str, size: int = 15) -> QIcon:
     xml = svg_xml.replace("{color}", color)
     renderer = QSvgRenderer(QByteArray(xml.encode("utf-8")))
@@ -75,15 +79,25 @@ class AkiraMiniMicWidget(QWidget):
             "surprise": (280.0, 220.0, 255.0),
             "neutral": (42.0, 45.0, 250.0),
             "other": (280.0, 220.0, 255.0),
+            "weather_rain": (212.0, 235.0, 255.0),
+            "weather_hot": (45.0, 245.0, 255.0),
+            "weather_snow": (185.0, 160.0, 255.0),
+            "weather_thunder": (280.0, 235.0, 255.0),
+            "weather_cloudy": (215.0, 60.0, 240.0),
         }
 
         self.light_palette = {
-            "happy": (35.0, 235.0, 115.0),
-            "sad": (218.0, 220.0, 110.0),
-            "angry": (352.0, 230.0, 110.0),
-            "surprise": (282.0, 215.0, 100.0),
+            "happy": (34.0, 245.0, 145.0),
+            "sad": (212.0, 235.0, 140.0),
+            "angry": (350.0, 240.0, 145.0),
+            "surprise": (276.0, 230.0, 140.0),
             "neutral": (215.0, 55.0, 42.0),
-            "other": (282.0, 215.0, 100.0),
+            "other": (276.0, 230.0, 140.0),
+            "weather_rain": (214.0, 245.0, 140.0),
+            "weather_hot": (26.0, 255.0, 150.0),
+            "weather_snow": (190.0, 225.0, 130.0),
+            "weather_thunder": (282.0, 235.0, 140.0),
+            "weather_cloudy": (215.0, 90.0, 85.0),
         }
 
         self.emotion_palette = self.dark_palette
@@ -351,9 +365,9 @@ class MiniWindow(QWidget):
     exit_requested = pyqtSignal()
 
     MINI_PLACEHOLDERS = [
-        "слушаю...", "команда...", "я на связи...",
-        "жду команду...", "что делаем?..", "слушаю тебя...",
-        "я рядом...", "наготове...", "готова..."
+        "Слушаю...", "Команда...", "Я на связи...",
+        "Жду команду...", "Что делаем?..", "Слушаю тебя...",
+        "Я рядом...", "Наготове...", "Готова..."
     ]
 
     def __init__(self, theme: str = "dark", font_family: str = "Arial"):
@@ -374,7 +388,6 @@ class MiniWindow(QWidget):
         self.exit_btn.setObjectName("TitleBtn")
         self.exit_btn.setFixedSize(28, 28)
         self.exit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.exit_btn.setToolTip("Закрыть Акиру")
         self.exit_btn.clicked.connect(self.exit_requested.emit)
         layout.addWidget(self.exit_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
 
@@ -382,7 +395,6 @@ class MiniWindow(QWidget):
         self.restore_btn.setObjectName("TitleBtn")
         self.restore_btn.setFixedSize(28, 28)
         self.restore_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.restore_btn.setToolTip("Вернуться в полный режим")
         self.restore_btn.clicked.connect(self.restore_requested.emit)
         layout.addWidget(self.restore_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
 
@@ -423,12 +435,8 @@ class MiniWindow(QWidget):
         self.exit_btn.setIcon(_render_svg_icon(SVG_POWER, icon_color, 15))
         self.restore_btn.setIcon(_render_svg_icon(SVG_RESTORE, icon_color, 15))
 
-        send_name = "send_icon_black.png" if self.current_theme == "light" else "send_icon.png"
-        send_path = get_resource_path("assets", "img", send_name)
-        if not os.path.exists(send_path):
-            send_path = get_resource_path("assets", "img", "send_icon.png")
-        self.send_button.setIcon(QIcon(send_path))
-        self.send_button.setIconSize(QSize(16, 16))
+        self.send_button.setIcon(_render_svg_icon(SVG_SEND, icon_color, 15))
+        self.send_button.setIconSize(QSize(15, 15))
 
     def _on_send(self):
         text = self.input_field.text().strip()

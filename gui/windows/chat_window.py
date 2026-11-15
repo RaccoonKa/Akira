@@ -108,6 +108,10 @@ SVG_STUDIO_COLLAPSE = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24
 <rect x="3" y="3" width="18" height="18" rx="2"/><polyline points="10 9 7 12 10 15"/><polyline points="14 9 17 12 14 15"/>
 </svg>"""
 
+SVG_SEND = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+</svg>"""
+
 def render_svg_icon(svg_xml: str, color: str, size: int = 15) -> QIcon:
     xml = svg_xml.replace("{color}", color)
     renderer = QSvgRenderer(QByteArray(xml.encode("utf-8")))
@@ -124,7 +128,7 @@ def render_svg_icon(svg_xml: str, color: str, size: int = 15) -> QIcon:
 
 class EmotionHoverButton(QPushButton):
     """Кнопка плашки с динамической сменой цветов эмоций и эффектом блокировки."""
-    def __init__(self, svg_xml: str = "", tooltip: str = "", main_window=None, parent=None):
+    def __init__(self, svg_xml: str = "", main_window=None, parent=None):
         super().__init__(parent)
         self.main_window = main_window
         self.svg_xml = svg_xml
@@ -133,8 +137,6 @@ class EmotionHoverButton(QPushButton):
         self.setFixedSize(28, 28)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setObjectName("TitleBtn")
-        if tooltip:
-            self.setToolTip(tooltip)
         self.update_icon()
 
     def set_svg(self, svg_xml: str):
@@ -153,14 +155,14 @@ class EmotionHoverButton(QPushButton):
         theme = getattr(self.main_window, 'current_theme', 'dark')
         if theme == "light":
             h, s, v = random.choice([
-                (35.0, 235.0, 115.0),   # happy (янтарный)
-                (218.0, 220.0, 110.0),  # sad (лазурный)
-                (352.0, 230.0, 110.0),  # angry (рубиновый)
-                (282.0, 215.0, 100.0),  # surprise (пурпурный)
-                (218.0, 240.0, 120.0),  # weather_rain (синий)
-                (38.0, 255.0, 115.0),   # weather_hot (терракотовый)
-                (192.0, 210.0, 105.0),  # weather_snow (бирюзовый)
-                (282.0, 225.0, 110.0),  # weather_thunder (фиолетовый)
+                (34.0, 245.0, 145.0),   # happy (глубокий янтарный)
+                (212.0, 235.0, 140.0),  # sad (лазурный)
+                (350.0, 240.0, 145.0),  # angry (рубиновый)
+                (276.0, 230.0, 140.0),  # surprise (аметистовый)
+                (214.0, 245.0, 140.0),  # weather_rain (сапфировый)
+                (26.0, 255.0, 150.0),   # weather_hot (терракотово-оранжевый)
+                (190.0, 225.0, 130.0),  # weather_snow (глубокий бирюзовый)
+                (282.0, 235.0, 140.0),  # weather_thunder (фиолетовый)
             ])
         else:
             h, s, v = random.choice([
@@ -393,17 +395,17 @@ class AkiraMicWidget(QFrame):
         }
 
         self.light_palette = {
-            "happy": (35.0, 235.0, 115.0),
-            "sad": (218.0, 220.0, 110.0),
-            "angry": (352.0, 230.0, 110.0),
-            "surprise": (282.0, 215.0, 100.0),
-            "neutral": (215.0, 55.0, 42.0),
-            "other": (282.0, 215.0, 100.0),
-            "weather_rain": (218.0, 240.0, 120.0),
-            "weather_hot": (38.0, 255.0, 115.0),
-            "weather_snow": (192.0, 210.0, 105.0),
-            "weather_thunder": (282.0, 225.0, 110.0),
-            "weather_cloudy": (215.0, 65.0, 65.0)
+            "happy": (38.0, 250.0, 230.0),
+            "sad": (210.0, 240.0, 230.0),
+            "angry": (352.0, 235.0, 230.0),
+            "surprise": (278.0, 225.0, 225.0),
+            "neutral": (216.0, 70.0, 62.0),
+            "other": (278.0, 225.0, 225.0),
+            "weather_rain": (214.0, 250.0, 235.0),
+            "weather_hot": (30.0, 255.0, 235.0),
+            "weather_snow": (190.0, 225.0, 215.0),
+            "weather_thunder": (282.0, 235.0, 225.0),
+            "weather_cloudy": (215.0, 120.0, 145.0)
         }
 
         self.emotion_palette = self.dark_palette
@@ -576,22 +578,22 @@ class AkiraMicWidget(QFrame):
         if self.is_listening:
             self.listening_hue = (self.listening_hue + 0.9 * self.speed_mult) % 360.0
             target_h = self.listening_hue
-            target_s = 220.0
-            target_v = 110.0 if self.current_theme == "light" else 255.0
+            target_s = 230.0
+            target_v = 135.0 if self.current_theme == "light" else 255.0
             color_rate = 0.08 * self.speed_mult
         elif self.target_emotion != "neutral":
             target_h, target_s, target_v = self.emotion_palette[self.target_emotion]
             color_rate = 0.045 * self.speed_mult
         elif self.is_processing:
-            target_h = 42.0
-            target_s = 180.0 if self.current_theme == "light" else 80.0
-            target_v = 100.0 if self.current_theme == "light" else 255.0
+            target_h = 36.0
+            target_s = 210.0 if self.current_theme == "light" else 80.0
+            target_v = 130.0 if self.current_theme == "light" else 255.0
             color_rate = 0.05 * self.speed_mult
         elif self.sound_presence > 0.05 or (self.beat_impulse > 0.01 and self.music_blend > 0.1):
             target_h = self.music_flow_hue
             if self.current_theme == "light":
-                target_s = 220.0
-                target_v = 110.0
+                target_s = 230.0
+                target_v = 135.0
             else:
                 base_s = 45.0
                 max_s = 225.0
@@ -942,17 +944,17 @@ class ChatFrame(QFrame):
         }
 
         self.light_palette = {
-            "happy": (38.0, 240.0, 235.0),
-            "sad": (212.0, 220.0, 235.0),
-            "angry": (355.0, 230.0, 235.0),
-            "surprise": (285.0, 220.0, 235.0),
-            "neutral": (218.0, 210.0, 160.0),
-            "other": (285.0, 220.0, 235.0),
-            "weather_rain": (215.0, 255.0, 190.0),
-            "weather_hot": (38.0, 245.0, 245.0),
-            "weather_snow": (205.0, 230.0, 195.0),
-            "weather_thunder": (278.0, 230.0, 240.0),
-            "weather_cloudy": (218.0, 200.0, 175.0)
+            "happy": (34.0, 245.0, 145.0),
+            "sad": (212.0, 235.0, 140.0),
+            "angry": (350.0, 240.0, 145.0),
+            "surprise": (276.0, 230.0, 140.0),
+            "neutral": (215.0, 55.0, 42.0),
+            "other": (276.0, 230.0, 140.0),
+            "weather_rain": (214.0, 245.0, 140.0),
+            "weather_hot": (26.0, 255.0, 150.0),
+            "weather_snow": (190.0, 225.0, 130.0),
+            "weather_thunder": (282.0, 235.0, 140.0),
+            "weather_cloudy": (215.0, 90.0, 85.0)
         }
 
         self.emotion_palette = self.dark_palette
@@ -1055,17 +1057,14 @@ class ChatFrame(QFrame):
         self.update()
 
     def update_icons(self):
-        clip_color = "#111318" if self.current_theme == "light" else "#ffffff"
+        icon_color = "#111318" if self.current_theme == "light" else "#ded7c4"
         self.attach_button.setText("")
-        self.attach_button.setIcon(render_svg_icon(SVG_PAPERCLIP, clip_color, 16))
+        self.attach_button.setIcon(render_svg_icon(SVG_PAPERCLIP, icon_color, 16))
         self.attach_button.setIconSize(QSize(16, 16))
 
-        send_name = "send_icon_black.png" if self.current_theme == "light" else "send_icon.png"
-        send_path = get_resource_path("assets", "img", send_name)
-        if not os.path.exists(send_path):
-            send_path = get_resource_path("assets", "img", "send_icon.png")
-        self.send_button.setIcon(QIcon(send_path))
-        self.send_button.setIconSize(QSize(18, 18))
+        self.send_button.setText("")
+        self.send_button.setIcon(render_svg_icon(SVG_SEND, icon_color, 16))
+        self.send_button.setIconSize(QSize(16, 16))
 
     def set_theme(self, theme: str):
         self.current_theme = theme
@@ -1550,6 +1549,9 @@ class MainWindow(QWidget):
         self._window_ready = False
 
         self.init_ui()
+        app = QGuiApplication.instance()
+        if app:
+            app.installEventFilter(self)
         self.init_audio()
 
         # Анимация прозрачности студии строго ПОСЛЕ создания self.studio_opacity в init_ui
@@ -1611,7 +1613,6 @@ class MainWindow(QWidget):
         if hasattr(self, 'studio_btn'):
             studio_svg = SVG_STUDIO_COLLAPSE if getattr(self, 'window_mode', 'normal') == 'extended' else SVG_STUDIO
             self.studio_btn.set_svg(studio_svg)
-            self.studio_btn.setToolTip("Свернуть студию" if getattr(self, 'window_mode', 'normal') == 'extended' else "Режим студии")
 
         if hasattr(self, 'mini_mode_btn'):
             self.mini_mode_btn.update_icon()
@@ -1619,15 +1620,12 @@ class MainWindow(QWidget):
         if hasattr(self, 'toggle_chat_btn'):
             if getattr(self, 'window_mode', 'normal') == 'extended':
                 self.toggle_chat_btn.update_icon()
-                self.toggle_chat_btn.setToolTip("Чат уже открыт в студии")
             else:
                 self.toggle_chat_btn.update_icon()
-                self.toggle_chat_btn.setToolTip("Открыть чат")
 
         if hasattr(self, 'mute_btn'):
             mute_svg = SVG_MUTE if self.is_muted else SVG_VOLUME
             self.mute_btn.set_svg(mute_svg)
-            self.mute_btn.setToolTip("Включить голос Акиры!" if self.is_muted else "Выключить голос Акиры!")
 
         if hasattr(self, 'update_badge_btn'):
             self.update_badge_btn.update_icon()
@@ -1831,7 +1829,6 @@ class MainWindow(QWidget):
 
     def on_update_found(self, new_ver: str, changelog: str, download_url: str):
         self.settings_panel.set_update_available(new_ver, changelog, download_url)
-        self.update_badge_btn.setToolTip(f"Доступна новая версия v{new_ver}!\nНажми, чтобы перейти в настройки.")
         self.update_badge_btn.update_icon()
         self.update_badge_btn.show()
 
@@ -2286,42 +2283,42 @@ class MainWindow(QWidget):
         title_btns_layout.setContentsMargins(4, 2, 4, 2)
         title_btns_layout.setSpacing(3)
 
-        self.exit_btn = EmotionHoverButton(SVG_POWER, "Завершить работу Акиры", main_window=self)
+        self.exit_btn = EmotionHoverButton(SVG_POWER, main_window=self)
         self.exit_btn.setObjectName("ExitBtn")
         self.exit_btn.clicked.connect(self.exit_app)
         title_btns_layout.addWidget(self.exit_btn)
 
-        self.settings_btn = EmotionHoverButton(SVG_SETTINGS, "Настройки", main_window=self)
+        self.settings_btn = EmotionHoverButton(SVG_SETTINGS, main_window=self)
         self.settings_btn.clicked.connect(self.toggle_settings)
         title_btns_layout.addWidget(self.settings_btn)
 
-        self.studio_btn = EmotionHoverButton(SVG_STUDIO, "Режим студии", main_window=self)
+        self.studio_btn = EmotionHoverButton(SVG_STUDIO, main_window=self)
         self.studio_btn.clicked.connect(self.toggle_extended_mode)
         title_btns_layout.addWidget(self.studio_btn)
 
-        self.mini_mode_btn = EmotionHoverButton(SVG_MINI, "Мини-режим (поверх окон)", main_window=self)
+        self.mini_mode_btn = EmotionHoverButton(SVG_MINI, main_window=self)
         self.mini_mode_btn.clicked.connect(self.toggle_mini_mode)
         title_btns_layout.addWidget(self.mini_mode_btn)
 
-        self.toggle_chat_btn = EmotionHoverButton(SVG_CHAT, "Открыть чат", main_window=self)
+        self.toggle_chat_btn = EmotionHoverButton(SVG_CHAT, main_window=self)
         self.toggle_chat_btn.clicked.connect(self.toggle_chat)
         title_btns_layout.addWidget(self.toggle_chat_btn)
 
-        self.mute_btn = EmotionHoverButton(SVG_VOLUME, "Выключить голос Акиры!", main_window=self)
+        self.mute_btn = EmotionHoverButton(SVG_VOLUME, main_window=self)
         self.mute_btn.clicked.connect(self.toggle_mute)
         title_btns_layout.addWidget(self.mute_btn)
 
-        self.update_badge_btn = EmotionHoverButton(SVG_UPDATE, "Доступно обновление!", main_window=self)
+        self.update_badge_btn = EmotionHoverButton(SVG_UPDATE, main_window=self)
         self.update_badge_btn.setObjectName("UpdateNotificationBadge")
         self.update_badge_btn.clicked.connect(self.open_settings_for_update)
         self.update_badge_btn.hide()
         title_btns_layout.addWidget(self.update_badge_btn)
 
-        self.min_btn = EmotionHoverButton(SVG_MINIMIZE, "Свернуть", main_window=self)
+        self.min_btn = EmotionHoverButton(SVG_MINIMIZE, main_window=self)
         self.min_btn.clicked.connect(self.minimize_animated)
         title_btns_layout.addWidget(self.min_btn)
 
-        self.close_btn = EmotionHoverButton(SVG_CLOSE, "Закрыть", main_window=self)
+        self.close_btn = EmotionHoverButton(SVG_CLOSE, main_window=self)
         self.close_btn.clicked.connect(self.close_animated)
         title_btns_layout.addWidget(self.close_btn)
 
@@ -2372,6 +2369,7 @@ class MainWindow(QWidget):
         self.chat_history.setFont(QFont(self.chat_font_family, 12))
         self.input_field = self.right_panel.input_field
         self.input_field.setFont(QFont(self.chat_font_family, 12))
+        self.input_field.setTextMargins(0, max(2, self.input_field.fontMetrics().descent()), 0, 0)
         self.send_button = self.right_panel.send_button
         self.send_button.setFont(QFont(self.font_family, 12))
 
@@ -2406,12 +2404,20 @@ class MainWindow(QWidget):
 
         self.mini_window = MiniWindow(theme=self.current_theme, font_family=self.font_family)
         self.mini_window.input_field.setFont(QFont(self.chat_font_family, 12))
+        self.mini_window.input_field.setTextMargins(
+            0, max(2, self.mini_window.input_field.fontMetrics().descent()), 0, 0
+        )
         self.mini_window.message_sent.connect(self.send_mini_message)
         self.mini_window.restore_requested.connect(self.restore_from_mini)
         self.mini_window.exit_requested.connect(self.exit_app)
         self.mini_window.mini_mic.clicked.connect(self.toggle_manual_listen)
 
         self.mini_left_panel = self.mini_window.mini_mic
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.ToolTip:
+            return True
+        return super().eventFilter(obj, event)
 
     def check_battery_status(self):
         try:

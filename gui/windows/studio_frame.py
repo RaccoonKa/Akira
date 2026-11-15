@@ -369,18 +369,17 @@ class StudioUserMessage(QWidget):
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(0, 4, 0, 4)
         main_layout.setSpacing(10)
-        main_layout.addStretch(1)
 
         content_col = QVBoxLayout()
         content_col.setContentsMargins(0, 0, 0, 0)
         content_col.setSpacing(4)
-        content_col.setAlignment(Qt.AlignmentFlag.AlignRight)
 
         display_name = user_name.strip() if user_name else "друг"
         self.header = ShadowLabel(display_name, theme=self.current_theme)
         self.header.setObjectName("StudioUserHeader")
         self.header.setFont(QFont(self.font_family, 8))
         self.header.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.header.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         content_col.addWidget(self.header)
 
         self.body = ShadowLabel(text, theme=self.current_theme)
@@ -388,8 +387,8 @@ class StudioUserMessage(QWidget):
         self.body.setWordWrap(True)
         self.body.setFont(QFont(self.chat_font_family, 11))
         self.body.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.body.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.body.setMaximumWidth(400)
         content_col.addWidget(self.body)
 
         if attached_file:
@@ -398,14 +397,15 @@ class StudioUserMessage(QWidget):
             self.file_pill.setObjectName("StudioFilePill")
             self.file_pill.setFont(QFont(self.font_family, 9))
             self.file_pill.setAlignment(Qt.AlignmentFlag.AlignRight)
+            self.file_pill.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
             content_col.addWidget(self.file_pill)
 
-        main_layout.addLayout(content_col)
+        main_layout.addLayout(content_col, 1)
 
         rail_col = QColor("#ffffff" if theme == "dark" else "#111318")
         self.rail = MessageRail(rail_col, width=4, parent=self)
         main_layout.addWidget(self.rail)
-    
+
     def set_theme(self, theme: str):
         self.current_theme = theme
         self.header.set_theme(theme)
@@ -579,6 +579,137 @@ class StudioAkiraStream(QWidget):
             lbl.setText(markdown_to_rich_html(raw_md, theme=theme))
 
 
+class StudioThinkingLabel(QWidget):
+    """Статус размышлений Акиры в стеклянной капсуле с плавной сменой фраз."""
+    def __init__(self, font_family: str, theme: str = "dark", parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(26)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setFont(QFont(font_family, 9))
+
+        self.current_theme = theme
+        self._old_text = ""
+        self._new_text = ""
+        self._progress = 1.0
+        self._accent_color = QColor("#ded7c4")
+
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(420)
+        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._anim.valueChanged.connect(self._on_anim_step)
+        self._anim.finished.connect(self._on_anim_finished)
+        self.hide()
+
+    def set_theme(self, theme: str):
+        self.current_theme = theme
+        if self.isVisible():
+            self.update()
+
+    def set_accent_color(self, color: QColor):
+        self._accent_color = QColor(color)
+        if self.isVisible():
+            self.update()
+
+    def show_phrase(self, text: str, color: QColor):
+        self._anim.stop()
+        self._old_text = ""
+        self._new_text = text
+        self._accent_color = QColor(color)
+        self._progress = 0.0
+        self.show()
+        self._anim.setStartValue(0.0)
+        self._anim.setEndValue(1.0)
+        self._anim.start()
+
+    def transition_to(self, text: str, color: QColor):
+        if not self.isVisible():
+            self.show_phrase(text, color)
+            return
+        self._anim.stop()
+        self._old_text = self._new_text
+        self._new_text = text
+        self._accent_color = QColor(color)
+        self._progress = 0.0
+        self._anim.setStartValue(0.0)
+        self._anim.setEndValue(1.0)
+        self._anim.start()
+
+    def stop_and_hide(self):
+        self._anim.stop()
+        self._old_text = ""
+        self._new_text = ""
+        self.hide()
+
+    def _on_anim_step(self, val):
+        self._progress = float(val)
+        self.update()
+
+    def _on_anim_finished(self):
+        self._old_text = ""
+        self._progress = 1.0
+        self.update()
+
+    def paintEvent(self, event):
+        if not self._new_text and not self._old_text:
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        painter.setFont(self.font())
+
+        fm = self.fontMetrics()
+        p = self._progress
+        pad_x = 12
+
+        new_w = fm.horizontalAdvance(self._new_text) + pad_x * 2 if self._new_text else 0
+        old_w = fm.horizontalAdvance(self._old_text) + pad_x * 2 if self._old_text else new_w
+        pill_w = min(float(self.width()), old_w + (new_w - old_w) * p)
+        pill_h = float(self.height() - 2)
+
+        # Подложка-капсула, перекрывающая фон окна для высокой читаемости
+        pill_rect = QRectF(0.5, 1.0, max(24.0, pill_w - 1.0), pill_h)
+        pill_path = QPainterPath()
+        pill_path.addRoundedRect(pill_rect, pill_h / 2.0, pill_h / 2.0)
+
+        is_light = (self.current_theme == "light")
+        bg_col = QColor(255, 255, 255, 236) if is_light else QColor(12, 13, 16, 228)
+        border_col = QColor(self._accent_color)
+        border_col.setAlpha(95 if is_light else 110)
+
+        painter.fillPath(pill_path, bg_col)
+        painter.setPen(QPen(border_col, 1.0))
+        painter.drawPath(pill_path)
+
+        text_rect = QRect(pad_x, 0, max(10, int(pill_w) - pad_x * 2), self.height())
+        painter.setClipPath(pill_path)
+
+        if self._old_text and p < 1.0:
+            old_alpha = int(max(0.0, 1.0 - p * 1.6) * 245)
+            if old_alpha > 0:
+                old_col = QColor(self._accent_color)
+                old_col.setAlpha(old_alpha)
+                painter.setPen(old_col)
+                painter.drawText(
+                    text_rect.translated(0, int(round(-p * 7.0))),
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                    self._old_text
+                )
+
+        if self._new_text:
+            new_alpha = int(min(1.0, p * 1.25) * 255)
+            new_col = QColor(self._accent_color)
+            new_col.setAlpha(new_alpha)
+            painter.setPen(new_col)
+            painter.drawText(
+                text_rect.translated(0, int(round((1.0 - p) * 7.0))),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                self._new_text
+            )
+
+        painter.end()
+
+
 class StudioTextEdit(QTextEdit):
     send_requested = pyqtSignal()
 
@@ -591,26 +722,32 @@ class StudioTextEdit(QTextEdit):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.document().setDocumentMargin(0)
         self.textChanged.connect(self.adjust_height)
-        self.setFixedHeight(28)
+        self.setFixedHeight(30)
         QTimer.singleShot(0, self.adjust_height)
+
+    def setFont(self, font: QFont):
+        super().setFont(font)
+        self.adjust_height()
 
     def showEvent(self, event):
         super().showEvent(event)
         self.adjust_height()
 
     def adjust_height(self):
-        line_h = self.fontMetrics().height()
+        fm = self.fontMetrics()
+        line_h = fm.height()
+        ascent = fm.ascent()
         doc_h = self.document().size().height()
-        is_multiline = doc_h > (line_h + 4)
+        is_multiline = doc_h > (line_h + 6)
 
         if is_multiline:
-            target_h = 52
+            target_h = 54
             policy = Qt.ScrollBarPolicy.ScrollBarAsNeeded
-            self.setViewportMargins(4, 4, 4, 4)
+            self.setViewportMargins(4, 6, 4, 4)
         else:
-            target_h = 28
+            target_h = 30
             policy = Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-            top_pad = max(2, int(round((target_h - line_h) / 2.0)))
+            top_pad = max(4, int(round((target_h - ascent) / 2.0)))
             self.setViewportMargins(4, top_pad, 4, 0)
 
         self.setVerticalScrollBarPolicy(policy)
@@ -770,14 +907,14 @@ class ModelSelectorPopup(QFrame):
     }
 
     LIGHT_EMO_COLORS = {
-        "happy": QColor("#d97706"),
-        "surprise": QColor("#7c3aed"),
-        "weather_hot": QColor("#ea580c"),
-        "weather_rain": QColor("#0284c7"),
-        "weather_thunder": QColor("#9333ea"),
-        "sad": QColor("#0891b2"),
-        "weather_snow": QColor("#059669"),
-        "angry": QColor("#e11d48")
+        "happy": QColor("#915805"),
+        "surprise": QColor("#5b21b6"),
+        "weather_hot": QColor("#9a3412"),
+        "weather_rain": QColor("#075985"),
+        "weather_thunder": QColor("#6b21a8"),
+        "sad": QColor("#155e75"),
+        "weather_snow": QColor("#065f46"),
+        "angry": QColor("#9f1239")
     }
 
     def __init__(self, font_family: str, parent=None, models: list[tuple[str, str]] = None):
@@ -1109,14 +1246,12 @@ class StudioFloatingDock(QFrame):
         dock_row.setSpacing(6)
 
         self.model_combo = StudioModelSelector(font_family=self.font_family, studio_frame=parent, parent=self)
-        self.model_combo.setToolTip("Выбор нейросетевого ядра")
         dock_row.addWidget(self.model_combo, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         self.attach_btn = QPushButton()
         self.attach_btn.setObjectName("StudioDockBtn")
         self.attach_btn.setFixedSize(28, 28)
         self.attach_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.attach_btn.setToolTip("Прикрепить файл")
         self.attach_btn.clicked.connect(self._select_file)
         dock_row.addWidget(self.attach_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
 
@@ -1130,7 +1265,6 @@ class StudioFloatingDock(QFrame):
         self.send_btn.setObjectName("StudioDockBtn")
         self.send_btn.setFixedSize(28, 28)
         self.send_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.send_btn.setToolTip("Отправить (Enter)")
         self.send_btn.clicked.connect(self._submit)
         dock_row.addWidget(self.send_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
 
@@ -1255,7 +1389,6 @@ class HistorySessionCard(QFrame):
         self.edit_btn = QPushButton()
         self.edit_btn.setFixedSize(20, 20)
         self.edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.edit_btn.setToolTip("Переименовать диалог")
         self.edit_btn.clicked.connect(self._start_editing)
         self.title_row.addWidget(self.edit_btn)
 
@@ -1286,7 +1419,6 @@ class HistorySessionCard(QFrame):
         self.del_btn = QPushButton("✕")
         self.del_btn.setFixedSize(22, 22)
         self.del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.del_btn.setToolTip("Удалить диалог")
         self.del_btn.clicked.connect(self._on_delete)
         layout.addWidget(self.del_btn)
 
@@ -1682,13 +1814,25 @@ class StudioFrame(QFrame):
             "angry": (352.0, 235.0, 255.0),
             "surprise": (280.0, 220.0, 255.0),
             "neutral": (42.0, 50.0, 220.0),
+            "other": (280.0, 220.0, 255.0),
+            "weather_rain": (212.0, 235.0, 255.0),
+            "weather_hot": (45.0, 245.0, 255.0),
+            "weather_snow": (185.0, 160.0, 255.0),
+            "weather_thunder": (280.0, 235.0, 255.0),
+            "weather_cloudy": (215.0, 60.0, 240.0),
         }
         self.light_palette = {
-            "happy": (32.0, 245.0, 215.0),      # насыщенный янтарно-золотой
-            "sad": (212.0, 235.0, 210.0),       # глубокий лазурный
-            "angry": (350.0, 235.0, 215.0),     # яркий рубиново-алый
-            "surprise": (272.0, 220.0, 215.0),  # насыщенный фиолетовый
-            "neutral": (218.0, 215.0, 195.0),   # выразительный кобальтово-синий
+            "happy": (34.0, 245.0, 145.0),          # глубокий янтарно-медовый
+            "sad": (212.0, 235.0, 140.0),           # насыщенный сапфирово-лазурный
+            "angry": (350.0, 240.0, 145.0),         # глубокий рубиновый
+            "surprise": (276.0, 230.0, 140.0),      # насыщенный аметистовый
+            "neutral": (216.0, 225.0, 135.0),       # глубокий кобальтово-синий
+            "other": (276.0, 230.0, 140.0),
+            "weather_rain": (214.0, 245.0, 140.0),
+            "weather_hot": (26.0, 255.0, 150.0),
+            "weather_snow": (190.0, 225.0, 130.0),
+            "weather_thunder": (282.0, 235.0, 140.0),
+            "weather_cloudy": (215.0, 130.0, 125.0),
         }
         self.palette = self.dark_palette
         self.cur_h, self.cur_s, self.cur_v = self.palette["neutral"]
@@ -1710,7 +1854,6 @@ class StudioFrame(QFrame):
         self.btn_history.setObjectName("StudioHistoryBtn")
         self.btn_history.setFixedSize(26, 26)
         self.btn_history.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_history.setToolTip("История диалогов")
         self.btn_history.clicked.connect(self.toggle_drawer)
         top_bar.addWidget(self.btn_history, alignment=Qt.AlignmentFlag.AlignLeft)
         top_bar.addStretch()
@@ -1732,13 +1875,11 @@ class StudioFrame(QFrame):
         self.scroll.setWidget(self.feed_widget)
         layout.addWidget(self.scroll, 1)
 
-        self.thinking_status = QLabel("")
-        self.thinking_status.setFont(QFont(self.font_family, 9))
-        self.thinking_status.hide()
+        self.thinking_status = StudioThinkingLabel(font_family=self.font_family, parent=self)
         layout.addWidget(self.thinking_status)
 
         self.thinking_cycle_timer = QTimer(self)
-        self.thinking_cycle_timer.setInterval(2600)
+        self.thinking_cycle_timer.setInterval(4400)
         self.thinking_cycle_timer.timeout.connect(self._cycle_thinking_phrase)
         self._current_thinking_pool = THINKING_PHRASES
         self._last_phrase = ""
@@ -1869,6 +2010,10 @@ class StudioFrame(QFrame):
         self.cur_h = (self.cur_h + h_diff * rate) % 360.0
         self.cur_s += (self.target_s - self.cur_s) * rate
         self.cur_v += (self.target_v - self.cur_v) * rate
+        if hasattr(self, "thinking_status") and self.thinking_status.isVisible():
+            self.thinking_status.set_accent_color(
+                QColor.fromHsv(int(self.cur_h), int(self.cur_s), int(self.cur_v))
+            )
         self.update()
 
     def set_emotion(self, emotion: str):
@@ -1883,6 +2028,9 @@ class StudioFrame(QFrame):
         icon_col = "#111318" if theme == "light" else "#ded7c4"
         self.btn_history.setIcon(_render_svg(SVG_SIDEBAR, icon_col, 15))
         self.dock.update_icons(theme)
+        if hasattr(self, 'thinking_status'):
+            self.thinking_status.set_theme(theme)
+
         if hasattr(self, 'drawer'):
             self.drawer.set_theme(theme)
 
@@ -1959,9 +2107,8 @@ class StudioFrame(QFrame):
         candidates = [p for p in self._current_thinking_pool if p != self._last_phrase]
         new_phrase = random.choice(candidates) if candidates else self._current_thinking_pool[0]
         self._last_phrase = new_phrase
-        self.thinking_status.setText(f"⚡ {new_phrase}")
-        accent = QColor.fromHsv(int(self.cur_h), int(self.cur_s), int(self.cur_v)).name()
-        self.thinking_status.setStyleSheet(f"color: {accent}; letter-spacing: 0.8px;")
+        accent = QColor.fromHsv(int(self.cur_h), int(self.cur_s), int(self.cur_v))
+        self.thinking_status.transition_to(f"{new_phrase}", accent)
 
     def _on_user_submit(self, text: str, attached_file: str, model: str):
         if not self.current_session_id:
@@ -1988,10 +2135,8 @@ class StudioFrame(QFrame):
 
         self._current_thinking_pool = THINKING_FILE_PHRASES if attached_file else THINKING_PHRASES
         self._last_phrase = random.choice(self._current_thinking_pool)
-        self.thinking_status.setText(f"⚡ {self._last_phrase}")
-        accent = QColor.fromHsv(int(self.cur_h), int(self.cur_s), int(self.cur_v)).name()
-        self.thinking_status.setStyleSheet(f"color: {accent}; letter-spacing: 0.8px;")
-        self.thinking_status.show()
+        accent = QColor.fromHsv(int(self.cur_h), int(self.cur_s), int(self.cur_v))
+        self.thinking_status.show_phrase(f"{self._last_phrase}", accent)
         self.thinking_cycle_timer.start()
 
         self.dock.set_active(False)
@@ -2004,12 +2149,12 @@ class StudioFrame(QFrame):
             self.worker.start()
         else:
             self.thinking_cycle_timer.stop()
-            self.thinking_status.hide()
+            self.thinking_status.stop_and_hide()
             self.dock.set_active(True)
 
     def _on_worker_finished(self, response, user_prompt: str):
         self.thinking_cycle_timer.stop()
-        self.thinking_status.hide()
+        self.thinking_status.stop_and_hide()
         self.dock.set_active(True)
 
         if response:
@@ -2080,8 +2225,8 @@ class StudioFrame(QFrame):
 
         aura = QRadialGradient(w * 0.5, 0, w * 0.72)
         is_light = (self.current_theme == "light")
-        c_glow = QColor.fromHsv(int(self.cur_h), int(self.cur_s), int(self.cur_v), 62 if is_light else 36)
-        c_mid = QColor.fromHsv(int(self.cur_h), int(self.cur_s), int(self.cur_v), 24 if is_light else 14)
+        c_glow = QColor.fromHsv(int(self.cur_h), int(self.cur_s), int(self.cur_v), 85 if is_light else 36)
+        c_mid = QColor.fromHsv(int(self.cur_h), int(self.cur_s), int(self.cur_v), 34 if is_light else 14)
         c_fade = QColor.fromHsv(int(self.cur_h), int(self.cur_s), int(self.cur_v), 0)
         aura.setColorAt(0.0, c_glow)
         aura.setColorAt(0.4, c_mid)

@@ -24,7 +24,7 @@ QLineEdit#InputField {
     color: #fffde7;
     border: 1px solid #78735f;
     border-radius: 8px;
-    padding: 2px 10px 6px 10px;
+    padding: 0px 10px;
     font-size: 13px;
 }
 QLineEdit#InputField:focus {
@@ -841,7 +841,7 @@ QLineEdit#InputField {
     color: #111318;
     border: 1px solid rgba(15, 23, 42, 0.22);
     border-radius: 8px;
-    padding: 2px 10px 6px 10px;
+    padding: 0px 10px;
     font-size: 13px;
 }
 QLineEdit#InputField:focus {
