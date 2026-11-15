@@ -5,6 +5,7 @@ import subprocess
 import time
 import winreg
 import re
+import shutil
 import spotipy
 from spotipy.oauth2 import SpotifyPKCE
 from core.utils.config import load_config, get_user_data_path
@@ -27,8 +28,21 @@ class SpotifyManager:
         cfg = load_config()
         return cfg.get("api_keys", {}).get("spotify_client_id", "").strip()
 
+    def _get_cache_path(self) -> str:
+        cache_dir = get_user_data_path("cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        new_path = os.path.join(cache_dir, ".spotify_cache")
+        old_path = get_user_data_path(".spotify_cache")
+
+        if os.path.exists(old_path) and not os.path.exists(new_path):
+            try:
+                shutil.move(old_path, new_path)
+            except Exception:
+                pass
+        return new_path
+
     def is_authenticated(self):
-        cache_path = get_user_data_path(".spotify_cache")
+        cache_path = self._get_cache_path()
         if not os.path.exists(cache_path):
             return False
         client_id = self._load_client_id()
@@ -54,7 +68,7 @@ class SpotifyManager:
         if not client_id:
             return False
 
-        cache_path = get_user_data_path(".spotify_cache")
+        cache_path = self._get_cache_path()
 
         try:
             auth_manager = SpotifyPKCE(

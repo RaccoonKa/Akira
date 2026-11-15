@@ -1,15 +1,30 @@
 import os
+import shutil
 import sqlite3
 import threading
 from datetime import datetime
 
 
 def get_db_path() -> str:
-    """Возвращает фиксированный путь к БД внутри папки personal_data проекта."""
+    """Возвращает фиксированный путь к БД внутри папки personal_data/sql проекта."""
     base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     data_dir = os.path.join(base_dir, "personal_data")
-    os.makedirs(data_dir, exist_ok=True)
-    return os.path.join(data_dir, "studio_chats.db")
+    sql_dir = os.path.join(data_dir, "sql")
+    os.makedirs(sql_dir, exist_ok=True)
+
+    new_path = os.path.join(sql_dir, "studio_chats.db")
+    old_path = os.path.join(data_dir, "studio_chats.db")
+
+    if os.path.exists(old_path) and not os.path.exists(new_path):
+        try:
+            shutil.move(old_path, new_path)
+            for suffix in ("-wal", "-shm"):
+                if os.path.exists(old_path + suffix):
+                    shutil.move(old_path + suffix, new_path + suffix)
+        except Exception:
+            pass
+
+    return new_path
 
 
 class StudioChatDatabase:

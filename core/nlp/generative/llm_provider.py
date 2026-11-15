@@ -119,6 +119,25 @@ class LLMProvider:
 
         return normalized
 
+    FRIENDLY_CONNECTION_ERRORS = [
+        "Ой-ой, мои мысли застряли в сетевой пробке! 🚦 Не удалось достучаться до облака и ответить на вопрос. Попробуй спросить ещё разок через секунду? 🥺✨",
+        "Упс, у меня случился маленький цифровой чих — связь с сервером на миг оборвалась! 🤧💫 Не смогла ответить на вопрос, повтори его, пожалуйста! 🙏",
+        "Хм, космический интернет сейчас немного барахлит, и моя мысль не долетела до орбиты 🛸✨ Не удалось ответить — давай попробуем ещё раз!",
+        "Ай, споткнулась о невидимый провод в сети! 🔌😅 Из-за сбоя связи я не смогла ответить на твой вопрос. Спроси меня ещё разок, я уже поправляю бантик! 🎀",
+        "Кажется, облачко с моими мыслями временно уплыло не туда ☁️🙈 Не получилось ответить на вопрос — проверь интернет или повтори через пару секунд! 💛",
+        "Ой, сервер задумался так глубоко, что уснул на полуслове 😴💤 Не удалось получить ответ, попробуй задать вопрос ещё раз!"
+    ]
+
+    FRIENDLY_FILE_ERRORS = [
+        "Ой, я так внимательно пыталась изучить файл, что связь с облаком моргнула и оборвалась 📄🙈 Не удалось его прочитать — попробуй отправить ещё раз!",
+        "Кажется, этот файлик оказался слишком тяжёлым для космической связи 🛸📄 Не смогла получить ответ — давай попробуем загрузить его повторно! ✨"
+    ]
+
+    @classmethod
+    def _format_friendly_error(cls, is_file: bool = False) -> str:
+        pool = cls.FRIENDLY_FILE_ERRORS if is_file else cls.FRIENDLY_CONNECTION_ERRORS
+        return random.choice(pool)
+
     def set_model(self, model_key: str):
         key = self.MODEL_ALIASES.get(str(model_key).lower())
         if key:
@@ -211,7 +230,7 @@ class LLMProvider:
             self.giga_client = None
             self._giga_credentials = ""
             print(f"[GigaChat Init Error]: {e}")
-            return False, f"Ошибка авторизации GigaChat: {e}"
+            return False, self._format_friendly_error()
 
     def _init_routerai(self):
         cfg = load_config()
@@ -243,7 +262,7 @@ class LLMProvider:
             self.routerai_client = None
             self._routerai_api_key = ""
             print(f"[RouterAI Init Error]: {e}")
-            return False, f"Ошибка инициализации RouterAI: {e}"
+            return False, self._format_friendly_error()
 
     def _get_active_system_prompt(self, user_text: str = "") -> str:
         self._init_system_prompt()
@@ -347,7 +366,7 @@ class LLMProvider:
             print(f"[LLM Error] ({effective_slot}): {e}")
             if self.history and self.history[-1]["role"] == "user":
                 self.history.pop()
-            return f"Не удалось получить ответ от {effective_slot.capitalize()}. Проверь баланс ключа или сеть 😉"
+            return self._format_friendly_error()
 
         self.history.append({"role": "assistant", "content": answer})
 
@@ -392,7 +411,7 @@ class LLMProvider:
             return answer
         except Exception as e:
             print(f"[LLM File Error] ({effective_slot}): {e}")
-            return "Не удалось обработать файл выбранной моделью."
+            return self._format_friendly_error(is_file=True)
 
     def clear_history(self):
         self.history = []

@@ -1,6 +1,7 @@
 import os
 import re
 import math
+import shutil
 from collections import Counter
 import numpy as np
 from core.utils.config import get_resource_path, get_user_data_path
@@ -34,7 +35,16 @@ class LoreRAG:
         self.models_dir = get_resource_path("optimized_models", "lore_rag")
         os.makedirs(self.models_dir, exist_ok=True)
 
-        self.cache_path = os.path.join(get_user_data_path(), "lore_embeddings_cache.npz")
+        embeddings_dir = get_user_data_path("embeddings")
+        os.makedirs(embeddings_dir, exist_ok=True)
+        self.cache_path = os.path.join(embeddings_dir, "lore_embeddings_cache.npz")
+
+        old_cache = get_user_data_path("lore_embeddings_cache.npz")
+        if os.path.exists(old_cache) and not os.path.exists(self.cache_path):
+            try:
+                shutil.move(old_cache, self.cache_path)
+            except Exception:
+                pass
         self.chunks = []
         self.chunk_titles = []
         self.embeddings = None
