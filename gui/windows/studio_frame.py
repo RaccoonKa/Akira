@@ -6,7 +6,7 @@ from datetime import datetime
 from PyQt6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QWidget, QFileDialog, QSizePolicy,
-    QTextEdit, QGraphicsOpacityEffect, QLayout
+    QTextEdit, QLineEdit, QGraphicsOpacityEffect, QLayout
 )
 from PyQt6.QtCore import (
     Qt, QTimer, QSize, QRect, QRectF, QPoint, QPointF, pyqtSignal, QThread,
@@ -15,7 +15,7 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import (
     QPainter, QPen, QColor, QLinearGradient, QRadialGradient,
     QBrush, QPainterPath, QFont, QFontDatabase, QIcon, QPixmap,
-    QTextCursor, QGuiApplication
+    QTextCursor, QGuiApplication, QImage
 )
 from PyQt6.QtSvg import QSvgRenderer
 from core.utils.config import get_resource_path, load_config
@@ -38,6 +38,10 @@ SVG_PAPERCLIP = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" f
 
 SVG_SEND = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
 <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+</svg>"""
+
+SVG_EDIT = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+<path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
 </svg>"""
 
 ALL_STUDIO_MODELS = [
@@ -225,6 +229,32 @@ class SmoothScrollArea(QScrollArea):
             self._timer.stop()
 
 
+class MessageRail(QWidget):
+    """Сглаженная вертикальная полоска-индикатор со скруглёнными краями."""
+    def __init__(self, color: QColor, width: int = 4, parent=None):
+        super().__init__(parent)
+        self._color = QColor(color)
+        self.setFixedWidth(width)
+        self.setMinimumHeight(24)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+
+    def set_color(self, color: QColor):
+        self._color = QColor(color)
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w = float(self.width())
+        h = float(self.height())
+        if w <= 0 or h <= 0:
+            return
+        radius = w / 2.0
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(0.0, 0.0, w, h), radius, radius)
+        painter.fillPath(path, self._color)
+        painter.end()
+
 class StudioWorker(QThread):
     result_ready = pyqtSignal(object)
 
@@ -308,11 +338,32 @@ class StudioTitleWorker(QThread):
         self.title_ready.emit(self.session_id, clean_title)
 
 
+class ShadowLabel(QLabel):
+    """QLabel с нативным субпиксельным сглаживанием шрифта."""
+    def __init__(self, text: str = "", theme: str = "dark", parent=None):
+        super().__init__(text, parent)
+        self.current_theme = theme
+
+    def set_theme(self, theme: str):
+        if self.current_theme != theme:
+            self.current_theme = theme
+            self.update()
+
 class StudioUserMessage(QWidget):
     """Воздушное сообщение пользователя с неоновым рельсом справа."""
-    def __init__(self, text: str, user_name: str, font_family: str, theme: str = "dark", attached_file: str = None, parent=None):
+    def __init__(
+        self,
+        text: str,
+        user_name: str,
+        font_family: str,
+        chat_font_family: str = None,
+        theme: str = "dark",
+        attached_file: str = None,
+        parent=None
+    ):
         super().__init__(parent)
         self.font_family = font_family
+        self.chat_font_family = chat_font_family or font_family
         self.current_theme = theme
 
         main_layout = QHBoxLayout(self)
@@ -325,17 +376,17 @@ class StudioUserMessage(QWidget):
         content_col.setSpacing(4)
         content_col.setAlignment(Qt.AlignmentFlag.AlignRight)
 
-        display_name = user_name.strip() if user_name else "СВЯТ"
-        self.header = QLabel(display_name)
+        display_name = user_name.strip() if user_name else "друг"
+        self.header = ShadowLabel(display_name, theme=self.current_theme)
         self.header.setObjectName("StudioUserHeader")
-        self.header.setFont(QFont(self.font_family, 8, QFont.Weight.Bold))
+        self.header.setFont(QFont(self.font_family, 8))
         self.header.setAlignment(Qt.AlignmentFlag.AlignRight)
         content_col.addWidget(self.header)
 
-        self.body = QLabel(text)
+        self.body = ShadowLabel(text, theme=self.current_theme)
         self.body.setObjectName("StudioUserBody")
         self.body.setWordWrap(True)
-        self.body.setFont(QFont(self.font_family, 11))
+        self.body.setFont(QFont(self.chat_font_family, 11))
         self.body.setAlignment(Qt.AlignmentFlag.AlignRight)
         self.body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.body.setMaximumWidth(400)
@@ -345,82 +396,186 @@ class StudioUserMessage(QWidget):
             fname = os.path.basename(attached_file)
             self.file_pill = QLabel(f"📎 {fname}")
             self.file_pill.setObjectName("StudioFilePill")
-            self.file_pill.setFont(QFont(self.font_family, 9, QFont.Weight.Bold))
+            self.file_pill.setFont(QFont(self.font_family, 9))
             self.file_pill.setAlignment(Qt.AlignmentFlag.AlignRight)
             content_col.addWidget(self.file_pill)
 
         main_layout.addLayout(content_col)
 
-        self.rail = QFrame()
-        self.rail.setObjectName("StudioUserRail")
-        self.rail.setFixedWidth(2)
-        self.rail.setMinimumHeight(24)
-        rail_col = "#ffffff" if theme == "dark" else "#111318"
-        self.rail.setStyleSheet(f"background-color: {rail_col}; border-radius: 1px;")
+        rail_col = QColor("#ffffff" if theme == "dark" else "#111318")
+        self.rail = MessageRail(rail_col, width=4, parent=self)
         main_layout.addWidget(self.rail)
+    
+    def set_theme(self, theme: str):
+        self.current_theme = theme
+        self.header.set_theme(theme)
+        self.body.set_theme(theme)
+        rail_col = QColor("#ffffff" if theme == "dark" else "#111318")
+        self.rail.set_color(rail_col)
 
 
 class StudioAkiraStream(QWidget):
-    """Поток мыслей Акиры: слева со светящимся неоновым рельсом цвета эмоции."""
-    def __init__(self, text: str, emotion_color: QColor, font_family: str, theme: str = "dark", parent=None):
+    """Поток мыслей Акиры с поддержкой живой печати в реальном времени."""
+    def __init__(
+        self,
+        text: str,
+        emotion_color: QColor,
+        font_family: str,
+        chat_font_family: str = None,
+        theme: str = "dark",
+        emotion: str = "neutral",
+        animate: bool = False,
+        on_stream_tick=None,
+        parent=None
+    ):
         super().__init__(parent)
         self.emotion_color = emotion_color
+        self.emotion = emotion
         self.font_family = font_family
+        self.chat_font_family = chat_font_family or font_family
         self.current_theme = theme
         self.code_blocks = []
         self.text_labels = []
+        self._rendered_widgets = []
+        self._on_stream_tick = on_stream_tick
 
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(0, 4, 0, 4)
         main_layout.setSpacing(10)
 
-        self.rail = QFrame()
-        self.rail.setFixedWidth(2)
-        self.rail.setStyleSheet(f"background-color: {emotion_color.name()}; border-radius: 1px;")
+        self.rail = MessageRail(emotion_color, width=4, parent=self)
         main_layout.addWidget(self.rail)
 
-        content_col = QVBoxLayout()
-        content_col.setContentsMargins(0, 0, 0, 0)
-        content_col.setSpacing(6)
+        self.content_col = QVBoxLayout()
+        self.content_col.setContentsMargins(0, 0, 0, 0)
+        self.content_col.setSpacing(4)
 
-        header = QLabel("Аки")
-        header.setFont(QFont(self.font_family, 8, QFont.Weight.Bold))
-        header.setStyleSheet(f"color: {emotion_color.name()}; letter-spacing: 1.2px;")
-        content_col.addWidget(header)
+        self.header_lbl = ShadowLabel("Аки", theme=self.current_theme)
+        self.header_lbl.setFont(QFont(self.font_family, 8))
+        self.header_lbl.setStyleSheet(f"color: {emotion_color.name()}; letter-spacing: 1.2px;")
+        self.content_col.addWidget(self.header_lbl)
 
-        blocks = parse_message_blocks(text)
+        main_layout.addLayout(self.content_col, 1)
+
+        if animate and text:
+            self._start_typewriter(text)
+        else:
+            self._render_blocks(parse_message_blocks(text))
+
+    def _create_block_widget(self, b_type: str, b_val):
+        if b_type == "code":
+            lang, code_body = b_val
+            return CodeBlockWidget(
+                lang,
+                code_body,
+                font_family=self.font_family,
+                theme=self.current_theme,
+                parent=self
+            )
+        lbl = ShadowLabel(theme=self.current_theme)
+        lbl.setObjectName("StudioAkiraBody")
+        lbl.setTextFormat(Qt.TextFormat.RichText)
+        lbl.setOpenExternalLinks(True)
+        lbl.setText(markdown_to_rich_html(b_val, theme=self.current_theme))
+        lbl.setWordWrap(True)
+        lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        lbl.setFont(QFont(self.chat_font_family, 11))
+        lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        return lbl
+
+    def _render_blocks(self, blocks):
         for b_type, b_val in blocks:
+            w = self._create_block_widget(b_type, b_val)
+            self.content_col.addWidget(w)
+            self._rendered_widgets.append((b_type, w))
             if b_type == "code":
-                lang, code_body = b_val
-                cb = CodeBlockWidget(
-                    lang,
-                    code_body,
-                    font_family=self.font_family,
-                    theme=self.current_theme,
-                    parent=self
-                )
-                content_col.addWidget(cb)
-                self.code_blocks.append(cb)
+                self.code_blocks.append(w)
             else:
-                lbl = QLabel()
-                lbl.setObjectName("StudioAkiraBody")
-                lbl.setTextFormat(Qt.TextFormat.RichText)
-                lbl.setOpenExternalLinks(True)
-                lbl.setText(markdown_to_rich_html(b_val, theme=self.current_theme))
-                lbl.setWordWrap(True)
-                lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-                lbl.setFont(QFont(self.font_family, 11))
-                lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-                content_col.addWidget(lbl)
-                self.text_labels.append((lbl, b_val))
+                self.text_labels.append((w, b_val))
 
-        main_layout.addLayout(content_col, 1)
+    def _start_typewriter(self, full_text: str):
+        self._tokens = re.findall(r'\S+|\s+', full_text)
+        self._streamed_text = ""
 
-    def set_theme(self, theme: str):
+        total = len(self._tokens)
+        if total > 180:
+            interval, self._chunk_size = 12, 3
+        elif total > 70:
+            interval, self._chunk_size = 15, 2
+        else:
+            interval, self._chunk_size = 22, 1
+
+        self._stream_timer = QTimer(self)
+        self._stream_timer.setInterval(interval)
+        self._stream_timer.timeout.connect(self._on_stream_step)
+        self._stream_timer.start()
+        self._on_stream_step()
+
+    def _on_stream_step(self):
+        if not getattr(self, "_tokens", None):
+            if hasattr(self, "_stream_timer"):
+                self._stream_timer.stop()
+            self._sync_theme_refs(parse_message_blocks(self._streamed_text))
+            return
+
+        for _ in range(self._chunk_size):
+            if self._tokens:
+                self._streamed_text += self._tokens.pop(0)
+
+        blocks = parse_message_blocks(self._streamed_text)
+        for idx, (b_type, b_val) in enumerate(blocks):
+            if idx < len(self._rendered_widgets):
+                old_type, widget = self._rendered_widgets[idx]
+                if old_type != b_type:
+                    self.content_col.removeWidget(widget)
+                    widget.deleteLater()
+                    new_w = self._create_block_widget(b_type, b_val)
+                    self.content_col.insertWidget(idx + 1, new_w)
+                    self._rendered_widgets[idx] = (b_type, new_w)
+                elif idx == len(blocks) - 1:
+                    if b_type == "text":
+                        widget.setText(markdown_to_rich_html(b_val, theme=self.current_theme))
+                    else:
+                        _, code_body = b_val
+                        clean_code = code_body.strip("\n")
+                        widget.code = clean_code
+                        widget.code_edit.setPlainText(clean_code)
+                        lines_count = max(2, min(26, len(clean_code.splitlines())))
+                        widget.code_edit.setFixedHeight(lines_count * 18 + 16)
+            else:
+                new_w = self._create_block_widget(b_type, b_val)
+                self.content_col.addWidget(new_w)
+                self._rendered_widgets.append((b_type, new_w))
+
+        if callable(self._on_stream_tick):
+            self._on_stream_tick()
+
+        if not self._tokens:
+            self._stream_timer.stop()
+            self._sync_theme_refs(blocks)
+
+    def _sync_theme_refs(self, blocks):
+        self.code_blocks.clear()
+        self.text_labels.clear()
+        for (b_type, widget), (_, b_val) in zip(self._rendered_widgets, blocks):
+            if b_type == "code":
+                self.code_blocks.append(widget)
+            else:
+                self.text_labels.append((widget, b_val))
+
+    def set_theme(self, theme: str, emotion_color: QColor = None):
         self.current_theme = theme
+        if emotion_color is not None:
+            self.emotion_color = emotion_color
+            self.rail.set_color(emotion_color)
+            if hasattr(self, "header_lbl"):
+                self.header_lbl.setStyleSheet(f"color: {emotion_color.name()}; letter-spacing: 1.2px;")
+        if hasattr(self, "header_lbl"):
+            self.header_lbl.set_theme(theme)
         for cb in self.code_blocks:
             cb.set_theme(theme)
         for lbl, raw_md in self.text_labels:
+            lbl.set_theme(theme)
             lbl.setText(markdown_to_rich_html(raw_md, theme=theme))
 
 
@@ -430,16 +585,34 @@ class StudioTextEdit(QTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("StudioInputEdit")
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.viewport().setAutoFillBackground(False)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.document().setDocumentMargin(0)
         self.textChanged.connect(self.adjust_height)
-        self.setFixedHeight(32)
+        self.setFixedHeight(28)
+        QTimer.singleShot(0, self.adjust_height)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.adjust_height()
 
     def adjust_height(self):
+        line_h = self.fontMetrics().height()
         doc_h = self.document().size().height()
-        target_h = 50 if doc_h > 20 else 32
-        policy = Qt.ScrollBarPolicy.ScrollBarAsNeeded if doc_h > 20 else Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        is_multiline = doc_h > (line_h + 4)
+
+        if is_multiline:
+            target_h = 52
+            policy = Qt.ScrollBarPolicy.ScrollBarAsNeeded
+            self.setViewportMargins(4, 4, 4, 4)
+        else:
+            target_h = 28
+            policy = Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+            top_pad = max(2, int(round((target_h - line_h) / 2.0)))
+            self.setViewportMargins(4, top_pad, 4, 0)
+
         self.setVerticalScrollBarPolicy(policy)
         if self.height() != target_h:
             self.setFixedHeight(target_h)
@@ -484,12 +657,12 @@ class ModelItemRow(QFrame):
         layout.addWidget(self.rail)
 
         self.label = QLabel(self.name)
-        self.label.setFont(QFont(self.font_family, 10, QFont.Weight.Bold))
+        self.label.setFont(QFont(self.font_family, 10))
         layout.addWidget(self.label)
         layout.addStretch()
 
         self.check_label = QLabel("")
-        self.check_label.setFont(QFont(self.font_family, 9, QFont.Weight.Bold))
+        self.check_label.setFont(QFont(self.font_family, 9))
         layout.addWidget(self.check_label)
 
         self.update_style()
@@ -863,10 +1036,10 @@ class StudioModelSelector(QPushButton):
     def update_style(self):
         is_light = (self.current_theme == "light")
         if is_light:
-            bg_col = "rgba(17, 19, 24, 0.05)"
-            bg_hover = "rgba(17, 19, 24, 0.10)"
-            border_col = "rgba(17, 19, 24, 0.22)"
-            border_hover = "#111318"
+            bg_col = "rgba(15, 23, 42, 0.05)"
+            bg_hover = "rgba(15, 23, 42, 0.09)"
+            border_col = "rgba(15, 23, 42, 0.10)"
+            border_hover = "rgba(15, 23, 42, 0.22)"
             text_col = "#111318"
         else:
             bg_col = "rgba(255, 255, 255, 0.05)"
@@ -883,7 +1056,6 @@ class StudioModelSelector(QPushButton):
                 color: {text_col};
                 font-family: '{self.font_family}';
                 font-size: 11px;
-                font-weight: bold;
                 padding: 0px 8px;
             }}
             QPushButton#StudioModelSelectorBtn:hover {{
@@ -898,11 +1070,14 @@ class StudioFloatingDock(QFrame):
     """Парящий остров ввода внизу студии."""
     submit_requested = pyqtSignal(str, str, str)
 
-    def __init__(self, font_family: str, parent=None):
+    def __init__(self, font_family: str, chat_font_family: str = None, parent=None):
         super().__init__(parent)
         self.setObjectName("StudioFloatingDock")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.font_family = font_family
+        self.chat_font_family = chat_font_family or font_family
         self.attached_file = None
+        self.current_theme = "dark"
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 6, 10, 6)
@@ -915,7 +1090,7 @@ class StudioFloatingDock(QFrame):
 
         self.file_name_lbl = QLabel("")
         self.file_name_lbl.setObjectName("StudioFileNameLabel")
-        self.file_name_lbl.setFont(QFont(self.font_family, 9, QFont.Weight.Bold))
+        self.file_name_lbl.setFont(QFont(self.font_family, 9))
         file_l.addWidget(self.file_name_lbl)
 
         self.file_remove_btn = QPushButton("✕")
@@ -946,7 +1121,7 @@ class StudioFloatingDock(QFrame):
         dock_row.addWidget(self.attach_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         self.input_edit = StudioTextEdit()
-        self.input_edit.setFont(QFont(self.font_family, 11))
+        self.input_edit.setFont(QFont(self.chat_font_family, 11))
         self.randomize_placeholder()
         self.input_edit.send_requested.connect(self._submit)
         dock_row.addWidget(self.input_edit, 1, alignment=Qt.AlignmentFlag.AlignVCenter)
@@ -1003,16 +1178,39 @@ class StudioFloatingDock(QFrame):
             self.input_edit.setFocus()
 
     def update_icons(self, theme: str):
-        icon_col = "#111318" if theme == "light" else "#ded7c4"
+        self.current_theme = theme
+        icon_col = "#1e293b" if theme == "light" else "#ded7c4"
         self.attach_btn.setIcon(_render_svg(SVG_PAPERCLIP, icon_col, 15))
         self.send_btn.setIcon(_render_svg(SVG_SEND, icon_col, 15))
         self.model_combo.set_theme(theme)
+        self.update()
 
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        is_light = (self.current_theme == "light")
+
+        rect = QRectF(0.5, 0.5, self.width() - 1.0, self.height() - 1.0)
+        path = QPainterPath()
+        path.addRoundedRect(rect, 14.0, 14.0)
+
+        if is_light:
+            bg_col = QColor(255, 255, 255, 245)
+            border_col = QColor(15, 23, 42, 28)
+        else:
+            bg_col = QColor(12, 13, 16, 226)
+            border_col = QColor(120, 115, 95, 82)
+
+        painter.fillPath(path, bg_col)
+        painter.setPen(QPen(border_col, 1.0))
+        painter.drawPath(path)
+        painter.end()
 
 class HistorySessionCard(QFrame):
-    """Карточка отдельного чата с крупным шрифтом, временем и кнопкой удаления."""
+    """Карточка отдельного чата с инлайн-переименованием без рамки."""
     clicked = pyqtSignal(int)
     delete_requested = pyqtSignal(int)
+    rename_requested = pyqtSignal(int, str)
 
     MODEL_DISPLAY_NAMES = {
         "hikari": "Hikari",
@@ -1027,6 +1225,8 @@ class HistorySessionCard(QFrame):
         self.font_family = font_family
         self.is_active = is_active
         self.current_theme = theme
+        self._is_editing = False
+        self._raw_title = session_data.get("title", "Новый диалог")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFixedHeight(58)
 
@@ -1043,9 +1243,34 @@ class HistorySessionCard(QFrame):
         text_col.setContentsMargins(0, 0, 0, 0)
         text_col.setSpacing(2)
 
-        self.title_lbl = QLabel(session_data.get("title", "Новый диалог"))
-        self.title_lbl.setFont(QFont(self.font_family, 11, QFont.Weight.Bold))
-        text_col.addWidget(self.title_lbl)
+        self.title_row = QHBoxLayout()
+        self.title_row.setContentsMargins(0, 0, 0, 0)
+        self.title_row.setSpacing(4)
+
+        self.title_lbl = QLabel(self._raw_title)
+        self.title_lbl.setFont(QFont(self.font_family, 11))
+        self.title_lbl.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+        self.title_row.addWidget(self.title_lbl)
+
+        self.edit_btn = QPushButton()
+        self.edit_btn.setFixedSize(20, 20)
+        self.edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.edit_btn.setToolTip("Переименовать диалог")
+        self.edit_btn.clicked.connect(self._start_editing)
+        self.title_row.addWidget(self.edit_btn)
+
+        self.title_edit = QLineEdit(self._raw_title)
+        self.title_edit.setFont(QFont(self.font_family, 11))
+        self.title_edit.setFrame(False)
+        self.title_edit.setMaxLength(60)
+        self.title_edit.hide()
+        self.title_edit.returnPressed.connect(self._commit_editing)
+        self.title_edit.installEventFilter(self)
+        self.title_row.addWidget(self.title_edit, 1)
+
+        self.title_row.addStretch(1)
+
+        text_col.addLayout(self.title_row)
 
         raw_time = session_data.get("updated_at", "")
         time_display = self._format_time(raw_time)
@@ -1067,6 +1292,75 @@ class HistorySessionCard(QFrame):
 
         self.update_style()
 
+    def _start_editing(self):
+        if self._is_editing:
+            return
+        self._is_editing = True
+        self.title_lbl.hide()
+        self.edit_btn.hide()
+        self.title_row.setStretch(3, 0)
+
+        self.title_edit.setText(self._raw_title)
+        self.title_edit.show()
+        self.title_edit.setFocus()
+        self.title_edit.setCursorPosition(len(self._raw_title))
+
+        app = QGuiApplication.instance()
+        if app:
+            app.installEventFilter(self)
+
+    def _finish_editing_ui(self):
+        self._is_editing = False
+        app = QGuiApplication.instance()
+        if app:
+            app.removeEventFilter(self)
+
+        self.title_edit.hide()
+        self.title_row.setStretch(3, 1)
+        self.title_lbl.show()
+        self.edit_btn.show()
+
+    def _cancel_editing(self):
+        if not self._is_editing:
+            return
+        self._finish_editing_ui()
+
+    def _commit_editing(self):
+        if not self._is_editing:
+            return
+        new_title = self.title_edit.text().strip()
+        self._finish_editing_ui()
+
+        if new_title and new_title != self._raw_title:
+            self._raw_title = new_title
+            self.title_lbl.setText(new_title)
+            self.rename_requested.emit(self.session_id, new_title)
+
+    def hideEvent(self, event):
+        if self._is_editing:
+            self._commit_editing()
+        super().hideEvent(event)
+
+    def eventFilter(self, obj, event):
+        if not self._is_editing:
+            return super().eventFilter(obj, event)
+
+        if obj is self.title_edit:
+            if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
+                self._cancel_editing()
+                return True
+            if event.type() == QEvent.Type.FocusOut:
+                self._commit_editing()
+                return False
+
+        if event.type() == QEvent.Type.MouseButtonPress:
+            global_pos = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
+            local_pos = self.title_edit.mapFromGlobal(global_pos)
+            if not self.title_edit.rect().contains(local_pos):
+                self._commit_editing()
+
+        return super().eventFilter(obj, event)
+
     def _format_time(self, raw_str: str) -> str:
         try:
             dt = datetime.strptime(raw_str, "%Y-%m-%d %H:%M:%S")
@@ -1081,6 +1375,9 @@ class HistorySessionCard(QFrame):
         self.delete_requested.emit(self.session_id)
 
     def mousePressEvent(self, event):
+        if self._is_editing:
+            event.accept()
+            return
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit(self.session_id)
             event.accept()
@@ -1106,6 +1403,8 @@ class HistorySessionCard(QFrame):
 
         sub_col = "#656d76" if is_light else "#9e9780"
         del_col = "#8c959f" if is_light else "#78735f"
+        edit_col = "#656d76" if is_light else "#9e9780"
+        sel_bg = "rgba(42, 117, 211, 0.25)" if is_light else "rgba(222, 215, 196, 0.25)"
 
         self.setStyleSheet(f"""
             HistorySessionCard {{
@@ -1121,13 +1420,39 @@ class HistorySessionCard(QFrame):
         self.indicator.setStyleSheet(f"background-color: {ind_col}; border-radius: 1.5px; border: none;")
         self.title_lbl.setStyleSheet(f"color: {title_col}; border: none; background: transparent;")
         self.sub_lbl.setStyleSheet(f"color: {sub_col}; border: none; background: transparent;")
+
+        self.edit_btn.setIcon(_render_svg(SVG_EDIT, edit_col, 12))
+        self.edit_btn.setIconSize(QSize(12, 12))
+        self.edit_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                border: none;
+                border-radius: 4px;
+                padding: 0px;
+            }}
+            QPushButton:hover {{
+                background-color: {'rgba(0, 0, 0, 0.08)' if is_light else 'rgba(222, 215, 196, 0.14)'};
+            }}
+        """)
+
+        self.title_edit.setStyleSheet(f"""
+            QLineEdit {{
+                background: transparent;
+                color: {title_col};
+                border: none;
+                padding: 0px;
+                margin: 0px;
+                selection-background-color: {sel_bg};
+                selection-color: {title_col};
+            }}
+        """)
+
         self.del_btn.setStyleSheet(f"""
             QPushButton {{
                 color: {del_col};
                 background: transparent;
                 border: none;
                 font-size: 11px;
-                font-weight: bold;
                 border-radius: 4px;
             }}
             QPushButton:hover {{
@@ -1143,6 +1468,7 @@ class StudioHistoryDrawer(QFrame):
     new_chat_requested = pyqtSignal()
     session_selected = pyqtSignal(int)
     session_deleted = pyqtSignal(int)
+    session_renamed = pyqtSignal(int, str)
 
     def __init__(self, font_family: str, parent=None):
         super().__init__(parent)
@@ -1162,7 +1488,7 @@ class StudioHistoryDrawer(QFrame):
 
         title = QLabel("ИСТОРИЯ ДИАЛОГОВ")
         title.setObjectName("StudioDrawerTitle")
-        title.setFont(QFont(self.font_family, 10, QFont.Weight.Bold))
+        title.setFont(QFont(self.font_family, 10))
         header_row.addWidget(title)
         header_row.addStretch()
 
@@ -1179,7 +1505,7 @@ class StudioHistoryDrawer(QFrame):
         self.btn_new_chat.setObjectName("StudioNewChatBtn")
         self.btn_new_chat.setFixedHeight(34)
         self.btn_new_chat.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_new_chat.setFont(QFont(self.font_family, 10, QFont.Weight.Bold))
+        self.btn_new_chat.setFont(QFont(self.font_family, 10))
         self.btn_new_chat.clicked.connect(self.new_chat_requested.emit)
         layout.addWidget(self.btn_new_chat)
         self.randomize_new_chat_text()
@@ -1241,7 +1567,6 @@ class StudioHistoryDrawer(QFrame):
                 background: transparent;
                 border: none;
                 font-size: 13px;
-                font-weight: bold;
                 border-radius: 6px;
             }}
             QPushButton#StudioDrawerCloseBtn:hover {{
@@ -1261,8 +1586,12 @@ class StudioHistoryDrawer(QFrame):
             }}
         """)
 
-        empty_col = "rgba(17, 19, 24, 0.45)" if is_light else "rgba(222, 215, 196, 0.45)"
-        self.empty_label.setStyleSheet(f"color: {empty_col}; padding-top: 30px; background: transparent; border: none;")
+        if getattr(self, "empty_label", None) is not None:
+            try:
+                empty_col = "rgba(17, 19, 24, 0.45)" if is_light else "rgba(222, 215, 196, 0.45)"
+                self.empty_label.setStyleSheet(f"color: {empty_col}; padding-top: 30px; background: transparent; border: none;")
+            except RuntimeError:
+                self.empty_label = None
 
         for card in self.card_widgets.values():
             card.current_theme = self.current_theme
@@ -1275,6 +1604,7 @@ class StudioHistoryDrawer(QFrame):
     def refresh_sessions(self, sessions: list, active_id: int):
         self.randomize_new_chat_text()
         self.card_widgets.clear()
+        self.empty_label = None
 
         while self.list_layout.count():
             item = self.list_layout.takeAt(0)
@@ -1303,6 +1633,7 @@ class StudioHistoryDrawer(QFrame):
             )
             card.clicked.connect(self.session_selected.emit)
             card.delete_requested.connect(self.session_deleted.emit)
+            card.rename_requested.connect(self.session_renamed.emit)
             self.list_layout.addWidget(card)
             card.show()
             self.card_widgets[s_id] = card
@@ -1327,16 +1658,21 @@ class StudioFrame(QFrame):
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
 
-        font_path = get_resource_path("assets", "fonts", "SSFBreakthrough-Regular.ttf")
-        if not os.path.exists(font_path):
-            font_path = get_resource_path("assets", "fonts", "SSFBreakthrough-Regular.otf")
-
-        font_id = QFontDatabase.addApplicationFont(font_path)
-        if font_id != -1:
-            families = QFontDatabase.applicationFontFamilies(font_id)
+        ui_font_path = get_resource_path("assets", "fonts", "Arian_normal.otf")
+        ui_font_id = QFontDatabase.addApplicationFont(ui_font_path)
+        if ui_font_id != -1:
+            families = QFontDatabase.applicationFontFamilies(ui_font_id)
             self.font_family = families[0] if families else "Arial"
         else:
             self.font_family = "Arial"
+
+        chat_font_path = get_resource_path("assets", "fonts", "J Audio Cassette.otf")
+        chat_font_id = QFontDatabase.addApplicationFont(chat_font_path)
+        if chat_font_id != -1:
+            chat_families = QFontDatabase.applicationFontFamilies(chat_font_id)
+            self.chat_font_family = chat_families[0] if chat_families else self.font_family
+        else:
+            self.chat_font_family = self.font_family
 
         self.setFont(QFont(self.font_family, 11))
 
@@ -1348,11 +1684,11 @@ class StudioFrame(QFrame):
             "neutral": (42.0, 50.0, 220.0),
         }
         self.light_palette = {
-            "happy": (35.0, 235.0, 115.0),
-            "sad": (218.0, 220.0, 110.0),
-            "angry": (352.0, 230.0, 110.0),
-            "surprise": (282.0, 215.0, 100.0),
-            "neutral": (215.0, 60.0, 60.0),
+            "happy": (32.0, 245.0, 215.0),      # насыщенный янтарно-золотой
+            "sad": (212.0, 235.0, 210.0),       # глубокий лазурный
+            "angry": (350.0, 235.0, 215.0),     # яркий рубиново-алый
+            "surprise": (272.0, 220.0, 215.0),  # насыщенный фиолетовый
+            "neutral": (218.0, 215.0, 195.0),   # выразительный кобальтово-синий
         }
         self.palette = self.dark_palette
         self.cur_h, self.cur_s, self.cur_v = self.palette["neutral"]
@@ -1397,7 +1733,7 @@ class StudioFrame(QFrame):
         layout.addWidget(self.scroll, 1)
 
         self.thinking_status = QLabel("")
-        self.thinking_status.setFont(QFont(self.font_family, 9, QFont.Weight.Bold))
+        self.thinking_status.setFont(QFont(self.font_family, 9))
         self.thinking_status.hide()
         layout.addWidget(self.thinking_status)
 
@@ -1408,7 +1744,11 @@ class StudioFrame(QFrame):
         self._last_phrase = ""
 
         # Док ввода (селектор моделей привязан к StudioFrame)
-        self.dock = StudioFloatingDock(font_family=self.font_family, parent=self)
+        self.dock = StudioFloatingDock(
+            font_family=self.font_family,
+            chat_font_family=self.chat_font_family,
+            parent=self
+        )
         self.dock.submit_requested.connect(self._on_user_submit)
         layout.addWidget(self.dock)
 
@@ -1418,6 +1758,7 @@ class StudioFrame(QFrame):
         self.drawer.new_chat_requested.connect(self.create_new_dialog)
         self.drawer.session_selected.connect(self.load_session)
         self.drawer.session_deleted.connect(self.delete_session)
+        self.drawer.session_renamed.connect(self._on_session_renamed)
 
         self.drawer_anim = QVariantAnimation(self)
         self.drawer_anim.setDuration(260)
@@ -1468,6 +1809,7 @@ class StudioFrame(QFrame):
                     content,
                     user_name=current_name,
                     font_family=self.font_family,
+                    chat_font_family=self.chat_font_family,
                     theme=self.current_theme,
                     attached_file=attached,
                     parent=self.feed_widget
@@ -1480,7 +1822,10 @@ class StudioFrame(QFrame):
                     content,
                     emo_col,
                     font_family=self.font_family,
+                    chat_font_family=self.chat_font_family,
                     theme=self.current_theme,
+                    emotion=emotion,
+                    animate=False,
                     parent=self.feed_widget
                 )
                 self.feed_layout.addWidget(akira_stream)
@@ -1503,6 +1848,9 @@ class StudioFrame(QFrame):
             else:
                 self.create_new_dialog()
         self.drawer.refresh_sessions(sessions, self.current_session_id)
+
+    def _on_session_renamed(self, session_id: int, new_title: str):
+        studio_db.update_session_title(session_id, new_title)
 
     def _get_user_name(self) -> str:
         try:
@@ -1542,7 +1890,12 @@ class StudioFrame(QFrame):
             for i in range(self.feed_layout.count()):
                 w = self.feed_layout.itemAt(i).widget()
                 if w and hasattr(w, 'set_theme'):
-                    w.set_theme(theme)
+                    if isinstance(w, StudioAkiraStream):
+                        emo_key = w.emotion if w.emotion in self.palette else "neutral"
+                        eh, es, ev = self.palette[emo_key]
+                        w.set_theme(theme, QColor.fromHsv(int(eh), int(es), int(ev)))
+                    else:
+                        w.set_theme(theme)
 
         self.setStyleSheet(get_main_style(theme))
         self.update()
@@ -1626,6 +1979,7 @@ class StudioFrame(QFrame):
             text,
             user_name=current_name,
             font_family=self.font_family,
+            chat_font_family=self.chat_font_family,
             theme=self.current_theme,
             attached_file=attached_file,
             parent=self.feed_widget
@@ -1675,13 +2029,18 @@ class StudioFrame(QFrame):
                 emotion=emotion
             )
 
+            print_markdown_console(chat_text, speaker="Акира")
             self.set_emotion(emotion)
             emo_col = QColor.fromHsv(int(self.target_h), int(self.target_s), int(self.target_v))
             akira_stream = StudioAkiraStream(
                 chat_text,
                 emo_col,
                 font_family=self.font_family,
+                chat_font_family=self.chat_font_family,
                 theme=self.current_theme,
+                emotion=emotion,
+                animate=True,
+                on_stream_tick=self.scroll.smooth_scroll_to_bottom,
                 parent=self.feed_widget
             )
             self.feed_layout.addWidget(akira_stream)
@@ -1717,14 +2076,16 @@ class StudioFrame(QFrame):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        w, h = self.width(), self.height()
+        w = self.width()
 
-        aura = QRadialGradient(w * 0.5, 0, w * 0.75)
-        aura_alpha = 18 if self.current_theme == "light" else 28
-        c_glow = QColor.fromHsv(int(self.cur_h), int(self.cur_s), int(self.cur_v), aura_alpha)
+        aura = QRadialGradient(w * 0.5, 0, w * 0.72)
+        is_light = (self.current_theme == "light")
+        c_glow = QColor.fromHsv(int(self.cur_h), int(self.cur_s), int(self.cur_v), 62 if is_light else 36)
+        c_mid = QColor.fromHsv(int(self.cur_h), int(self.cur_s), int(self.cur_v), 24 if is_light else 14)
         c_fade = QColor.fromHsv(int(self.cur_h), int(self.cur_s), int(self.cur_v), 0)
         aura.setColorAt(0.0, c_glow)
-        aura.setColorAt(0.7, c_fade)
+        aura.setColorAt(0.4, c_mid)
+        aura.setColorAt(0.85, c_fade)
         aura.setColorAt(1.0, c_fade)
         painter.fillRect(self.rect(), aura)
 

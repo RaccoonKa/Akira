@@ -384,7 +384,7 @@ class CodeBlockWidget(QFrame):
         display_lang = get_display_language(self.language)
         self.lang_label = QLabel(display_lang)
         self.lang_label.setObjectName("CodeLangLabel")
-        self.lang_label.setFont(QFont(self.font_family, 8, QFont.Weight.Bold))
+        self.lang_label.setFont(QFont(self.font_family, 8))
         header.addWidget(self.lang_label, 0, Qt.AlignmentFlag.AlignRight)
 
         layout.addLayout(header)
@@ -421,7 +421,7 @@ class CodeBlockWidget(QFrame):
         self.download_btn = QPushButton("Скачать")
         self.download_btn.setObjectName("CodeDownloadBtn")
         self.download_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.download_btn.setFont(QFont(self.font_family, 8, QFont.Weight.Bold))
+        self.download_btn.setFont(QFont(self.font_family, 8))
         self.download_btn.setFixedHeight(22)
         self.download_btn.clicked.connect(self._download_code)
         footer.addWidget(self.download_btn, 0, Qt.AlignmentFlag.AlignRight)
@@ -429,7 +429,7 @@ class CodeBlockWidget(QFrame):
         self.copy_btn = QPushButton("Копировать")
         self.copy_btn.setObjectName("CodeCopyBtn")
         self.copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.copy_btn.setFont(QFont(self.font_family, 8, QFont.Weight.Bold))
+        self.copy_btn.setFont(QFont(self.font_family, 8))
         self.copy_btn.setFixedHeight(22)
         self.copy_btn.clicked.connect(self._copy_code)
         footer.addWidget(self.copy_btn, 0, Qt.AlignmentFlag.AlignRight)
@@ -607,7 +607,7 @@ def markdown_to_rich_html(text: str, theme: str = "dark") -> str:
             level = len(h_match.group(1))
             size_pt = 13 if level <= 2 else 12
             formatted_lines.append(
-                f'<div style="font-size: {size_pt}pt; font-weight: bold; '
+                f'<div style="font-size: {size_pt}pt; '
                 f'color: {heading_fg}; margin-top: 4px; margin-bottom: 2px;">{h_match.group(2)}</div>'
             )
             continue

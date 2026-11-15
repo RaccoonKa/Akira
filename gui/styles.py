@@ -34,7 +34,7 @@ QLineEdit#InputField:focus {
 QPushButton#SendButton {
     background-color: #dcd8cf;
     color: #0d0a05;
-    font-weight: bold;
+    
     border: none;
     border-radius: 8px;
     padding: 8px 16px;
@@ -85,7 +85,7 @@ QPushButton#TitleBtn:hover {
 QLabel#ModelSelectorLabel {
     color: #ded7c4;
     font-size: 11px;
-    font-weight: bold;
+    
     letter-spacing: 0.5px;
 }
 QComboBox#ModelSelectorCombo {
@@ -180,7 +180,7 @@ QLabel#CardHeader {
     color: #ded7c4;
     letter-spacing: 1.4px;
     font-size: 10px;
-    font-weight: bold;
+    
     text-transform: uppercase;
 }
 
@@ -269,7 +269,7 @@ QPushButton#HintCircleBtn {
     color: #ded7c4;
     border: 1px solid #78735f;
     border-radius: 8px;
-    font-weight: bold;
+    
     font-size: 9px;
     padding: 0px;
     outline: none;
@@ -286,7 +286,7 @@ QPushButton#GuideCircleBtn {
     border: 1px solid #78735f;
     border-radius: 8px;
     font-size: 8px;
-    font-weight: bold;
+    
     letter-spacing: 0.5px;
     padding: 0px;
     outline: none;
@@ -300,7 +300,7 @@ QPushButton#GuideCircleBtn:hover {
 QPushButton#SaveSettingsButton {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ede8db, stop:1 #d6cebe);
     color: #121008;
-    font-weight: bold;
+    
     letter-spacing: 1px;
     border: none;
     border-radius: 8px;
@@ -346,7 +346,7 @@ QPushButton#RemoveFileBtn {
     background-color: transparent;
     color: #ff5252;
     font-size: 11px;
-    font-weight: bold;
+    
     border: none;
     border-radius: 8px;
     padding: 0px;
@@ -369,7 +369,7 @@ QTextEdit#GuideContent {
 QPushButton#GuideCloseBtn {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ede8db, stop:1 #d6cebe);
     color: #121008;
-    font-weight: bold;
+    
     border: none;
     border-radius: 6px;
     padding: 5px 14px;
@@ -398,7 +398,7 @@ QProgressBar#UpdateProgressBar {
     text-align: center;
     color: #ded7c4;
     font-size: 10px;
-    font-weight: bold;
+    
     height: 20px;
 }
 QProgressBar#UpdateProgressBar::chunk {
@@ -409,7 +409,7 @@ QProgressBar#UpdateProgressBar::chunk {
 QPushButton#UpdateButton {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ede8db, stop:1 #d6cebe);
     color: #0d0a05;
-    font-weight: bold;
+    
     border: none;
     border-radius: 6px;
     padding: 5px 14px;
@@ -428,7 +428,7 @@ QPushButton#UpdateNotificationBadge {
     border-radius: 6px;
     padding: 2px 7px;
     font-size: 10px;
-    font-weight: bold;
+    
     height: 20px;
 }
 QPushButton#UpdateNotificationBadge:hover {
@@ -500,7 +500,7 @@ QFrame#ModeItemCard:hover {
 QLabel#ModeItemTitle {
     color: #fffde7;
     font-size: 10px;
-    font-weight: bold;
+    
     letter-spacing: 0.5px;
 }
 QLabel#ModeItemPath {
@@ -635,7 +635,7 @@ QFrame#BentoCell:hover {
 QLabel#BentoSectionTitle {
     color: #ded7c4;
     font-size: 9px;
-    font-weight: bold;
+    
     letter-spacing: 1.4px;
     text-transform: uppercase;
 }
@@ -643,7 +643,7 @@ QLabel#BentoSectionTitle {
 QLabel#BentoCellTitle {
     color: #fffde7;
     font-size: 11px;
-    font-weight: bold;
+    
 }
 
 QLabel#BentoCellDesc {
@@ -654,7 +654,7 @@ QLabel#BentoCellDesc {
 QLabel#BentoStatusActive {
     color: #ded7c4;
     font-size: 9px;
-    font-weight: bold;
+    
     letter-spacing: 0.6px;
 }
 
@@ -667,7 +667,7 @@ QLabel#BentoStatusIdle {
 QPushButton#BentoActionBtn {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ede8db, stop:1 #d6cebe);
     color: #121008;
-    font-weight: bold;
+    
     border: none;
     border-radius: 6px;
     padding: 4px 10px;
@@ -732,7 +732,7 @@ QTextEdit#StudioInputEdit {
     background: transparent;
     color: #fffde7;
     border: none;
-    padding: 5px 6px 3px 6px;
+    padding: 0px;
 }
 QPushButton#StudioDockBtn {
     background-color: transparent;
@@ -749,7 +749,7 @@ QPushButton#StudioFileRemoveBtn {
     background-color: transparent;
     color: #ff5252;
     font-size: 11px;
-    font-weight: bold;
+    
     border: none;
     border-radius: 8px;
     padding: 0px;
@@ -778,7 +778,7 @@ QPushButton#StudioDrawerCloseBtn:hover {
 QPushButton#StudioNewChatBtn {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ede8db, stop:1 #d6cebe);
     color: #121008;
-    font-weight: bold;
+    
     border: none;
     border-radius: 6px;
 }
@@ -821,14 +821,14 @@ QFrame#LeftPanel {
     border: none;
 }
 QFrame#RightPanel {
-    background-color: rgba(238, 242, 248, 0.82);
-    border: none;
-    border-radius: 12px;
+    background-color: rgba(248, 250, 253, 0.88);
+    border: 1px solid rgba(15, 23, 42, 0.10);
+    border-radius: 14px;
 }
 QFrame#SettingsPanel {
-    background-color: rgba(234, 238, 246, 0.85);
-    border: none;
-    border-radius: 12px;
+    background-color: rgba(246, 248, 252, 0.92);
+    border: 1px solid rgba(15, 23, 42, 0.10);
+    border-radius: 14px;
 }
 QTextEdit#ChatHistory {
     background-color: transparent;
@@ -839,19 +839,19 @@ QTextEdit#ChatHistory {
 QLineEdit#InputField {
     background-color: #ffffff;
     color: #111318;
-    border: 1.5px solid #111318;
+    border: 1px solid rgba(15, 23, 42, 0.22);
     border-radius: 8px;
     padding: 2px 10px 6px 10px;
     font-size: 13px;
 }
 QLineEdit#InputField:focus {
-    border: 2px solid #000000;
+    border: 1px solid #111318;
     background-color: #ffffff;
 }
 QPushButton#SendButton {
     background-color: #111318;
     color: #ffffff;
-    font-weight: bold;
+    
     border: 1.5px solid #111318;
     border-radius: 8px;
     padding: 8px 16px;
@@ -864,7 +864,7 @@ QPushButton#AttachBtn {
     background-color: #ffffff;
     color: #111318;
     font-size: 13px;
-    border: 1.5px solid #111318;
+    border: 1px solid rgba(15, 23, 42, 0.22);
     border-radius: 8px;
     padding: 0px;
     outline: none;
@@ -872,7 +872,7 @@ QPushButton#AttachBtn {
 QPushButton#AttachBtn:hover {
     background-color: #111318;
     color: #ffffff;
-    border: 1.5px solid #111318;
+    border: 1px solid #111318;
 }
 QLabel#FileLabel {
     color: #2b313d;
@@ -903,7 +903,7 @@ QPushButton#TitleBtn:hover {
 QLabel#ModelSelectorLabel {
     color: #111318;
     font-size: 11px;
-    font-weight: bold;
+    
     letter-spacing: 0.5px;
 }
 QComboBox#ModelSelectorCombo {
@@ -998,7 +998,7 @@ QLabel#CardHeader {
     color: #111318;
     letter-spacing: 1.4px;
     font-size: 10px;
-    font-weight: bold;
+    
     text-transform: uppercase;
 }
 
@@ -1087,7 +1087,7 @@ QPushButton#HintCircleBtn {
     color: #111318;
     border: 1.5px solid #111318;
     border-radius: 8px;
-    font-weight: bold;
+    
     font-size: 9px;
     padding: 0px;
     outline: none;
@@ -1103,7 +1103,7 @@ QPushButton#GuideCircleBtn {
     border: 1.5px solid #111318;
     border-radius: 8px;
     font-size: 8px;
-    font-weight: bold;
+    
     letter-spacing: 0.5px;
     padding: 0px;
     outline: none;
@@ -1116,7 +1116,7 @@ QPushButton#GuideCircleBtn:hover {
 QPushButton#SaveSettingsButton {
     background-color: #111318;
     color: #ffffff;
-    font-weight: bold;
+    
     letter-spacing: 1px;
     border: none;
     border-radius: 8px;
@@ -1162,7 +1162,7 @@ QPushButton#RemoveFileBtn {
     background-color: transparent;
     color: #e53935;
     font-size: 11px;
-    font-weight: bold;
+    
     border: none;
     border-radius: 8px;
     padding: 0px;
@@ -1185,7 +1185,7 @@ QTextEdit#GuideContent {
 QPushButton#GuideCloseBtn {
     background-color: #111318;
     color: #ffffff;
-    font-weight: bold;
+    
     border: none;
     border-radius: 6px;
     padding: 5px 14px;
@@ -1214,7 +1214,7 @@ QProgressBar#UpdateProgressBar {
     text-align: center;
     color: #111318;
     font-size: 10px;
-    font-weight: bold;
+    
     height: 20px;
 }
 QProgressBar#UpdateProgressBar::chunk {
@@ -1225,7 +1225,7 @@ QProgressBar#UpdateProgressBar::chunk {
 QPushButton#UpdateButton {
     background-color: #111318;
     color: #ffffff;
-    font-weight: bold;
+    
     border: none;
     border-radius: 6px;
     padding: 5px 14px;
@@ -1244,7 +1244,7 @@ QPushButton#UpdateNotificationBadge {
     border-radius: 6px;
     padding: 2px 7px;
     font-size: 10px;
-    font-weight: bold;
+    
     height: 20px;
 }
 QPushButton#UpdateNotificationBadge:hover {
@@ -1258,7 +1258,7 @@ QLabel#AuthorLabel {
     letter-spacing: 1px;
     padding-bottom: 2px;
     text-transform: uppercase;
-    font-weight: bold;
+    
 }
 
 QFrame#BentoCard {
@@ -1284,7 +1284,7 @@ QFrame#BentoCell:hover {
 QLabel#BentoSectionTitle {
     color: #111318;
     font-size: 9px;
-    font-weight: bold;
+    
     letter-spacing: 1.4px;
     text-transform: uppercase;
 }
@@ -1292,7 +1292,7 @@ QLabel#BentoSectionTitle {
 QLabel#BentoCellTitle {
     color: #111318;
     font-size: 11px;
-    font-weight: bold;
+    
 }
 
 QLabel#BentoCellDesc {
@@ -1303,7 +1303,7 @@ QLabel#BentoCellDesc {
 QLabel#BentoStatusActive {
     color: #111318;
     font-size: 9px;
-    font-weight: bold;
+    
     letter-spacing: 0.6px;
 }
 
@@ -1316,7 +1316,7 @@ QLabel#BentoStatusIdle {
 QPushButton#BentoActionBtn {
     background-color: #111318;
     color: #ffffff;
-    font-weight: bold;
+    
     border: none;
     border-radius: 6px;
     padding: 4px 10px;
@@ -1327,8 +1327,8 @@ QPushButton#BentoActionBtn:hover {
     background-color: #2b313d;
 }
 QWidget#TitleBtnsWidget {
-    background-color: rgba(255, 255, 255, 0.75);
-    border: 1px solid rgba(17, 19, 24, 0.15);
+    background-color: rgba(255, 255, 255, 0.82);
+    border: 1px solid rgba(15, 23, 42, 0.10);
     border-radius: 9px;
     padding: 1px 4px;
 }
@@ -1349,6 +1349,68 @@ QPushButton#ExitBtn {
 }
 QPushButton#ExitBtn:hover {
     background-color: rgba(229, 57, 53, 0.18);
+}
+QFrame#StudioUserRail {
+    background-color: #111318;
+    border-radius: 1px;
+}
+QLabel#StudioUserHeader {
+    color: #1e2430;
+    letter-spacing: 1.2px;
+}
+QLabel#StudioUserBody {
+    color: #111318;
+    line-height: 1.45;
+}
+QLabel#StudioFilePill {
+    color: #1e2430;
+}
+
+QLabel#StudioAkiraBody {
+    color: #111318;
+    line-height: 1.45;
+}
+
+QFrame#StudioFloatingDock {
+    background: transparent;
+    border: none;
+}
+QTextEdit#StudioInputEdit {
+    background: transparent;
+    color: #111318;
+    border: none;
+    padding: 0px;
+}
+QPushButton#StudioDockBtn {
+    background-color: transparent;
+    border: none;
+    border-radius: 7px;
+}
+QPushButton#StudioDockBtn:hover {
+    background-color: rgba(15, 23, 42, 0.07);
+}
+QLabel#StudioFileNameLabel {
+    color: #111318;
+}
+QPushButton#StudioFileRemoveBtn {
+    background-color: transparent;
+    color: #e53935;
+    font-size: 11px;
+    border: none;
+    border-radius: 8px;
+    padding: 0px;
+}
+QPushButton#StudioFileRemoveBtn:hover {
+    background-color: rgba(229, 57, 53, 0.15);
+    color: #c62828;
+}
+QPushButton#StudioHistoryBtn {
+    background: transparent;
+    border: none;
+    border-radius: 5px;
+}
+QPushButton#StudioHistoryBtn:hover {
+    background-color: rgba(17, 19, 24, 0.12);
 }
 
 """

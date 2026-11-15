@@ -645,13 +645,13 @@ class AkiraMicWidget(QFrame):
         painter.setPen(Qt.PenStyle.NoPen)
 
         if self.current_theme == "light":
-            mic_shadow = QRadialGradient(cx + 4.0, cy + 8.0, 112.0)
-            mic_shadow.setColorAt(0.0, QColor(45, 58, 82, int(130 * T)))
-            mic_shadow.setColorAt(0.40, QColor(65, 80, 105, int(90 * T)))
-            mic_shadow.setColorAt(0.72, QColor(90, 105, 130, int(45 * T)))
-            mic_shadow.setColorAt(1.0, QColor(120, 135, 160, 0))
-            painter.setBrush(QBrush(mic_shadow))
-            painter.drawEllipse(QPointF(cx + 4.0, cy + 8.0), 112.0, 112.0)
+            mic_glow = QRadialGradient(cx, cy, 112.0)
+            mic_glow.setColorAt(0.0, QColor(255, 255, 255, int(115 * T)))
+            mic_glow.setColorAt(0.45, QColor(255, 255, 255, int(75 * T)))
+            mic_glow.setColorAt(0.75, QColor(250, 252, 255, int(30 * T)))
+            mic_glow.setColorAt(1.0, QColor(255, 255, 255, 0))
+            painter.setBrush(QBrush(mic_glow))
+            painter.drawEllipse(QPointF(cx, cy), 112.0, 112.0)
 
         for p in self.particles:
             if T < p['delay']:
@@ -776,12 +776,12 @@ class AkiraMiniMicWidget(AkiraMicWidget):
         painter.setPen(Qt.PenStyle.NoPen)
 
         if self.current_theme == "light":
-            mini_shadow = QRadialGradient(cx + 1.0, cy + 1.5, 18.0)
-            mini_shadow.setColorAt(0.0, QColor(45, 58, 82, int(130 * T)))
-            mini_shadow.setColorAt(0.50, QColor(70, 85, 110, int(70 * T)))
-            mini_shadow.setColorAt(1.0, QColor(120, 135, 160, 0))
-            painter.setBrush(QBrush(mini_shadow))
-            painter.drawEllipse(QPointF(cx + 1.0, cy + 1.5), 18.0, 18.0)
+            mini_glow = QRadialGradient(cx, cy, 18.0)
+            mini_glow.setColorAt(0.0, QColor(255, 255, 255, int(115 * T)))
+            mini_glow.setColorAt(0.55, QColor(255, 255, 255, int(55 * T)))
+            mini_glow.setColorAt(1.0, QColor(255, 255, 255, 0))
+            painter.setBrush(QBrush(mini_glow))
+            painter.drawEllipse(QPointF(cx, cy), 18.0, 18.0)
 
         p_val = math.sin(self.pulse * (2.5 if self.is_speaking else 1.0)) * (0.8 if self.is_speaking else 0.4)
         active_impulse = self.beat_impulse
@@ -2220,17 +2220,23 @@ class MainWindow(QWidget):
                 self.speak_reply(voice_text, is_whisper=False)
 
     def init_ui(self):
-        font_path = get_resource_path("assets", "fonts", "SSFBreakthrough-Regular.ttf")
-        font_id = QFontDatabase.addApplicationFont(font_path)
-
-        if font_id != -1:
-            families = QFontDatabase.applicationFontFamilies(font_id)
+        ui_font_path = get_resource_path("assets", "fonts", "Arian_normal.otf")
+        ui_font_id = QFontDatabase.addApplicationFont(ui_font_path)
+        if ui_font_id != -1:
+            families = QFontDatabase.applicationFontFamilies(ui_font_id)
             self.font_family = families[0] if families else "Arial"
-            self.custom_font = QFont(self.font_family, 11)
         else:
             self.font_family = "Arial"
-            self.custom_font = QFont(self.font_family, 11)
 
+        chat_font_path = get_resource_path("assets", "fonts", "J Audio Cassette.otf")
+        chat_font_id = QFontDatabase.addApplicationFont(chat_font_path)
+        if chat_font_id != -1:
+            chat_families = QFontDatabase.applicationFontFamilies(chat_font_id)
+            self.chat_font_family = chat_families[0] if chat_families else self.font_family
+        else:
+            self.chat_font_family = self.font_family
+
+        self.custom_font = QFont(self.font_family, 11)
         self.setFont(self.custom_font)
 
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
@@ -2363,9 +2369,9 @@ class MainWindow(QWidget):
         container_layout.addWidget(self.right_area, 0, Qt.AlignmentFlag.AlignRight)
 
         self.chat_history = self.right_panel.chat_history
-        self.chat_history.setFont(QFont(self.font_family, 12))
+        self.chat_history.setFont(QFont(self.chat_font_family, 12))
         self.input_field = self.right_panel.input_field
-        self.input_field.setFont(QFont(self.font_family, 12))
+        self.input_field.setFont(QFont(self.chat_font_family, 12))
         self.send_button = self.right_panel.send_button
         self.send_button.setFont(QFont(self.font_family, 12))
 
@@ -2399,6 +2405,7 @@ class MainWindow(QWidget):
         self.bg_frame.set_mic_widget(self.left_panel)
 
         self.mini_window = MiniWindow(theme=self.current_theme, font_family=self.font_family)
+        self.mini_window.input_field.setFont(QFont(self.chat_font_family, 12))
         self.mini_window.message_sent.connect(self.send_mini_message)
         self.mini_window.restore_requested.connect(self.restore_from_mini)
         self.mini_window.exit_requested.connect(self.exit_app)
@@ -2919,20 +2926,19 @@ class MainWindow(QWidget):
         self.chat_history.setTextCursor(cursor)
         self.chat_history.ensureCursorVisible()
 
-        import re
-        tokens = re.findall(r'\S+|\s+', text)
-        self._typewriter_remaining = tokens
+        chars = list(text)
+        self._typewriter_remaining = chars
 
-        total = len(tokens)
-        if total > 100:
+        total = len(chars)
+        if total > 450:
+            interval = 12
+            chunk_size = 4
+        elif total > 200:
             interval = 14
-            chunk_size = 2
-        elif total > 50:
-            interval = 18
-            chunk_size = 1
+            chunk_size = 3
         else:
-            interval = 26
-            chunk_size = 1
+            interval = 16
+            chunk_size = 2
 
         self._typewriter_chunk_size = chunk_size
         self._typewriter_timer = QTimer(self)

@@ -234,7 +234,7 @@ class BentoCard(QFrame):
 
             self.header_lbl = QLabel(title_text, self.header_widget)
             self.header_lbl.setObjectName("BentoSectionTitle")
-            self.header_lbl.setFont(QFont(self.font_family, 9, QFont.Weight.Bold))
+            self.header_lbl.setFont(QFont(self.font_family, 9))
             self.header_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
             h_layout.addWidget(self.header_lbl)
             h_layout.addStretch()
@@ -388,7 +388,7 @@ class ApiGuideDialog(QDialog):
         header_row.setContentsMargins(0, 0, 0, 0)
 
         title_lbl = QLabel(title)
-        title_lbl.setFont(QFont(self.font_family, 12, QFont.Weight.Bold))
+        title_lbl.setFont(QFont(self.font_family, 12))
         title_color = "#111318" if self.current_theme == "light" else "#ded7c4"
         title_lbl.setStyleSheet(f"color: {title_color}; letter-spacing: 1px; text-transform: uppercase;")
         header_row.addWidget(title_lbl)
@@ -452,7 +452,7 @@ class ApiGuideDialog(QDialog):
 
         ok_btn = QPushButton("ПОНЯТНО")
         ok_btn.setObjectName("GuideCloseBtn")
-        ok_btn.setFont(QFont(self.font_family, 10, QFont.Weight.Bold))
+        ok_btn.setFont(QFont(self.font_family, 10))
         ok_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         if self.current_theme == "light":
             ok_btn.setStyleSheet("""
@@ -734,7 +734,7 @@ class SettingsFrame(QFrame):
         self.yandex_iot_token = ""
         self._is_loading = True
 
-        font_path = get_resource_path("assets", "fonts", "SSFBreakthrough-Regular.ttf")
+        font_path = get_resource_path("assets", "fonts", "Arian_normal.otf")
         font_id = QFontDatabase.addApplicationFont(font_path)
         if font_id != -1:
             self.font_family = QFontDatabase.applicationFontFamilies(font_id)[0]
@@ -759,7 +759,7 @@ class SettingsFrame(QFrame):
     def _create_hint_button(self, hint_key):
         btn = QPushButton("?")
         btn.setObjectName("HintCircleBtn")
-        btn.setFont(QFont(self.font_family, 8, QFont.Weight.Bold))
+        btn.setFont(QFont(self.font_family, 8, ))
         btn.setFixedSize(16, 16)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.clicked.connect(lambda: self.speak_requested.emit(SPEECH_HINTS[hint_key]))
@@ -839,12 +839,12 @@ class SettingsFrame(QFrame):
 
         title = QLabel("ПАРАМЕТРЫ СИСТЕМЫ")
         title.setObjectName("SettingsMainTitle")
-        title.setFont(QFont(self.font_family, 9, QFont.Weight.Bold))
+        title.setFont(QFont(self.font_family, 9, ))
         header_layout.addWidget(title)
 
         self.status_label = QLabel("")
         self.status_label.setObjectName("StatusLabel")
-        self.status_label.setFont(QFont(self.font_family, 8, QFont.Weight.Bold))
+        self.status_label.setFont(QFont(self.font_family, 8, ))
         header_layout.addWidget(self.status_label)
 
         header_layout.addStretch()
@@ -869,7 +869,7 @@ class SettingsFrame(QFrame):
         self.btn_capabilities = QPushButton("СПРАВОЧНИК И ВОЗМОЖНОСТИ АКИРЫ")
         self.btn_capabilities.setObjectName("GuideCloseBtn")
         self.btn_capabilities.setFixedHeight(28)
-        self.btn_capabilities.setFont(QFont(self.font_family, 9, QFont.Weight.Bold))
+        self.btn_capabilities.setFont(QFont(self.font_family, 9, ))
         self.btn_capabilities.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_capabilities.clicked.connect(self._show_akira_capabilities)
         scroll_layout.addWidget(self.btn_capabilities)
@@ -1010,7 +1010,7 @@ class SettingsFrame(QFrame):
         self.btn_preview_alarm.setObjectName("BentoSecondaryBtn")
         self.btn_preview_alarm.setFixedSize(46, 22)
         self.btn_preview_alarm.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_preview_alarm.setFont(QFont(self.font_family, 8, QFont.Weight.Bold))
+        self.btn_preview_alarm.setFont(QFont(self.font_family, 8, ))
         self.btn_preview_alarm.clicked.connect(self._toggle_preview_alarm)
         row_alarm_l.addWidget(self.btn_preview_alarm)
 
@@ -1018,13 +1018,13 @@ class SettingsFrame(QFrame):
         self.btn_choose_custom_alarm.setObjectName("BentoSecondaryBtn")
         self.btn_choose_custom_alarm.setFixedSize(48, 22)
         self.btn_choose_custom_alarm.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_choose_custom_alarm.setFont(QFont(self.font_family, 8, QFont.Weight.Bold))
+        self.btn_choose_custom_alarm.setFont(QFont(self.font_family, 8, ))
         self.btn_choose_custom_alarm.clicked.connect(self._choose_custom_alarm_file)
         self.btn_choose_custom_alarm.hide()
         row_alarm_l.addWidget(self.btn_choose_custom_alarm)
 
         self.lbl_alarm_status = QLabel("", row_alarm)
-        self.lbl_alarm_status.setFont(QFont(self.font_family, 8, QFont.Weight.Bold))
+        self.lbl_alarm_status.setFont(QFont(self.font_family, 8, ))
         self.lbl_alarm_status.setFixedWidth(96)
         self.lbl_alarm_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_alarm_status.hide()
@@ -1071,7 +1071,7 @@ class SettingsFrame(QFrame):
         cell_work_l.setSpacing(4)
         t_work = QLabel("РАБОТА")
         t_work.setObjectName("BentoCellTitle")
-        t_work.setFont(QFont(self.font_family, 10, QFont.Weight.Bold))
+        t_work.setFont(QFont(self.font_family, 10, ))
         cell_work_l.addWidget(t_work)
         self.lbl_work_status = QLabel("не настроен")
         self.lbl_work_status.setObjectName("BentoStatusIdle")
@@ -1090,7 +1090,7 @@ class SettingsFrame(QFrame):
         cell_rest_l.setSpacing(4)
         t_rest = QLabel("ОТДЫХ")
         t_rest.setObjectName("BentoCellTitle")
-        t_rest.setFont(QFont(self.font_family, 10, QFont.Weight.Bold))
+        t_rest.setFont(QFont(self.font_family, 10, ))
         cell_rest_l.addWidget(t_rest)
         self.lbl_rest_status = QLabel("не настроен")
         self.lbl_rest_status.setObjectName("BentoStatusIdle")
@@ -1116,7 +1116,7 @@ class SettingsFrame(QFrame):
         row_v_head = QHBoxLayout()
         lbl_v_id = QLabel("VOICE ID")
         lbl_v_id.setObjectName("BentoCellTitle")
-        lbl_v_id.setFont(QFont(self.font_family, 10, QFont.Weight.Bold))
+        lbl_v_id.setFont(QFont(self.font_family, 10, ))
         row_v_head.addWidget(lbl_v_id)
         row_v_head.addStretch()
         row_v_head.addWidget(self._create_hint_button("voice_id"))
@@ -1139,7 +1139,7 @@ class SettingsFrame(QFrame):
         self.btn_add_friend.setObjectName("BentoSecondaryBtn")
         self.btn_add_friend.setFixedHeight(22)
         self.btn_add_friend.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_add_friend.setFont(QFont(self.font_family, 8, QFont.Weight.Bold))
+        self.btn_add_friend.setFont(QFont(self.font_family, 8, ))
         self.btn_add_friend.clicked.connect(self._open_enroll_friend)
         row_v_btns.addWidget(self.btn_add_friend, 1)
         cell_voice_l.addLayout(row_v_btns)
@@ -1169,7 +1169,7 @@ class SettingsFrame(QFrame):
         self.btn_manage_faces = QPushButton("ФОТО ЛИЦА (0)", cell_vis)
         self.btn_manage_faces.setObjectName("BentoActionBtn")
         self.btn_manage_faces.setFixedHeight(22)
-        self.btn_manage_faces.setFont(QFont(self.font_family, 8, QFont.Weight.Bold))
+        self.btn_manage_faces.setFont(QFont(self.font_family, 8, ))
         self.btn_manage_faces.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_manage_faces.clicked.connect(self._open_face_manager)
         row_face_btns.addWidget(self.btn_manage_faces, 1)
@@ -1177,7 +1177,7 @@ class SettingsFrame(QFrame):
         self.btn_add_face = QPushButton("+ СНИМОК", cell_vis)
         self.btn_add_face.setObjectName("BentoSecondaryBtn")
         self.btn_add_face.setFixedHeight(22)
-        self.btn_add_face.setFont(QFont(self.font_family, 8, QFont.Weight.Bold))
+        self.btn_add_face.setFont(QFont(self.font_family, 8, ))
         self.btn_add_face.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_add_face.clicked.connect(self._add_owner_face)
         row_face_btns.addWidget(self.btn_add_face, 1)
@@ -1220,7 +1220,7 @@ class SettingsFrame(QFrame):
             info_col.setSpacing(2)
             t = QLabel(title)
             t.setObjectName("BentoCellTitle")
-            t.setFont(QFont(self.font_family, 9, QFont.Weight.Bold))
+            t.setFont(QFont(self.font_family, 9, ))
             info_col.addWidget(t)
             info_col.addWidget(status_lbl)
             l.addLayout(info_col, 1)
@@ -1301,7 +1301,7 @@ class SettingsFrame(QFrame):
         self.btn_update.setObjectName("UpdateButton")
         self.btn_update.setFixedHeight(22)
         self.btn_update.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_update.setFont(QFont(self.font_family, 8, QFont.Weight.Bold))
+        self.btn_update.setFont(QFont(self.font_family, 8, ))
         self.btn_update.clicked.connect(self._start_download_update)
         self.btn_update.hide()
         row_upd.addWidget(self.btn_update)
@@ -1355,7 +1355,7 @@ class SettingsFrame(QFrame):
         self.update_download_url = download_url
         self.card_upd.set_expanded(True)
         self.lbl_update_status.setText(f"Доступно обновление: v{new_ver}")
-        self.lbl_update_status.setStyleSheet(f"color: {active_col}; font-weight: bold;")
+        self.lbl_update_status.setStyleSheet(f"color: {active_col}")
         self.btn_update.setText(f"ОБНОВИТЬ v{new_ver}")
         self.btn_update.show()
 
@@ -1424,7 +1424,7 @@ class SettingsFrame(QFrame):
                     pass
             active_col, _ = self._get_status_colors()
             self.status_label.setText(f"✓ ФОТО: +{count}")
-            self.status_label.setStyleSheet(f"color: {active_col}; font-size: 8px; font-weight: bold;")
+            self.status_label.setStyleSheet(f"color: {active_col}; font-size: 8px")
             self._update_face_count_ui()
             self.auto_save()
             QTimer.singleShot(2000, lambda: self.status_label.setText(""))
@@ -1533,7 +1533,7 @@ class SettingsFrame(QFrame):
             self.preview_sound.play()
         else:
             self.status_label.setText("✕ НЕТ ЗВУКА")
-            self.status_label.setStyleSheet("color: #ff5252; font-size: 8px; font-weight: bold;")
+            self.status_label.setStyleSheet("color: #ff5252; font-size: 8px")
             QTimer.singleShot(2000, lambda: self.status_label.setText(""))
 
     def _format_items_count(self, items: list) -> str:
@@ -1550,10 +1550,10 @@ class SettingsFrame(QFrame):
     def _update_modes_status_ui(self):
         active_col, idle_col = self._get_status_colors()
         self.lbl_work_status.setText(self._format_items_count(self.work_apps))
-        self.lbl_work_status.setStyleSheet(f"color: {active_col if self.work_apps else idle_col}; font-weight: bold;")
+        self.lbl_work_status.setStyleSheet(f"color: {active_col if self.work_apps else idle_col}")
 
         self.lbl_rest_status.setText(self._format_items_count(self.rest_apps))
-        self.lbl_rest_status.setStyleSheet(f"color: {active_col if self.rest_apps else idle_col}; font-weight: bold;")
+        self.lbl_rest_status.setStyleSheet(f"color: {active_col if self.rest_apps else idle_col}")
 
     def _open_work_mode_setup(self):
         dialog = ModeConfigDialog(
@@ -1618,7 +1618,7 @@ class SettingsFrame(QFrame):
         if self.routerai_key:
             masked = f"{self.routerai_key[:6]}...{self.routerai_key[-4:]}" if len(self.routerai_key) > 12 else "АКТИВЕН"
             self.lbl_routerai_status.setText(f"ПОДКЛЮЧЕН ✓ ({masked})")
-            self.lbl_routerai_status.setStyleSheet(f"color: {active_col}; font-weight: bold;")
+            self.lbl_routerai_status.setStyleSheet(f"color: {active_col}")
             self.btn_routerai_auth.setText("ИЗМЕНИТЬ")
         else:
             self.lbl_routerai_status.setText("НЕ ПОДКЛЮЧЕН (Яндекс / VK)")
@@ -1644,7 +1644,7 @@ class SettingsFrame(QFrame):
         active_col, idle_col = self._get_status_colors()
         if self.gigachat_key:
             self.lbl_gigachat_status.setText("АКТИВЕН ✓")
-            self.lbl_gigachat_status.setStyleSheet(f"color: {active_col}; font-weight: bold;")
+            self.lbl_gigachat_status.setStyleSheet(f"color: {active_col}")
             self.btn_gigachat_auth.setText("ИЗМЕНИТЬ")
         else:
             self.lbl_gigachat_status.setText("НЕ ПРИВЯЗАН")
@@ -1669,7 +1669,7 @@ class SettingsFrame(QFrame):
         active_col, idle_col = self._get_status_colors()
         if self.yandex_music_token:
             self.lbl_ya_status.setText("ПРИВЯЗАНА ✓")
-            self.lbl_ya_status.setStyleSheet(f"color: {active_col}; font-weight: bold;")
+            self.lbl_ya_status.setStyleSheet(f"color: {active_col}")
             self.btn_ya_auth.setText("ИЗМЕНИТЬ")
         else:
             self.lbl_ya_status.setText("НЕ ПРИВЯЗАНА")
@@ -1694,7 +1694,7 @@ class SettingsFrame(QFrame):
         active_col, idle_col = self._get_status_colors()
         if self.yandex_iot_token:
             self.lbl_ya_iot_status.setText("ПРИВЯЗАН ✓")
-            self.lbl_ya_iot_status.setStyleSheet(f"color: {active_col}; font-weight: bold;")
+            self.lbl_ya_iot_status.setStyleSheet(f"color: {active_col}")
             self.btn_ya_iot_auth.setText("ИЗМЕНИТЬ")
         else:
             self.lbl_ya_iot_status.setText("НЕ ПРИВЯЗАН")
@@ -1718,7 +1718,7 @@ class SettingsFrame(QFrame):
         active_col, idle_col = self._get_status_colors()
         if self.spotify_manager.is_authenticated():
             self.lbl_spotify_status.setText("ПРИВЯЗАН ✓")
-            self.lbl_spotify_status.setStyleSheet(f"color: {active_col}; font-weight: bold;")
+            self.lbl_spotify_status.setStyleSheet(f"color: {active_col}")
             self.btn_spotify_auth.setText("ИЗМЕНИТЬ")
         else:
             self.lbl_spotify_status.setText("НЕ ПРИВЯЗАН")
@@ -1731,7 +1731,7 @@ class SettingsFrame(QFrame):
             self.lbl_update_status.setText("Версия актуальна")
             self.lbl_update_status.setStyleSheet(f"color: {idle_col};")
         else:
-            self.lbl_update_status.setStyleSheet(f"color: {active_col}; font-weight: bold;")
+            self.lbl_update_status.setStyleSheet(f"color: {active_col}")
 
     def _update_all_statuses_ui(self):
         self._update_modes_status_ui()
@@ -1749,7 +1749,6 @@ class SettingsFrame(QFrame):
                 QPushButton#BentoActionBtn {
                     background-color: #111318;
                     color: #ffffff;
-                    font-weight: bold;
                     border: none;
                     border-radius: 6px;
                     padding: 4px 10px;
@@ -1765,7 +1764,6 @@ class SettingsFrame(QFrame):
                 QPushButton#BentoSecondaryBtn {
                     background-color: #ffffff;
                     color: #111318;
-                    font-weight: bold;
                     border: 1.5px solid #111318;
                     border-radius: 6px;
                     padding: 2px 4px;
@@ -1799,7 +1797,6 @@ class SettingsFrame(QFrame):
                 QPushButton#BentoActionBtn {
                     background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ede8db, stop:1 #d6cebe);
                     color: #121008;
-                    font-weight: bold;
                     border: none;
                     border-radius: 6px;
                     padding: 4px 10px;
@@ -1815,7 +1812,6 @@ class SettingsFrame(QFrame):
                 QPushButton#BentoSecondaryBtn {
                     background-color: #070705;
                     color: #ded7c4;
-                    font-weight: bold;
                     border: 1px solid #78735f;
                     border-radius: 6px;
                     padding: 2px 4px;
@@ -2024,7 +2020,7 @@ class SettingsFrame(QFrame):
 
         except Exception as e:
             self.status_label.setText("✕ ОШИБКА")
-            self.status_label.setStyleSheet("color: #ff5252; font-size: 8px; font-weight: bold;")
+            self.status_label.setStyleSheet("color: #ff5252; font-size: 8px")
             print(f"[Settings Save Error]: {e}")
 
     def _on_border_anim_step(self, val):
