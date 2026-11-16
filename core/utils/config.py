@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import hashlib
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.normpath(os.path.join(BASE_DIR, "..", ".."))
@@ -14,8 +15,43 @@ else:
 
 CONFIG_DIR = os.path.join(USER_DATA_DIR, "configs")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
+CREATOR_KEY_FILE = os.path.join(CONFIG_DIR, "creator.key")
+
+CREATOR_KEY_HASHES = {
+    "656f5b924d4dbffcdfeac93e1dae4e989fea2fcff15c4181416592998d47bc69",
+    "3b5a1b3ddbf829a877995be989a3fcbf376f4e150ffae3ca04ba2e9dfa3e4309"
+}
+
+
+def is_creator_key_valid() -> bool:
+    """
+    Проверяет наличие и криптографическую валидность ключа Создателя.
+    Ищет creator.key в personal_data/configs/ или personal_data/.
+    """
+    candidates = [
+        CREATOR_KEY_FILE,
+        os.path.join(USER_DATA_DIR, "creator.key"),
+        os.path.join(CONFIG_DIR, "developer.key"),
+        os.path.join(USER_DATA_DIR, "developer.key"),
+        os.path.join(ROOT_DIR, "personal_data", "configs", "creator.key"),
+        os.path.join(ROOT_DIR, "personal_data", "creator.key"),
+    ]
+    for p in candidates:
+        if p and os.path.exists(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    content = f.read().strip()
+                if not content:
+                    continue
+                computed_hash = hashlib.sha256(content.encode("utf-8")).hexdigest().lower()
+                if computed_hash in CREATOR_KEY_HASHES or content.lower() in CREATOR_KEY_HASHES:
+                    return True
+            except Exception:
+                pass
+    return False
 
 DEFAULT_CONFIG = {
+    "is_developer": False,
     "user_name": "друг",
     "assistant_name": "Акира",
     "user_gender": "male",
@@ -24,7 +60,6 @@ DEFAULT_CONFIG = {
     "autostart": False,
     "first_run": True,
     "is_configured": False,
-    "ai_tier": "auto",
     "music_service": "yandex",
     "use_spotify": False,
     "vpn_service": "none",
@@ -100,28 +135,33 @@ def _deep_merge(default: dict, custom: dict) -> dict:
 
 def load_config() -> dict:
     os.makedirs(CONFIG_DIR, exist_ok=True)
+    cfg = None
 
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
-                return _deep_merge(DEFAULT_CONFIG, loaded)
+                cfg = _deep_merge(DEFAULT_CONFIG, loaded)
         except Exception:
             pass
 
-    template_file = get_resource_path("personal_data", "configs", "config.template.json")
-    if os.path.exists(template_file):
-        try:
-            with open(template_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                final_cfg = _deep_merge(DEFAULT_CONFIG, data)
-                save_config(final_cfg)
-                return final_cfg
-        except Exception:
-            pass
+    if cfg is None:
+        template_file = get_resource_path("personal_data", "configs", "config.template.json")
+        if os.path.exists(template_file):
+            try:
+                with open(template_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    cfg = _deep_merge(DEFAULT_CONFIG, data)
+                    save_config(cfg)
+            except Exception:
+                pass
 
-    save_config(DEFAULT_CONFIG)
-    return DEFAULT_CONFIG.copy()
+    if cfg is None:
+        cfg = DEFAULT_CONFIG.copy()
+        save_config(cfg)
+
+    cfg["is_developer"] = is_creator_key_valid()
+    return cfg
 
 
 def save_config(config_data: dict):

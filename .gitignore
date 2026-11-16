@@ -65,6 +65,9 @@ server_commands
 *.key
 *.pem
 *.pub
+personal_data/configs/*.key
+personal_data/configs/creator.key
+personal_data/creator.key
 
 # AI agents
 .cursorrules

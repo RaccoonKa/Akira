@@ -1,5 +1,7 @@
 import os
 import sys
+import re
+import html
 import math
 import winreg
 import shutil
@@ -358,7 +360,7 @@ class BentoCard(QFrame):
 
 
 class ApiGuideDialog(QDialog):
-    def __init__(self, title, text, font_family, parent=None, width=480, height=390, theme: str = None):
+    def __init__(self, title, text, font_family, parent=None, width=520, height=420, theme: str = None):
         super().__init__(parent)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -375,54 +377,76 @@ class ApiGuideDialog(QDialog):
         else:
             self.current_theme = "dark"
 
+        is_light = self.current_theme == "light"
+
         screen = QGuiApplication.primaryScreen().availableGeometry()
         x = screen.x() + (screen.width() - width) // 2
         y = screen.y() + (screen.height() - height) // 2
         self.move(x, y)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 16, 18, 16)
-        layout.setSpacing(10)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
 
+        # --- Шапка окна ---
         header_row = QHBoxLayout()
-        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setContentsMargins(2, 0, 0, 0)
+        header_row.setSpacing(10)
 
         title_lbl = QLabel(title)
-        title_lbl.setFont(QFont(self.font_family, 12))
-        title_color = "#111318" if self.current_theme == "light" else "#ded7c4"
-        title_lbl.setStyleSheet(f"color: {title_color}; letter-spacing: 1px; text-transform: uppercase;")
-        header_row.addWidget(title_lbl)
-        header_row.addStretch()
+        title_lbl.setFont(QFont(self.font_family, 11))
+        title_lbl.setWordWrap(True)
+        title_color = "#111318" if is_light else "#ded7c4"
+        title_lbl.setStyleSheet(
+            f"color: {title_color}; letter-spacing: 0.8px; text-transform: uppercase; background: transparent;"
+        )
+        header_row.addWidget(title_lbl, 1)
 
         close_btn = QPushButton("✕")
         close_btn.setObjectName("CloseBtn")
-        close_btn.setFixedSize(24, 24)
+        close_btn.setFixedSize(26, 26)
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        close_btn.clicked.connect(self.accept)
-        header_row.addWidget(close_btn)
-
-        layout.addLayout(header_row)
-
-        guide_card = QFrame()
-        if self.current_theme == "light":
-            guide_card.setStyleSheet("""
-                QFrame {
-                    background-color: rgba(255, 255, 255, 0.85);
-                    border: 1.5px solid rgba(17, 19, 24, 0.22);
-                    border-radius: 8px;
+        if is_light:
+            close_btn.setStyleSheet("""
+                QPushButton#CloseBtn {
+                    background-color: transparent;
+                    color: #111318;
+                    border: none;
+                    border-radius: 6px;
+                    font-size: 13px;
+                }
+                QPushButton#CloseBtn:hover {
+                    background-color: #e53935;
+                    color: #ffffff;
                 }
             """)
         else:
-            guide_card.setStyleSheet("""
-                QFrame {
-                    background-color: rgba(14, 12, 7, 0.70);
-                    border: 1px solid #78735f;
-                    border-radius: 8px;
+            close_btn.setStyleSheet("""
+                QPushButton#CloseBtn {
+                    background-color: transparent;
+                    color: #ded7c4;
+                    border: none;
+                    border-radius: 6px;
+                    font-size: 13px;
+                }
+                QPushButton#CloseBtn:hover {
+                    background-color: #ff5252;
+                    color: #ffffff;
                 }
             """)
-        card_layout = QVBoxLayout(guide_card)
-        card_layout.setContentsMargins(4, 4, 4, 4)
+        close_btn.clicked.connect(self.accept)
+        header_row.addWidget(close_btn, 0, Qt.AlignmentFlag.AlignTop)
 
+        layout.addLayout(header_row)
+
+        # --- Тонкий разделитель под заголовком ---
+        divider = QFrame()
+        divider.setFixedHeight(1)
+        div_col = "rgba(17, 19, 24, 0.14)" if is_light else "rgba(120, 115, 95, 0.35)"
+        divider.setStyleSheet(f"background-color: {div_col}; border: none;")
+        layout.addWidget(divider)
+
+        # --- Прокручиваемая область с Bento-карточками ---
         self.scroll = SmoothScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -431,46 +455,268 @@ class ApiGuideDialog(QDialog):
         scroll_widget = QWidget()
         scroll_widget.setStyleSheet("background: transparent;")
         scroll_layout = QVBoxLayout(scroll_widget)
-        scroll_layout.setContentsMargins(8, 8, 10, 8)
-        scroll_layout.setSpacing(0)
+        scroll_layout.setContentsMargins(0, 2, 6, 2)
+        scroll_layout.setSpacing(8)
+        scroll_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        self.content_lbl = QLabel(text)
-        self.content_lbl.setFont(QFont(self.font_family, 11))
-        self.content_lbl.setWordWrap(True)
-        self.content_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        content_color = "#111318" if self.current_theme == "light" else "#fffde7"
-        self.content_lbl.setStyleSheet(f"color: {content_color}; background: transparent; border: none; line-height: 1.5;")
-        scroll_layout.addWidget(self.content_lbl)
+        self._populate_structured_content(text, scroll_layout)
 
         self.scroll.setWidget(scroll_widget)
-        card_layout.addWidget(self.scroll)
+        layout.addWidget(self.scroll, 1)
 
-        layout.addWidget(guide_card, 1)
-
+        # --- Нижняя панель с кнопкой ---
         btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(0, 2, 0, 0)
         btn_row.addStretch()
 
         ok_btn = QPushButton("ПОНЯТНО")
         ok_btn.setObjectName("GuideCloseBtn")
         ok_btn.setFont(QFont(self.font_family, 10))
         ok_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        if self.current_theme == "light":
+        if is_light:
             ok_btn.setStyleSheet("""
                 QPushButton#GuideCloseBtn {
                     background-color: #111318;
                     color: #ffffff;
                     border: none;
-                    border-radius: 6px;
-                    padding: 5px 14px;
+                    border-radius: 7px;
+                    padding: 6px 18px;
+                    letter-spacing: 0.8px;
                 }
                 QPushButton#GuideCloseBtn:hover {
                     background-color: #2b313d;
+                }
+            """)
+        else:
+            ok_btn.setStyleSheet("""
+                QPushButton#GuideCloseBtn {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ede8db, stop:1 #d6cebe);
+                    color: #121008;
+                    border: none;
+                    border-radius: 7px;
+                    padding: 6px 18px;
+                    letter-spacing: 0.8px;
+                }
+                QPushButton#GuideCloseBtn:hover {
+                    background: #ffffff;
                 }
             """)
         ok_btn.clicked.connect(self.accept)
         btn_row.addWidget(ok_btn)
 
         layout.addLayout(btn_row)
+
+    def _format_inline_html(self, raw_text: str) -> str:
+        """Подсвечивает ссылки, адреса callback и названия кнопок в кавычках без жирного шрифта."""
+        is_light = self.current_theme == "light"
+        escaped = html.escape(raw_text)
+
+        url_bg = "rgba(17, 19, 24, 0.08)" if is_light else "rgba(222, 215, 196, 0.14)"
+        url_fg = "#0f172a" if is_light else "#f5efe0"
+        btn_bg = "rgba(17, 19, 24, 0.06)" if is_light else "rgba(222, 215, 196, 0.10)"
+        btn_fg = "#000000" if is_light else "#ffffff"
+
+        # 1. Подсветка URL и доменов
+        url_pattern = re.compile(r'(https?://[^\s)]+|(?:oauth|developers|developer)\.[a-z0-9.-]+(?:/[^\s)]*)?)')
+        escaped = url_pattern.sub(
+            rf'<span style="font-family: Consolas, monospace; background-color: {url_bg}; color: {url_fg};">\1</span>',
+            escaped
+        )
+
+        # 2. Подсветка названий кнопок и пунктов в одинарных кавычках
+        quote_pattern = re.compile(r"&#x27;([^&#]+?)&#x27;|'([^']+?)'")
+        def _repl_quote(m):
+            inner = m.group(1) or m.group(2)
+            return f'<span style="background-color: {btn_bg}; color: {btn_fg};">«{inner}»</span>'
+
+        escaped = quote_pattern.sub(_repl_quote, escaped)
+        return f'<div style="line-height: 145%;">{escaped}</div>'
+
+    def _create_step_card(self, step_num: str, body_text: str) -> QFrame:
+        is_light = self.current_theme == "light"
+        card = QFrame()
+        if is_light:
+            card.setStyleSheet("""
+                QFrame {
+                    background-color: rgba(255, 255, 255, 0.92);
+                    border: 1.2px solid rgba(17, 19, 24, 0.16);
+                    border-radius: 9px;
+                }
+            """)
+        else:
+            card.setStyleSheet("""
+                QFrame {
+                    background-color: rgba(16, 14, 9, 0.82);
+                    border: 1px solid rgba(120, 115, 95, 0.35);
+                    border-radius: 9px;
+                }
+            """)
+
+        row = QHBoxLayout(card)
+        row.setContentsMargins(11, 9, 12, 9)
+        row.setSpacing(10)
+
+        badge = QLabel(f"{int(step_num):02d}")
+        badge.setFont(QFont(self.font_family, 9))
+        badge.setFixedSize(24, 22)
+        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        if is_light:
+            badge.setStyleSheet("""
+                QLabel {
+                    background-color: #111318;
+                    color: #ffffff;
+                    border: none;
+                    border-radius: 6px;
+                }
+            """)
+        else:
+            badge.setStyleSheet("""
+                QLabel {
+                    background-color: rgba(222, 215, 196, 0.14);
+                    color: #ded7c4;
+                    border: 1px solid rgba(120, 115, 95, 0.55);
+                    border-radius: 6px;
+                }
+            """)
+        row.addWidget(badge, 0, Qt.AlignmentFlag.AlignTop)
+
+        lbl = QLabel()
+        lbl.setFont(QFont(self.font_family, 10))
+        lbl.setTextFormat(Qt.TextFormat.RichText)
+        lbl.setText(self._format_inline_html(body_text))
+        lbl.setWordWrap(True)
+        lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        text_col = "#111318" if is_light else "#fffde7"
+        lbl.setStyleSheet(f"color: {text_col}; background: transparent; border: none;")
+        row.addWidget(lbl, 1)
+
+        return card
+
+    def _create_section_card(self, sec_num: str, sec_title: str, bullets: list[str]) -> QFrame:
+        is_light = self.current_theme == "light"
+        card = QFrame()
+        if is_light:
+            card.setStyleSheet("""
+                QFrame {
+                    background-color: rgba(255, 255, 255, 0.92);
+                    border: 1.2px solid rgba(17, 19, 24, 0.16);
+                    border-radius: 9px;
+                }
+            """)
+        else:
+            card.setStyleSheet("""
+                QFrame {
+                    background-color: rgba(16, 14, 9, 0.82);
+                    border: 1px solid rgba(120, 115, 95, 0.35);
+                    border-radius: 9px;
+                }
+            """)
+
+        col = QVBoxLayout(card)
+        col.setContentsMargins(12, 10, 12, 10)
+        col.setSpacing(6)
+
+        head_row = QHBoxLayout()
+        head_row.setSpacing(8)
+
+        badge = QLabel(f"{int(sec_num):02d}")
+        badge.setFont(QFont(self.font_family, 9))
+        badge.setFixedSize(24, 20)
+        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        if is_light:
+            badge.setStyleSheet("background-color: #111318; color: #ffffff; border: none; border-radius: 5px;")
+        else:
+            badge.setStyleSheet(
+                "background-color: rgba(222, 215, 196, 0.14); color: #ded7c4; "
+                "border: 1px solid rgba(120, 115, 95, 0.55); border-radius: 5px;"
+            )
+        head_row.addWidget(badge)
+
+        title_lbl = QLabel(sec_title)
+        title_lbl.setFont(QFont(self.font_family, 10))
+        title_col = "#111318" if is_light else "#ded7c4"
+        title_lbl.setStyleSheet(f"color: {title_col}; letter-spacing: 0.6px; background: transparent; border: none;")
+        head_row.addWidget(title_lbl, 1)
+        col.addLayout(head_row)
+
+        text_col = "#111318" if is_light else "#fffde7"
+        dot_col = "rgba(17, 19, 24, 0.45)" if is_light else "rgba(222, 215, 196, 0.55)"
+
+        for b_text in bullets:
+            b_row = QHBoxLayout()
+            b_row.setContentsMargins(4, 0, 0, 0)
+            b_row.setSpacing(8)
+
+            dot = QLabel("•")
+            dot.setFont(QFont(self.font_family, 10))
+            dot.setFixedWidth(10)
+            dot.setStyleSheet(f"color: {dot_col}; background: transparent; border: none;")
+            b_row.addWidget(dot, 0, Qt.AlignmentFlag.AlignTop)
+
+            b_lbl = QLabel()
+            b_lbl.setFont(QFont(self.font_family, 10))
+            b_lbl.setTextFormat(Qt.TextFormat.RichText)
+            b_lbl.setText(self._format_inline_html(b_text))
+            b_lbl.setWordWrap(True)
+            b_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            b_lbl.setStyleSheet(f"color: {text_col}; background: transparent; border: none;")
+            b_row.addWidget(b_lbl, 1)
+
+            col.addLayout(b_row)
+
+        return card
+
+    def _populate_structured_content(self, text: str, parent_layout: QVBoxLayout):
+        is_light = self.current_theme == "light"
+        lines = [line.strip() for line in text.strip().splitlines() if line.strip()]
+
+        # Проверяем, является ли текст справочником с разделами ("1. ЗАГОЛОВОК:" + "— пункт")
+        has_bullets = any(line.startswith("—") or line.startswith("- ") for line in lines)
+        if has_bullets:
+            current_sec = None
+            for line in lines:
+                sec_match = re.match(r'^(\d+)\.\s+(.+?):?$', line)
+                if sec_match:
+                    if current_sec:
+                        parent_layout.addWidget(self._create_section_card(*current_sec))
+                    current_sec = (sec_match.group(1), sec_match.group(2), [])
+                elif (line.startswith("—") or line.startswith("- ")) and current_sec:
+                    clean_item = re.sub(r'^[—-]\s*', '', line)
+                    current_sec[2].append(clean_item)
+                else:
+                    intro = QLabel(line)
+                    intro.setFont(QFont(self.font_family, 9))
+                    intro_col = "rgba(17, 19, 24, 0.65)" if is_light else "rgba(222, 215, 196, 0.72)"
+                    intro.setStyleSheet(f"color: {intro_col}; padding-left: 2px; background: transparent;")
+                    parent_layout.addWidget(intro)
+            if current_sec:
+                parent_layout.addWidget(self._create_section_card(*current_sec))
+            return
+
+        # Стандартная пошаговая инструкция ("1. ...", "2. ...")
+        steps = []
+        for line in lines:
+            m = re.match(r'^(\d+)\.\s+(.+)$', line)
+            if m:
+                steps.append((m.group(1), m.group(2)))
+            elif steps:
+                steps[-1] = (steps[-1][0], steps[-1][1] + " " + line)
+
+        if steps:
+            for num, body in steps:
+                parent_layout.addWidget(self._create_step_card(num, body))
+        else:
+            # Резервный вывод для произвольного текста
+            fallback_html = "".join(self._format_inline_html(l) for l in lines)
+            lbl = QLabel()
+            lbl.setFont(QFont(self.font_family, 10))
+            lbl.setTextFormat(Qt.TextFormat.RichText)
+            lbl.setText(fallback_html)
+            lbl.setWordWrap(True)
+            lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            text_col = "#111318" if is_light else "#fffde7"
+            lbl.setStyleSheet(f"color: {text_col}; background: transparent;")
+            parent_layout.addWidget(lbl)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -799,7 +1045,7 @@ class SettingsFrame(QFrame):
             "4. НЕЙРОСЕТЕВОЙ МОДУЛЬ VISION:\n"
             "— Автоматическая биометрическая идентификация владельца по лицу.\n"
             "— Управление жестами рук через камеру и трекинг усталости глаз.\n\n"
-            "5. ДИАЛОГОВЙ ИНТЕЛЛЕКТ:\n"
+            "5. ДИАЛОГОВЫЙ ИНТЕЛЛЕКТ:\n"
             "— Распознавание тонких эмоций собеседника (сарказм, радость, усталость).\n"
             "— Локальная долговременная память ключевых фактов о пользователе.\n"
             "— Распознавание шёпота и верификация владельца по голосу (Voice ID).\n"
@@ -807,7 +1053,7 @@ class SettingsFrame(QFrame):
             "6. TELEGRAM REMOTE:\n"
             "— Дистанционный мониторинг и управление системой через бота."
         )
-        dialog = ApiGuideDialog(title, text, self.font_family, self, width=520, height=430)
+        dialog = ApiGuideDialog(title, text, self.font_family, self, width=550, height=470)
         dialog.exec()
 
     def _open_telegram_pairing(self):
@@ -1231,13 +1477,13 @@ class SettingsFrame(QFrame):
             l.addWidget(btn)
             return cell
 
-        self.lbl_routerai_status = QLabel("НЕ ПОДКЛЮЧЕН (Яндекс / VK)")
+        self.lbl_routerai_status = QLabel("НЕ ПОДКЛЮЧЕН")
         self.lbl_routerai_status.setObjectName("BentoStatusIdle")
         self.btn_routerai_auth = QPushButton("ПОДКЛЮЧИТЬ")
         self.btn_routerai_auth.setObjectName("BentoActionBtn")
         self.btn_routerai_auth.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_routerai_auth.clicked.connect(self._open_routerai_auth)
-        self.card_cloud.add_widget(_make_service_cell("ROUTERAI (PRO ИИ)", "routerai", "routerai", self.lbl_routerai_status, self.btn_routerai_auth))
+        self.card_cloud.add_widget(_make_service_cell("ROUTERAI", "routerai", "routerai", self.lbl_routerai_status, self.btn_routerai_auth))
 
         self.lbl_gigachat_status = QLabel("НЕ ПРИВЯЗАН")
         self.lbl_gigachat_status.setObjectName("BentoStatusIdle")
@@ -1524,7 +1770,9 @@ class SettingsFrame(QFrame):
             if self.custom_alarm_path and os.path.exists(self.custom_alarm_path):
                 path = self.custom_alarm_path
         else:
-            path = get_resource_path("assets", "sounds", f"{mode}.wav")
+            cand1 = get_resource_path("assets", "sounds", "reminders", f"{mode}.wav")
+            cand2 = get_resource_path("assets", "sounds", f"{mode}.wav")
+            path = cand1 if os.path.exists(cand1) else cand2
 
         if path and os.path.exists(path) and is_valid_wav(path):
             self.preview_sound.stop()
@@ -1623,7 +1871,7 @@ class SettingsFrame(QFrame):
             self.lbl_routerai_status.setStyleSheet(f"color: {active_col}")
             self.btn_routerai_auth.setText("ИЗМЕНИТЬ")
         else:
-            self.lbl_routerai_status.setText("НЕ ПОДКЛЮЧЕН (Яндекс / VK)")
+            self.lbl_routerai_status.setText("НЕ ПОДКЛЮЧЕН")
             self.lbl_routerai_status.setStyleSheet(f"color: {idle_col};")
             self.btn_routerai_auth.setText("ПОДКЛЮЧИТЬ")
 

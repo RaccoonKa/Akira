@@ -80,12 +80,67 @@ class StudioChatDatabase:
                         attached_file TEXT,
                         emotion TEXT DEFAULT 'neutral',
                         created_at TEXT NOT NULL,
-                        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+                        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE ON UPDATE CASCADE
                     );
                 """)
 
+                # Миграция: проверяем поддержку ON UPDATE CASCADE для старых БД
+                cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='messages'")
+                msg_table_row = cursor.fetchone()
+                if msg_table_row and "ON UPDATE CASCADE" not in msg_table_row[0]:
+                    cursor.execute("PRAGMA foreign_keys=OFF;")
+                    cursor.execute("ALTER TABLE messages RENAME TO messages_old;")
+                    cursor.execute("""
+                        CREATE TABLE messages (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            session_id INTEGER NOT NULL,
+                            role TEXT NOT NULL,
+                            content TEXT NOT NULL,
+                            attached_file TEXT,
+                            emotion TEXT DEFAULT 'neutral',
+                            created_at TEXT NOT NULL,
+                            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE ON UPDATE CASCADE
+                        );
+                    """)
+                    cursor.execute("""
+                        INSERT INTO messages (id, session_id, role, content, attached_file, emotion, created_at)
+                        SELECT id, session_id, role, content, attached_file, emotion, created_at FROM messages_old;
+                    """)
+                    cursor.execute("DROP TABLE messages_old;")
+                    cursor.execute("PRAGMA foreign_keys=ON;")
+
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC);")
+                conn.commit()
+            finally:
+                conn.close()
+
+        # Автоматически нормализуем существующие сессии (1..N) при старте
+        self.resequence_sessions()
+
+    def resequence_sessions(self):
+        """Переиндексирует все существующие сессии подряд (1, 2, 3...) и обновляет счетчик автоинкремента."""
+        with self.db_lock:
+            conn = self._get_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute("SELECT id FROM sessions ORDER BY id ASC")
+                rows = cursor.fetchall()
+                if not rows:
+                    cursor.execute("DELETE FROM sqlite_sequence WHERE name IN ('sessions', 'messages')")
+                    conn.commit()
+                    return
+
+                needs_resequence = any(r[0] != idx for idx, r in enumerate(rows, start=1))
+                if needs_resequence:
+                    for new_id, row in enumerate(rows, start=1):
+                        old_id = row[0]
+                        if old_id != new_id:
+                            cursor.execute("UPDATE sessions SET id = ? WHERE id = ?", (-new_id, old_id))
+                    cursor.execute("UPDATE sessions SET id = -id WHERE id < 0")
+
+                max_id = len(rows)
+                cursor.execute("UPDATE sqlite_sequence SET seq = ? WHERE name = 'sessions'", (max_id,))
                 conn.commit()
             finally:
                 conn.close()
@@ -151,8 +206,23 @@ class StudioChatDatabase:
             try:
                 cursor = conn.cursor()
                 cursor.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+                cursor.execute("SELECT id FROM sessions ORDER BY id ASC")
+                rows = cursor.fetchall()
+                if not rows:
+                    cursor.execute("DELETE FROM sqlite_sequence WHERE name IN ('sessions', 'messages')")
+                    print(f"[StudioDB] Диалог #{session_id} удалён. Все диалоги очищены, счетчик ID сброшен на 1")
+                else:
+                    needs_resequence = any(r[0] != idx for idx, r in enumerate(rows, start=1))
+                    if needs_resequence:
+                        for new_id, row in enumerate(rows, start=1):
+                            old_id = row[0]
+                            if old_id != new_id:
+                                cursor.execute("UPDATE sessions SET id = ? WHERE id = ?", (-new_id, old_id))
+                        cursor.execute("UPDATE sessions SET id = -id WHERE id < 0")
+                    max_id = len(rows)
+                    cursor.execute("UPDATE sqlite_sequence SET seq = ? WHERE name = 'sessions'", (max_id,))
+                    print(f"[StudioDB] Диалог #{session_id} удалён. Диалоги упорядочены: 1..{max_id}")
                 conn.commit()
-                print(f"[StudioDB] Диалог #{session_id} удалён")
             finally:
                 conn.close()
 

@@ -160,6 +160,7 @@ def main():
     apply_native_windows_icon(hwnd, ico_path)
 
     window.show()
+    window.bring_to_front()
     apply_native_windows_icon(hwnd, ico_path)
 
     tray = SystemTray(window, app)

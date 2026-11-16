@@ -4,6 +4,7 @@ import time
 import random
 import atexit
 import warnings
+import re
 import datetime
 import numpy as np
 import psutil
@@ -38,6 +39,43 @@ from core.utils.config import get_resource_path, load_config, save_config
 from core.utils.updater import UpdateCheckerThread
 from comtypes import CoInitialize, CoUninitialize
 from core.system.volume_ducker import volume_ducker
+
+try:
+    import ctypes
+    from ctypes import wintypes
+    _dwmapi = ctypes.WinDLL("dwmapi")
+    _gdi32 = ctypes.WinDLL("gdi32")
+    _user32 = ctypes.windll.user32
+
+    _DwmSetWindowAttribute = _dwmapi.DwmSetWindowAttribute
+    _DwmSetWindowAttribute.argtypes = [ctypes.c_void_p, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+    _DwmSetWindowAttribute.restype = ctypes.c_long
+
+    _DwmSetIconicThumbnail = _dwmapi.DwmSetIconicThumbnail
+    _DwmSetIconicThumbnail.argtypes = [ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD]
+    _DwmSetIconicThumbnail.restype = ctypes.c_long
+
+    _DwmInvalidateIconicBitmaps = _dwmapi.DwmInvalidateIconicBitmaps
+    _DwmInvalidateIconicBitmaps.argtypes = [ctypes.c_void_p]
+    _DwmInvalidateIconicBitmaps.restype = ctypes.c_long
+
+    _DeleteObject = _gdi32.DeleteObject
+    _DeleteObject.argtypes = [ctypes.c_void_p]
+    _DeleteObject.restype = wintypes.BOOL
+except Exception:
+    _dwmapi = None
+    _gdi32 = None
+    _user32 = None
+    _DwmSetWindowAttribute = None
+    _DwmSetIconicThumbnail = None
+    _DwmInvalidateIconicBitmaps = None
+    _DeleteObject = None
+
+WM_DWMSENDICONICTHUMBNAIL = 0x0323
+DWMWA_FORCE_ICONIC_REPRESENTATION = 7
+DWMWA_HAS_ICONIC_BITMAP = 10
+
+from core.utils.text_cleaner import clean_chat_display_text, CHAT_ACTION_TAG_REGEX as ACTION_TAG_REGEX
 
 try:
     from core.utils.blur import enable_window_acrylic
@@ -1588,6 +1626,24 @@ class MainWindow(QWidget):
         self.apply_framerate(auto_fps)
 
         self.apply_theme(self.current_theme, initial=True)
+        self._init_dwm_iconic_thumbnail()
+
+    def _init_dwm_iconic_thumbnail(self):
+        if _DwmSetWindowAttribute and hasattr(self, "winId"):
+            try:
+                hwnd = int(self.winId())
+                val_true = wintypes.BOOL(True)
+                _DwmSetWindowAttribute(hwnd, DWMWA_FORCE_ICONIC_REPRESENTATION, ctypes.byref(val_true), ctypes.sizeof(val_true))
+                _DwmSetWindowAttribute(hwnd, DWMWA_HAS_ICONIC_BITMAP, ctypes.byref(val_true), ctypes.sizeof(val_true))
+            except Exception:
+                pass
+
+    def invalidate_taskbar_thumbnail(self):
+        if _DwmInvalidateIconicBitmaps and hasattr(self, "winId"):
+            try:
+                _DwmInvalidateIconicBitmaps(int(self.winId()))
+            except Exception:
+                pass
 
     MINI_PLACEHOLDERS = [
         "слушаю...",
@@ -1738,6 +1794,41 @@ class MainWindow(QWidget):
             self.showNormal()
         self.raise_()
         self.activateWindow()
+        if _user32 and hasattr(self, "winId"):
+            try:
+                hwnd = int(self.winId())
+                _user32.BringWindowToTop(hwnd)
+                _user32.SetForegroundWindow(hwnd)
+            except Exception:
+                pass
+
+    def nativeEvent(self, eventType, message):
+        if message and _dwmapi and _DwmSetIconicThumbnail:
+            try:
+                ptr = int(message)
+                msg = wintypes.MSG.from_address(ptr)
+                if msg.message == WM_DWMSENDICONICTHUMBNAIL:
+                    max_w = (msg.lParam >> 16) & 0xFFFF
+                    max_h = msg.lParam & 0xFFFF
+                    if max_w > 0 and max_h > 0 and hasattr(self, "bg_frame"):
+                        pix = self.bg_frame.grab()
+                        if not pix.isNull():
+                            img = pix.toImage().scaled(
+                                max_w, max_h,
+                                Qt.AspectRatioMode.KeepAspectRatio,
+                                Qt.TransformationMode.SmoothTransformation
+                            )
+                            hbmp = int(img.toHBITMAP())
+                            if hbmp:
+                                try:
+                                    _DwmSetIconicThumbnail(int(self.winId()), hbmp, 0)
+                                finally:
+                                    if _DeleteObject:
+                                        _DeleteObject(hbmp)
+                                return True, 0
+            except Exception:
+                pass
+        return False, 0
     
     def show_animated(self):
         if getattr(self, 'is_mini_mode', False) and hasattr(self, 'mini_window'):
@@ -1767,7 +1858,20 @@ class MainWindow(QWidget):
             self.move(x, start_y)
             super().showNormal()
 
+        self.raise_()
         self.activateWindow()
+        if _user32 and hasattr(self, "winId"):
+            try:
+                hwnd = int(self.winId())
+                HWND_TOP = 0
+                SWP_NOMOVE = 0x0002
+                SWP_NOSIZE = 0x0001
+                SWP_SHOWWINDOW = 0x0040
+                _user32.SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
+                _user32.BringWindowToTop(hwnd)
+                _user32.SetForegroundWindow(hwnd)
+            except Exception:
+                pass
 
         self.opening_anim = QPropertyAnimation(self, b"pos")
         self.opening_anim.setDuration(450)
@@ -1897,6 +2001,7 @@ class MainWindow(QWidget):
                 
                 def on_fade_in_finished():
                     self._is_mode_animating = False
+                    self.invalidate_taskbar_thumbnail()
                     
                 self.studio_fade_anim.finished.connect(on_fade_in_finished)
                 self.studio_fade_anim.start()
@@ -1935,6 +2040,7 @@ class MainWindow(QWidget):
                     self.bg_frame.setGeometry(init_x, 0, self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
                     self._update_click_mask(self.NORMAL_WIDTH)
                     self._is_mode_animating = False
+                    self.invalidate_taskbar_thumbnail()
                     
                 self.expand_anim.finished.connect(on_collapse_finished)
                 self.expand_anim.start()
@@ -2920,6 +3026,10 @@ class MainWindow(QWidget):
             self.right_panel.set_emotion(emotion)
 
     def stream_text_to_chat(self, text: str, prefix: str = "Акира: "):
+        text = clean_chat_display_text(text)
+        if not text:
+            return
+
         if hasattr(self, '_typewriter_timer') and self._typewriter_timer.isActive():
             self._typewriter_timer.stop()
             if hasattr(self, '_typewriter_remaining') and self._typewriter_remaining:
@@ -3180,6 +3290,7 @@ class MainWindow(QWidget):
         if self._pending_action == "chat":
             self._pending_action = None
             self._do_toggle_chat()
+        self.invalidate_taskbar_thumbnail()
 
     def toggle_chat(self):
         if getattr(self, 'is_mini_mode', False) or getattr(self, '_is_chat_animating', False):
@@ -3248,6 +3359,7 @@ class MainWindow(QWidget):
             self.right_panel.set_content_opacity(1.0)
             self.right_panel.set_border_opacity(1.0)
             self.input_field.setFocus()
+        self.invalidate_taskbar_thumbnail()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:

@@ -3,7 +3,9 @@ import sys
 import re
 import json
 import queue
+import random
 import threading
+import wave
 import numpy as np
 import sounddevice as sd
 import onnxruntime as ort
@@ -49,6 +51,80 @@ def _load_pronunciation_dictionary():
 
 _load_pronunciation_dictionary()
 
+LAUGH_REGEX = re.compile(
+    r'(?:'
+    r'[*_\[\(]\s*[^*_\[\]\(\)\n]*?(?:сме[еёх]|хихик|усме[хш]|хохо[тч]|хмык|ха[-–—]?ха|ахах|хе[-–—]?хе)[^*_\[\]\(\)\n]*?[*_\]\)]'
+    r'|'
+    r'(?<![а-яёa-z])(?:[хx][аa][-–—][хx][аa](?:[-–—][хx][аa])*|[хx][еe][-–—][хx][еe](?:[-–—][хx][еe])*|а?хах[ах]*|хех[ех]+)(?![а-яёa-z])'
+    r')',
+    re.IGNORECASE
+)
+
+NON_LAUGH_ACTION_REGEX = re.compile(
+    r'(?:'
+    r'(?<![*_])[*_](?![*_])\s*[^*_\n]{1,120}\s*(?<![*_])[*_](?![*_])'
+    r'|'
+    r'\[\s*[^\]\n]{1,120}\s*\]'
+    r'|'
+    r'\(\s*[^\)\n]*?(?:улыб|вздох|вздых|подмиг|зева|смущ|задум|пауз|машет|молчит|шепч|кива)[^\)\n]*?\)'
+    r')',
+    re.IGNORECASE
+)
+
+_LAUGH_CACHE = {}
+
+
+def _load_laugh_samples(target_sr=22050):
+    global _LAUGH_CACHE
+    if target_sr in _LAUGH_CACHE:
+        return _LAUGH_CACHE[target_sr]
+
+    samples = []
+    for idx in (1, 2, 3):
+        cand_paths = [
+            get_resource_path("assets", "sounds", "laugh", f"laugh_{idx}.wav"),
+            get_resource_path("assets", "sounds", f"laugh_{idx}.wav")
+        ]
+        chosen = None
+        for p in cand_paths:
+            if p and os.path.exists(p):
+                chosen = p
+                break
+
+        if chosen:
+            try:
+                with wave.open(chosen, 'rb') as wf:
+                    n_channels = wf.getnchannels()
+                    orig_sr = wf.getframerate()
+                    n_frames = wf.getnframes()
+                    raw = wf.readframes(n_frames)
+
+                audio = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
+                if n_channels > 1:
+                    audio = audio.reshape(-1, n_channels).mean(axis=1)
+
+                if orig_sr != target_sr:
+                    orig_len = len(audio)
+                    target_len = int(round(orig_len * (target_sr / orig_sr)))
+                    audio = np.interp(
+                        np.linspace(0, orig_len, target_len, endpoint=False),
+                        np.arange(orig_len),
+                        audio
+                    )
+                int16_bytes = np.clip(audio, -32768, 32767).astype(np.int16).tobytes()
+                samples.append(int16_bytes)
+            except Exception as e:
+                print(f"[Laugh Load Error] {chosen}: {e}")
+
+    _LAUGH_CACHE[target_sr] = samples
+    return samples
+
+
+def get_random_laugh_bytes(target_sr=22050):
+    samples = _load_laugh_samples(target_sr)
+    if samples:
+        return random.choice(samples)
+    return None
 
 def get_tts_execution_providers():
     available = ort.get_available_providers()
@@ -209,37 +285,81 @@ class TTSThread(QThread):
             vol_factor *= 0.65
         return vol_factor
 
-    def _play_stream(self, voice, text, is_whisper=False):
+    def _parse_speech_and_laugh_segments(self, raw_text: str):
+        if not raw_text:
+            return []
+
+        # 1. Заменяем маркеры смеха на уникальный токен
+        marked = LAUGH_REGEX.sub(" @@@AKIRALAUGH@@@ ", raw_text)
+        # 2. Вырезаем любые оставшиеся действия/ремарки, чтобы Piper не читал их вслух
+        marked = NON_LAUGH_ACTION_REGEX.sub(" ", marked)
+
+        tokens = marked.split("@@@AKIRALAUGH@@@")
+        raw_items = []
+        for idx, token in enumerate(tokens):
+            clean_tok = re.sub(r'^[,\s!?:;.\-]+', '', token).strip()
+            if clean_tok:
+                # Разбиваем текст на предложения
+                sentences = [s.strip() for s in re.split(r'(?<=[.?])\s+', clean_tok) if s.strip()]
+                for s in (sentences if sentences else [clean_tok]):
+                    cleaned_s = self._clean_text_for_tts(s)
+                    if cleaned_s:
+                        raw_items.append(('text', cleaned_s))
+            if idx < len(tokens) - 1:
+                raw_items.append(('laugh', None))
+
+        # Убираем дублирование смеха подряд
+        items = []
+        for itype, ival in raw_items:
+            if itype == 'laugh' and items and items[-1][0] == 'laugh':
+                continue
+            items.append((itype, ival))
+        return items
+
+    def _play_stream(self, voice, raw_text, is_whisper=False):
         vol_factor = self._get_volume_factor(is_whisper=is_whisper)
         sample_rate = voice.config.sample_rate
 
         ym_manager.duck()
         self.speaking_started.emit()
 
-        sentences = [s.strip() for s in re.split(r'(?<=[.?])\s+', text) if s.strip()]
-        if not sentences:
-            sentences = [text]
+        segments = self._parse_speech_and_laugh_segments(raw_text)
+        if not segments:
+            segments = [('text', self._clean_text_for_tts(raw_text))]
 
         pause_bytes = np.zeros(int(sample_rate * 0.25), dtype=np.int16).tobytes()
+        laugh_pause_bytes = np.zeros(int(sample_rate * 0.20), dtype=np.int16).tobytes()
         silence_padding = np.zeros(int(sample_rate * 0.15), dtype=np.int16).tobytes()
 
         audio_queue = queue.Queue(maxsize=300)
         self._audio_queue = audio_queue
 
         def producer():
-            for idx, sentence in enumerate(sentences):
+            for idx, (seg_type, seg_content) in enumerate(segments):
                 if self._stopped:
                     break
 
-                for chunk in voice.synthesize(sentence):
-                    if self._stopped:
-                        break
-                    chunk_bytes = chunk.audio_int16_bytes
-                    if chunk_bytes:
-                        audio_queue.put(chunk_bytes)
+                if seg_type == 'laugh':
+                    laugh_chunk = get_random_laugh_bytes(sample_rate)
+                    if laugh_chunk:
+                        # Небольшая пауза перед смехом, если перед ним была речь
+                        if idx > 0 and segments[idx - 1][0] == 'text':
+                            audio_queue.put(laugh_pause_bytes)
+                        audio_queue.put(laugh_chunk)
+                        # Пауза после смеха перед последующей речью
+                        if idx < len(segments) - 1 and segments[idx + 1][0] == 'text':
+                            audio_queue.put(laugh_pause_bytes)
+                else:
+                    sentence = seg_content
+                    for chunk in voice.synthesize(sentence):
+                        if self._stopped:
+                            break
+                        chunk_bytes = chunk.audio_int16_bytes
+                        if chunk_bytes:
+                            audio_queue.put(chunk_bytes)
 
-                if idx < len(sentences) - 1 and not self._stopped:
-                    audio_queue.put(pause_bytes)
+                    if idx < len(segments) - 1 and not self._stopped:
+                        audio_queue.put(pause_bytes)
 
             audio_queue.put(None)
 
@@ -374,15 +494,15 @@ class TTSThread(QThread):
                     self.speaking_finished.emit()
                 return
 
-            text = self._clean_text_for_tts(self.text_to_speak)
-            if not text or self._stopped:
+            raw_text = self.text_to_speak
+            if not raw_text or self._stopped:
                 return
 
             target_voice = self.whisper_voice if (self.is_whisper and self.whisper_voice) else self.main_voice
             if not target_voice:
                 return
 
-            self._play_stream(target_voice, text, is_whisper=self.is_whisper)
+            self._play_stream(target_voice, raw_text, is_whisper=self.is_whisper)
 
         except Exception as e:
             print(f"[TTS Stream Error]: {e}")

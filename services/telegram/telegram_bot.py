@@ -22,6 +22,7 @@ if str(ROOT_DIR) not in sys.path:
 from core.nlp.command_parser import CommandParser
 from core.system.actions import SystemActions
 from core.utils.config import get_user_data_path, load_config, save_config
+from core.utils.text_cleaner import clean_chat_display_text
 
 SERVER_HOST = "185.79.139.120:8000"
 PAIRING_PATH = Path(get_user_data_path("pairing_session.json"))
@@ -475,9 +476,10 @@ class TelegramBotThread(QThread):
             parser = get_command_parser()
             result = await self.loop.run_in_executor(None, parser.process_command, text, None, False, None)
             if isinstance(result, dict):
-                reply_text = result.get("chat", "") or result.get("voice", "") or "Команда принята"
+                raw_reply = result.get("chat", "") or result.get("voice", "") or "Команда принята"
             else:
-                reply_text = str(result)
+                raw_reply = str(result)
+            reply_text = clean_chat_display_text(raw_reply) or raw_reply
             resp_payload = {"text": reply_text}
 
         if req_id:

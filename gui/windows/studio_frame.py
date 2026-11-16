@@ -28,6 +28,8 @@ from gui.widgets.code_formatter import (
     print_markdown_console,
 )
 
+from core.utils.text_cleaner import clean_chat_display_text, CHAT_ACTION_TAG_REGEX as ACTION_TAG_REGEX
+
 SVG_SIDEBAR = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/>
 </svg>"""
@@ -1959,8 +1961,9 @@ class StudioFrame(QFrame):
             else:
                 self.set_emotion(emotion)
                 emo_col = QColor.fromHsv(int(self.target_h), int(self.target_s), int(self.target_v))
+                disp_content = clean_chat_display_text(content) or content
                 akira_stream = StudioAkiraStream(
-                    content,
+                    disp_content,
                     emo_col,
                     font_family=self.font_family,
                     chat_font_family=self.chat_font_family,
@@ -1983,7 +1986,8 @@ class StudioFrame(QFrame):
     def delete_session(self, session_id: int):
         studio_db.delete_session(session_id)
         sessions = studio_db.get_sessions()
-        if self.current_session_id == session_id:
+        existing_ids = [s["id"] for s in sessions]
+        if self.current_session_id == session_id or self.current_session_id not in existing_ids:
             if sessions:
                 self.load_session(sessions[0]["id"])
             else:
@@ -2167,18 +2171,20 @@ class StudioFrame(QFrame):
                 voice_text = chat_text
                 emotion = "neutral"
 
+            display_text = clean_chat_display_text(chat_text) or chat_text
+
             studio_db.add_message(
                 self.current_session_id,
                 role="akira",
-                content=chat_text,
+                content=display_text,
                 emotion=emotion
             )
 
-            print_markdown_console(chat_text, speaker="Акира")
+            print_markdown_console(display_text, speaker="Акира")
             self.set_emotion(emotion)
             emo_col = QColor.fromHsv(int(self.target_h), int(self.target_s), int(self.target_v))
             akira_stream = StudioAkiraStream(
-                chat_text,
+                display_text,
                 emo_col,
                 font_family=self.font_family,
                 chat_font_family=self.chat_font_family,

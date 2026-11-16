@@ -159,16 +159,36 @@ class ReminderManager(QObject):
                 path = custom_path
             else:
                 track_name = f"{alarm_mode}.wav" if alarm_mode in ["alarm_1", "alarm_2", "alarm_3"] else "alarm_1.wav"
-                path = get_resource_path("assets", "sounds", track_name)
-                if not os.path.exists(path):
-                    path = get_resource_path("assets", "sounds", "alarm.wav")
+                cand_paths = [
+                    get_resource_path("assets", "sounds", "reminders", track_name),
+                    get_resource_path("assets", "sounds", track_name),
+                    get_resource_path("assets", "sounds", "reminders", "alarm.wav"),
+                    get_resource_path("assets", "sounds", "alarm.wav")
+                ]
+                for cand in cand_paths:
+                    if cand and os.path.exists(cand):
+                        path = cand
+                        break
         else:
             filename = f"{sound_type}.wav"
-            path = get_resource_path("assets", "sounds", filename)
+            cand_paths = [
+                get_resource_path("assets", "sounds", "reminders", filename),
+                get_resource_path("assets", "sounds", filename)
+            ]
+            for cand in cand_paths:
+                if cand and os.path.exists(cand):
+                    path = cand
+                    break
 
         if not path or not os.path.exists(path):
-            fallback = get_resource_path("assets", "sounds", "notification.wav")
-            path = fallback if os.path.exists(fallback) else None
+            cand_fallbacks = [
+                get_resource_path("assets", "sounds", "reminders", "notification.wav"),
+                get_resource_path("assets", "sounds", "notification.wav")
+            ]
+            for fb in cand_fallbacks:
+                if fb and os.path.exists(fb):
+                    path = fb
+                    break
 
         if path:
             try:
