@@ -150,6 +150,12 @@ SVG_SEND = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="
 <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
 </svg>"""
 
+SVG_GAMEPAD = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+<line x1="6" y1="12" x2="10" y2="12"/><line x1="8" y1="10" x2="8" y2="14"/>
+<line x1="15" y1="13" x2="15.01" y2="13"/><line x1="18" y1="11" x2="18.01" y2="11"/>
+<rect x="2" y="6" width="20" height="12" rx="3"/>
+</svg>"""
+
 def render_svg_icon(svg_xml: str, color: str, size: int = 15) -> QIcon:
     xml = svg_xml.replace("{color}", color)
     renderer = QSvgRenderer(QByteArray(xml.encode("utf-8")))
@@ -221,8 +227,21 @@ class EmotionHoverButton(QPushButton):
         if color is None:
             if self is getattr(self.main_window, 'toggle_chat_btn', None) and getattr(self.main_window, 'window_mode', 'normal') == 'extended':
                 color = self.get_locked_color()
+            elif self is getattr(self.main_window, 'game_mode_btn', None) and getattr(self.main_window, 'is_game_mode', False):
+                theme = getattr(self.main_window, 'current_theme', 'dark')
+                color = "#c084fc" if theme == "dark" else "#7e22ce"
             else:
                 color = self.get_default_color()
+
+        if self is getattr(self.main_window, 'game_mode_btn', None) and getattr(self.main_window, 'is_game_mode', False):
+            theme = getattr(self.main_window, 'current_theme', 'dark')
+            if theme == "dark":
+                self.setStyleSheet("background-color: rgba(192, 132, 252, 0.25); border: 1px solid rgba(192, 132, 252, 0.45); border-radius: 5px;")
+            else:
+                self.setStyleSheet("background-color: rgba(126, 34, 206, 0.15); border: 1px solid rgba(126, 34, 206, 0.35); border-radius: 5px;")
+        elif self is getattr(self.main_window, 'game_mode_btn', None):
+            self.setStyleSheet("")
+
         self.setIcon(render_svg_icon(self.svg_xml, color, self.icon_size))
         self.setIconSize(QSize(self.icon_size, self.icon_size))
 
@@ -270,6 +289,17 @@ class EmotionHoverButton(QPushButton):
             return
 
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        if self is getattr(self.main_window, 'game_mode_btn', None) and getattr(self.main_window, 'is_game_mode', False):
+            theme = getattr(self.main_window, 'current_theme', 'dark')
+            color = "#e9d5ff" if theme == "dark" else "#6b21a8"
+            self.update_icon(color)
+            if theme == "dark":
+                self.setStyleSheet("background-color: rgba(192, 132, 252, 0.38); border: 1px solid rgba(192, 132, 252, 0.7); border-radius: 5px;")
+            else:
+                self.setStyleSheet("background-color: rgba(126, 34, 206, 0.25); border: 1px solid rgba(126, 34, 206, 0.55); border-radius: 5px;")
+            super().enterEvent(event)
+            return
+
         color = self.get_random_emotion_color()
         self.update_icon(color)
         super().enterEvent(event)
@@ -277,6 +307,10 @@ class EmotionHoverButton(QPushButton):
     def leaveEvent(self, event):
         if self is getattr(self.main_window, 'toggle_chat_btn', None) and getattr(self.main_window, 'window_mode', 'normal') == 'extended':
             self.update_icon(self.get_locked_color())
+            super().leaveEvent(event)
+            return
+        if self is getattr(self.main_window, 'game_mode_btn', None) and getattr(self.main_window, 'is_game_mode', False):
+            self.update_icon()
             super().leaveEvent(event)
             return
 
@@ -1579,6 +1613,7 @@ class MainWindow(QWidget):
         self.presence_manager = None
 
         self.is_muted = self.config.get("is_muted", False) if isinstance(self.config, dict) else False
+        self.is_game_mode = False
 
         self.absence_start_time = None
         self.warned_battery_50 = False
@@ -1680,6 +1715,13 @@ class MainWindow(QWidget):
                 self.toggle_chat_btn.update_icon()
             else:
                 self.toggle_chat_btn.update_icon()
+
+        if hasattr(self, 'game_mode_btn'):
+            self.game_mode_btn.update_icon()
+            if getattr(self, 'is_game_mode', False):
+                self.game_mode_btn.setToolTip("Игровой режим: активен (микрофон отключен, нажмите для возврата)")
+            else:
+                self.game_mode_btn.setToolTip("Игровой режим (отключить реакции на речь)")
 
         if hasattr(self, 'mute_btn'):
             mute_svg = SVG_MUTE if self.is_muted else SVG_VOLUME
@@ -2324,6 +2366,9 @@ class MainWindow(QWidget):
             if voice_text:
                 self.speak_reply(voice_text, is_whisper=False)
 
+            if isinstance(response, dict) and response.get("action") == "enable_game_mode":
+                QTimer.singleShot(600, lambda: self.toggle_game_mode(enable=True, announce=False))
+
     def init_ui(self):
         ui_font_path = get_resource_path("assets", "fonts", "Arian_normal.otf")
         ui_font_id = QFontDatabase.addApplicationFont(ui_font_path)
@@ -2411,6 +2456,11 @@ class MainWindow(QWidget):
         self.toggle_chat_btn = EmotionHoverButton(SVG_CHAT, main_window=self)
         self.toggle_chat_btn.clicked.connect(self.toggle_chat)
         title_btns_layout.addWidget(self.toggle_chat_btn)
+
+        self.game_mode_btn = EmotionHoverButton(SVG_GAMEPAD, main_window=self)
+        self.game_mode_btn.setToolTip("Игровой режим (отключить реакции на речь)")
+        self.game_mode_btn.clicked.connect(lambda: self.toggle_game_mode())
+        title_btns_layout.addWidget(self.game_mode_btn)
 
         self.mute_btn = EmotionHoverButton(SVG_VOLUME, main_window=self)
         self.mute_btn.clicked.connect(self.toggle_mute)
@@ -2651,6 +2701,8 @@ class MainWindow(QWidget):
             self.mini_mode_btn.setEnabled(enabled)
         if hasattr(self, 'toggle_chat_btn'):
             self.toggle_chat_btn.setEnabled(enabled)
+        if hasattr(self, 'game_mode_btn'):
+            self.game_mode_btn.setEnabled(enabled)
         if hasattr(self, 'mute_btn'):
             self.mute_btn.setEnabled(enabled)
         if hasattr(self, 'update_badge_btn'):
@@ -2674,6 +2726,58 @@ class MainWindow(QWidget):
             self.config["is_muted"] = self.is_muted
         save_config(cfg)
 
+    def toggle_game_mode(self, *args, enable=None, announce=True):
+        if enable is not None:
+            self.is_game_mode = bool(enable)
+        else:
+            self.is_game_mode = not getattr(self, 'is_game_mode', False)
+
+        if self.is_game_mode:
+            if hasattr(self, 'stt_thread'):
+                self.stt_thread.set_paused(True)
+
+            if hasattr(self, 'left_panel'):
+                self.left_panel.set_listening(False)
+                self.left_panel.set_processing(False)
+                self.left_panel.set_emotion("happy")
+            if hasattr(self, 'mini_window'):
+                self.mini_window.mini_mic.set_listening(False)
+                self.mini_window.mini_mic.set_processing(False)
+                self.mini_window.mini_mic.set_emotion("happy")
+
+            self.update_title_icons()
+
+            if announce:
+                phrases = [
+                    "Приятной игры. Ухожу в режим тишины, побеждай!",
+                    "Хорошей игры. Не буду отвлекать. Тащи!",
+                    "Приятной игры. Я на паузе, нажми на геймпад, когда закончишь.",
+                    "Буду тихо ждать твоих побед."
+                ]
+                phrase = random.choice(phrases)
+                self.stream_text_to_chat(phrase)
+                self.speak_reply(phrase)
+        else:
+            if hasattr(self, 'stt_thread'):
+                self.stt_thread.set_paused(False)
+
+            self.update_title_icons()
+
+            if hasattr(self, 'left_panel'):
+                self.left_panel.set_emotion("neutral")
+            if hasattr(self, 'mini_window'):
+                self.mini_window.mini_mic.set_emotion("neutral")
+
+            if announce:
+                phrases = [
+                    "С возвращением! Как успехи в игре?",
+                    "Игровой режим выключен. Снова на связи и внимательно слушаю!",
+                    "Отличная игра была? Я вернулась и готова к общению."
+                ]
+                phrase = random.choice(phrases)
+                self.stream_text_to_chat(phrase)
+                self.speak_reply(phrase)
+
     def exit_app(self):
         self._save_exit_timestamp()
         if hasattr(self, 'mini_window'):
@@ -2691,6 +2795,11 @@ class MainWindow(QWidget):
 
     def toggle_manual_listen(self):
         if not self.ui_revealed:
+            return
+
+        if getattr(self, 'is_game_mode', False):
+            if hasattr(self, 'game_mode_btn'):
+                self.game_mode_btn.trigger_denied_effect()
             return
 
         mini_listening = self.mini_window.mini_mic.is_listening if hasattr(self, 'mini_window') else False
@@ -2930,7 +3039,7 @@ class MainWindow(QWidget):
             self.tts_thread.say(text, is_whisper=is_whisper)
 
     def on_speech_recognized(self, text, audio_data=None):
-        if not self.ui_revealed:
+        if not self.ui_revealed or getattr(self, 'is_game_mode', False):
             return
 
         if getattr(self, 'right_panel', None) and getattr(self.right_panel, 'attached_file', None):
@@ -2957,6 +3066,8 @@ class MainWindow(QWidget):
         self.voice_worker.start()
 
     def on_wake_word_detected(self):
+        if getattr(self, 'is_game_mode', False):
+            return
         self.left_panel.trigger_wake_effect()
         if hasattr(self, 'mini_window'):
             self.mini_window.mini_mic.trigger_wake_effect()
@@ -2969,7 +3080,8 @@ class MainWindow(QWidget):
             self.mini_window.mini_mic.set_speaking(False)
         if getattr(self, 'pending_followup', False):
             self.pending_followup = False
-            self.stt_thread.start_followup(timeout=3.0)
+            if not getattr(self, 'is_game_mode', False):
+                self.stt_thread.start_followup(timeout=3.0)
 
     def on_voice_command_finished(self, response):
         if hasattr(self, 'right_panel'):
@@ -3011,6 +3123,9 @@ class MainWindow(QWidget):
                 self.left_panel.set_processing(False)
                 if hasattr(self, 'mini_window'):
                     self.mini_window.mini_mic.set_processing(False)
+
+            if isinstance(response, dict) and response.get("action") == "enable_game_mode":
+                QTimer.singleShot(600, lambda: self.toggle_game_mode(enable=True, announce=False))
         else:
             self.left_panel.set_processing(False)
             if hasattr(self, 'mini_window'):
@@ -3158,6 +3273,9 @@ class MainWindow(QWidget):
                 self.stream_text_to_chat(chat_text)
             if voice_text:
                 self.speak_reply(voice_text, is_whisper=False)
+
+            if isinstance(response, dict) and response.get("action") == "enable_game_mode":
+                QTimer.singleShot(600, lambda: self.toggle_game_mode(enable=True, announce=False))
 
     def on_stt_error(self, err):
         pass

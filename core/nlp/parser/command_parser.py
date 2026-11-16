@@ -58,6 +58,7 @@ WORD_TO_NUM = {
 
 CANONICAL_USER_TEXTS = {
     "open_discord": "Включи Discord",
+    "enable_game_mode": "Включи игровой режим",
     "mode_work": "Включи рабочий режим",
     "mode_rest": "Включи режим отдыха",
     "start_zapret": "Включи запрет",
@@ -124,6 +125,7 @@ class CommandParser:
             "stop_zapret": "stop_zapret",
             "mode_work": "mode_work",
             "mode_rest": "mode_rest",
+            "enable_game_mode": "enable_game_mode",
             "start_vpn": "start_vpn",
             "stop_vpn": "stop_vpn",
             "smart_home_on": "smart_home_on",
@@ -280,6 +282,18 @@ class CommandParser:
         for rt in rest_triggers:
             if rt in text_low:
                 return "mode_rest"
+
+        game_triggers = [
+            "игровой режим", "режим игры", "режим игра", "включи игру",
+            "пора играть", "время играть", "хочу поиграть", "давай поиграем",
+            "я пошел играть", "я пошёл играть", "я играть", "пойду поиграю",
+            "запусти игровой режим", "включи игровой режим", "вруби игровой режим",
+            "активируй игровой режим"
+        ]
+        for gt in game_triggers:
+            if gt in text_low:
+                if not any(mg in text_low for mg in ["город", "данетк", "верю", "факты", "с тобой"]):
+                    return "enable_game_mode"
 
         discord_triggers = [
             "дискорд", "дискорда", "дискорду", "дискорде", "дискордом",

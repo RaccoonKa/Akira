@@ -68,6 +68,7 @@ DEFAULT_CONFIG = {
     "custom_alarm_path": "",
     "target_fps": 60,
     "is_muted": False,
+    "is_game_mode": False,
     "is_mini_mode": False,
     "is_whisper_mode": False,
     "work_apps": [

@@ -1306,3 +1306,14 @@ class SystemActions:
         voice_text = f"Сейчас {location_phrase} {temp_spoken}, {desc}. {tip}"
         chat_text = f"Сейчас {location_phrase} {temp:+}° ({temp_spoken}), {desc}. {tip}"
         return {"chat": chat_text, "voice": voice_text, "emotion": emotion}
+
+    @staticmethod
+    def enable_game_mode(text=""):
+        phrases = [
+            "Приятной игры! Ухожу в режим тишины, побеждай!",
+            "Хорошей игры! Не буду отвлекать, тащи!",
+            "Приятной игры! Я на паузе, нажми на геймпад, когда закончишь.",
+            "Удачной катки! Буду тихо ждать твоих побед."
+        ]
+        phrase = random.choice(phrases)
+        return {"action": "enable_game_mode", "chat": phrase, "voice": phrase, "emotion": "happy"}

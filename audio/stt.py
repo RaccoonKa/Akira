@@ -82,6 +82,7 @@ class STTThread(QThread):
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
         self._running = True
+        self.is_paused = False
         self.samplerate = 16000
         self.audio_queue = queue.Queue()
         self.manual_trigger_flag = False
@@ -104,6 +105,18 @@ class STTThread(QThread):
     def set_speaking(self, state: bool):
         self.is_speaking = state
         if state:
+            with self.audio_queue.mutex:
+                self.audio_queue.queue.clear()
+
+    def set_paused(self, state: bool):
+        self.is_paused = state
+        if state:
+            with self.audio_queue.mutex:
+                self.audio_queue.queue.clear()
+            self.manual_trigger_flag = False
+            ym_manager.unduck(100)
+            self.listening_state_changed.emit(False)
+        else:
             with self.audio_queue.mutex:
                 self.audio_queue.queue.clear()
 
@@ -313,6 +326,16 @@ class STTThread(QThread):
 
                 if stream is None:
                     self.msleep(200)
+                    continue
+
+                if self.is_paused:
+                    active_mode = False
+                    utterance_buffer.clear()
+                    wake_signaled = False
+                    try:
+                        self.audio_queue.get(timeout=0.1)
+                    except queue.Empty:
+                        pass
                     continue
 
                 if self.is_speaking:
