@@ -25,6 +25,8 @@ MAIN_VOICE_JSON = get_resource_path("optimized_models", "voice_tts", "aki_voice_
 WHISPER_VOICE_ONNX = get_resource_path("optimized_models", "whisper_tts", "aki_whisper_int8.onnx")
 WHISPER_VOICE_JSON = get_resource_path("optimized_models", "whisper_tts", "aki_whisper_int8.onnx.json")
 
+ESPEAK_DATA_PATH = get_resource_path("assets", "espeak-ng-data")
+
 DICT_FILE_PATH = get_resource_path("core", "utils", "pronunciation_dict.json")
 CUSTOM_DICTIONARY = {}
 COMPILED_DICT_REGEX = None
@@ -55,8 +57,12 @@ def get_tts_execution_providers():
     return ["CPUExecutionProvider"]
 
 
-def load_piper_voice(model_path, config_path):
-    voice = PiperVoice.load(model_path=model_path, config_path=config_path)
+def load_piper_voice(model_path, config_path, espeak_data_dir=None):
+    data_dir = espeak_data_dir or ESPEAK_DATA_PATH
+    if not os.path.exists(data_dir):
+        voice = PiperVoice.load(model_path=model_path, config_path=config_path)
+    else:
+        voice = PiperVoice.load(model_path=model_path, config_path=config_path, espeak_data_dir=data_dir)
     providers = get_tts_execution_providers()
 
     if "DmlExecutionProvider" in providers:
