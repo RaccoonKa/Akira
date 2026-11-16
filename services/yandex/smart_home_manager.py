@@ -70,12 +70,12 @@ class SmartHomeManager:
 
         device_stems = [w for w in all_words if w not in ignored_stems]
 
-        is_generic_light = any(w in query_clean for w in ["свет", "все", "всё", "везде", "освещен"])
-        is_lamp_specific = any(w in query_clean for w in ["ламп", "люстр", "бра", "ночник"])
-        is_strip_specific = any(w in query_clean for w in ["лент", "подсветк", "диод"])
-        is_garland_specific = any(w in query_clean for w in ["гирлянд", "елк", "елка"])
-        is_socket_specific = any(w in query_clean for w in ["розетк", "чайник", "обогреват", "пол", "подогрев"])
-        is_humidifier_specific = any(w in query_clean for w in ["увлажнител", "пар", "влажност"])
+        is_generic_light = bool(re.search(r'\b(?:свет[а-я]*|все|всё|везде|освещен[а-я]*)\b', query_clean)) and not any(w in query_clean for w in ["светозар", "свят"])
+        is_lamp_specific = bool(re.search(r'\b(?:ламп[а-я]*|люстр[а-я]*|бра|ночник[а-я]*)\b', query_clean))
+        is_strip_specific = bool(re.search(r'\b(?:лент[а-я]*|подсветк[а-я]*|диод[а-я]*)\b', query_clean))
+        is_garland_specific = bool(re.search(r'\b(?:гирлянд[а-я]*|[её]лк[а-я]*)\b', query_clean))
+        is_socket_specific = bool(re.search(r'\b(?:розетк[а-я]*|чайник[а-я]*|обогреват[а-я]*|пол|полы|подогрев[а-я]*)\b', query_clean))
+        is_humidifier_specific = bool(re.search(r'\b(?:увлажнител[а-я]*|пар|влажност[а-я]*)\b', query_clean))
 
         devices_pool = self.devices_cache
         if target_room_id:

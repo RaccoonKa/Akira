@@ -2,6 +2,10 @@ import os
 import re
 import json
 import random
+import sys
+import socket
+import struct
+import ctypes
 from openai import OpenAI
 from core.utils.config import load_config, save_config
 from core.nlp.generative.memory import MemoryManager
@@ -12,6 +16,90 @@ try:
     _HAS_GIGACHAT = True
 except ImportError:
     _HAS_GIGACHAT = False
+
+
+def _get_physical_adapter_info():
+    """
+    Определяет реальный физический сетевой адаптер (Wi-Fi / Ethernet) в обход виртуальных
+    интерфейсов VPN (sing-tun, TAP, WireGuard, Radmin).
+    Возвращает (ifIndex, local_ip) или (None, None).
+    """
+    if sys.platform != "win32":
+        return None, None
+
+    try:
+        class MIB_IPFORWARDROW(ctypes.Structure):
+            _fields_ = [
+                ('dwForwardDest', ctypes.c_ulong),
+                ('dwForwardMask', ctypes.c_ulong),
+                ('dwForwardPolicy', ctypes.c_ulong),
+                ('dwForwardNextHop', ctypes.c_ulong),
+                ('dwForwardIfIndex', ctypes.c_ulong),
+                ('dwForwardType', ctypes.c_ulong),
+                ('dwForwardProto', ctypes.c_ulong),
+                ('dwForwardAge', ctypes.c_ulong),
+                ('dwForwardNextHopAS', ctypes.c_ulong),
+                ('dwForwardMetric1', ctypes.c_ulong),
+                ('dwForwardMetric2', ctypes.c_ulong),
+                ('dwForwardMetric3', ctypes.c_ulong),
+                ('dwForwardMetric4', ctypes.c_ulong),
+                ('dwForwardMetric5', ctypes.c_ulong)
+            ]
+
+        class MIB_IPADDRROW(ctypes.Structure):
+            _fields_ = [
+                ('dwAddr', ctypes.c_ulong),
+                ('dwIndex', ctypes.c_ulong),
+                ('dwMask', ctypes.c_ulong),
+                ('dwBCastAddr', ctypes.c_ulong),
+                ('dwReasmSize', ctypes.c_ulong),
+                ('unused1', ctypes.c_ushort),
+                ('wType', ctypes.c_ushort)
+            ]
+
+        # 1. Таблица сопоставления ifIndex -> IP адрес
+        if_to_ip = {}
+        size = ctypes.c_ulong(0)
+        ctypes.windll.iphlpapi.GetIpAddrTable(None, ctypes.byref(size), 0)
+        buf = (ctypes.c_ubyte * size.value)()
+        if ctypes.windll.iphlpapi.GetIpAddrTable(ctypes.byref(buf), ctypes.byref(size), 0) == 0:
+            num_entries = struct.unpack('I', bytes(buf[:4]))[0]
+            row_size = ctypes.sizeof(MIB_IPADDRROW)
+            for i in range(num_entries):
+                row_bytes = bytes(buf[4 + i * row_size : 4 + (i + 1) * row_size])
+                row = MIB_IPADDRROW.from_buffer_copy(row_bytes)
+                ip = socket.inet_ntoa(struct.pack('<I', row.dwAddr))
+                if not ip.startswith(('127.', '169.254.', '26.')):
+                    if_to_ip[row.dwIndex] = ip
+
+        # 2. Таблица маршрутизации для поиска физического шлюза по умолчанию
+        size2 = ctypes.c_ulong(0)
+        ctypes.windll.iphlpapi.GetIpForwardTable(None, ctypes.byref(size2), 0)
+        buf2 = (ctypes.c_ubyte * size2.value)()
+        physical_candidates = []
+        if ctypes.windll.iphlpapi.GetIpForwardTable(ctypes.byref(buf2), ctypes.byref(size2), 0) == 0:
+            num_entries = struct.unpack('I', bytes(buf2[:4]))[0]
+            row_size = ctypes.sizeof(MIB_IPFORWARDROW)
+            for i in range(num_entries):
+                row_bytes = bytes(buf2[4 + i * row_size : 4 + (i + 1) * row_size])
+                row = MIB_IPFORWARDROW.from_buffer_copy(row_bytes)
+                dest = socket.inet_ntoa(struct.pack('<I', row.dwForwardDest))
+                mask = socket.inet_ntoa(struct.pack('<I', row.dwForwardMask))
+                nexthop = socket.inet_ntoa(struct.pack('<I', row.dwForwardNextHop))
+                if dest == '0.0.0.0' and mask == '0.0.0.0':
+                    ifIndex = row.dwForwardIfIndex
+                    if ifIndex in if_to_ip:
+                        if not nexthop.startswith(('26.', '127.')):
+                            physical_candidates.append((row.dwForwardMetric1, ifIndex, if_to_ip[ifIndex], nexthop))
+
+        physical_candidates.sort(key=lambda x: x[0])
+        if physical_candidates:
+            best = physical_candidates[0]
+            return best[1], best[2]  # ifIndex, local_ip
+    except Exception as e:
+        print(f"[Network Info Error]: {e}")
+
+    return None, None
 
 
 class LLMProvider:
@@ -185,6 +273,69 @@ class LLMProvider:
             "- Если тебя или твоего создателя Свята оскорбляют — никогда не поддакивай, отвечай с сарказмом и иронией."
         )
 
+    def _configure_gigachat_bypass(self, client):
+        """
+        Настраивает прямой сетевой маршрут для GigaChat Сбера в обход активного VPN
+        (sing-tun, TAP, WireGuard) и системных прокси (HTTP/HTTPS/SOCKS).
+        Позволяет GigaChat отвечать даже при включенном VPN.
+        """
+        if not client:
+            return
+
+        # 1. Исключаем домены GigaChat из любых системных прокси
+        sber_hosts = "ngw.devices.sberbank.ru,api.giga.chat,giga.chat,sberbank.ru"
+        current_no_proxy = os.environ.get("NO_PROXY", "")
+        if current_no_proxy:
+            if "sberbank.ru" not in current_no_proxy:
+                os.environ["NO_PROXY"] = f"{current_no_proxy},{sber_hosts}"
+                os.environ["no_proxy"] = os.environ["NO_PROXY"]
+        else:
+            os.environ["NO_PROXY"] = sber_hosts
+            os.environ["no_proxy"] = sber_hosts
+
+        try:
+            from gigachat.client import _get_auth_kwargs, _get_kwargs
+            import httpx
+
+            if_idx, local_ip = _get_physical_adapter_info()
+            sock_opts = None
+            if if_idx is not None and sys.platform == "win32":
+                # IP_UNICAST_IF = 31 в Winsock2 для IPv4: принудительно направляет сокет
+                # через физический адаптер, минуя виртуальные адаптеры VPN в таблице маршрутизации
+                sock_opts = [(socket.IPPROTO_IP, 31, struct.pack('!I', if_idx))]
+
+            transport_kwargs = {
+                "trust_env": False,
+                "verify": False,
+            }
+            if local_ip:
+                transport_kwargs["local_address"] = local_ip
+            if sock_opts:
+                transport_kwargs["socket_options"] = sock_opts
+
+            auth_transport = httpx.HTTPTransport(**transport_kwargs)
+            client_transport = httpx.HTTPTransport(**transport_kwargs)
+
+            auth_kwargs = _get_auth_kwargs(client._settings)
+            client_kwargs = _get_kwargs(client._settings)
+
+            client._auth_client_instance = httpx.Client(
+                transport=auth_transport,
+                trust_env=False,
+                **auth_kwargs
+            )
+            client._client_instance = httpx.Client(
+                transport=client_transport,
+                trust_env=False,
+                **client_kwargs
+            )
+            if local_ip or if_idx:
+                print(f"[GigaChat Bypass]: Прямой обход VPN активен (IP={local_ip}, ifIndex={if_idx})")
+            else:
+                print("[GigaChat Bypass]: Обход прокси активен (trust_env=False)")
+        except Exception as e:
+            print(f"[GigaChat Bypass Error]: {e}")
+
     def _init_gigachat(self):
         if not _HAS_GIGACHAT:
             return False, "Библиотека gigachat не установлена в окружении."
@@ -206,6 +357,9 @@ class LLMProvider:
                 scope="GIGACHAT_API_PERS"
             )
             self._giga_credentials = credentials
+
+            # Настраиваем прямой доступ в обход VPN
+            self._configure_gigachat_bypass(self.giga_client)
 
             models_data = self.giga_client.get_models().data
             model_ids = [
@@ -289,7 +443,16 @@ class LLMProvider:
             "model": self.giga_model_name,
             "messages": messages
         }
-        response = self.giga_client.chat(payload)
+        try:
+            response = self.giga_client.chat(payload)
+        except Exception as e:
+            print(f"[GigaChat Request Failed, refreshing network bypass]: {e}")
+            try:
+                self._configure_gigachat_bypass(self.giga_client)
+                response = self.giga_client.chat(payload)
+            except Exception:
+                raise e
+
         raw_answer = response.choices[0].message.content.strip()
 
         censorship_markers = [

@@ -325,9 +325,13 @@ class CommandParser:
             if st in text_low:
                 return "shutdown"
 
-        if re.search(r'\b(?:пока|бай-бай|до скорого)\b', text_low):
-            if not any(w in text_low for w in ["покажи", "покатай", "пока что", "покажи-ка", "покажите"]):
-                return "shutdown"
+        # "пока" как команда завершения работы должна быть отдельной репликой прощания (не союзом "пока ты...", "пока я...")
+        if re.search(r'\b(?:бай-бай|до скорого)\b', text_low) or (
+            len(words) <= 4 and re.search(r'\bпока\b', text_low)
+            and not re.search(r'\bпока\s+(?:ты|вы|я|мы|он|она|они|не|что|еще|ещё|там|тут|здесь|будет|ид[её]т|работает|дела[юе][а-я]*|говор[юя][а-я]*)\b', text_low)
+            and not any(w in text_low for w in ["покажи", "покатай", "пока что", "пока-что", "покажи-ка", "покажите", "покамест"])
+        ):
+            return "shutdown"
 
         movie_stop_phrases = [
             "выключи фильм", "останови фильм", "закрой фильм", "выруби фильм",
@@ -354,21 +358,20 @@ class CommandParser:
 
         sh_on_verbs = ["включи", "зажги", "подруби", "вруби", "запусти", "подними"]
         sh_off_verbs = ["выключи", "потуши", "погаси", "отруби", "выруби", "заглуши"]
-        sh_targets = [
-            "свет", "люстру", "люстра", "люстры", "лампу", "лампа", "лампы", "лампочку", "лампочка",
-            "бра", "ночник", "подсветку", "подсветка", "розетку", "розетка", "розетки",
-            "гирлянду", "гирлянда", "гирлянды", "света", "свете", "ленту", "лента", "ленты",
-            "елку", "ёлку", "елка", "ёлка", "увлажнитель", "увлажнителя", "пол", "полы", "подогрев",
-            "детскую", "детской", "кухню", "кухне", "гостиную", "гостиной", "коридор", "коридоре",
-            "всё", "все", "везде"
-        ]
+        sh_target_pattern = (
+            r'\b(?:свет[а-я]*|люстр[а-я]*|ламп[а-я]*|лампочк[а-я]*|бра|ночник[а-я]*|подсветк[а-я]*|'
+            r'розетк[а-я]*|гирлянд[а-я]*|лент[а-я]*|[её]лк[а-я]*|увлажнител[а-я]*|подогрев[а-я]*|'
+            r'детск(?:ую|ой)|кухн(?:ю|е)|гостин(?:ую|ой)|коридор[е]?|пол|полы)\b'
+        )
+        has_sh_target = bool(re.search(sh_target_pattern, text_low))
+        # "всё", "все", "везде" - только если фраза короткая и конкретная (например, "выключи всё", "погаси везде")
+        if not has_sh_target and len(words) <= 4 and re.search(r'\b(?:вс[её]|везде)\b', text_low):
+            has_sh_target = True
 
-        if any(verb in text_low for verb in sh_on_verbs):
-            if any(target in text_low for target in sh_targets):
+        if has_sh_target:
+            if any(re.search(r'\b' + re.escape(verb) + r'\b', text_low) for verb in sh_on_verbs):
                 return "smart_home_on"
-
-        if any(verb in text_low for verb in sh_off_verbs):
-            if any(target in text_low for target in sh_targets):
+            if any(re.search(r'\b' + re.escape(verb) + r'\b', text_low) for verb in sh_off_verbs):
                 return "smart_home_off"
 
         scenario_triggers = [
