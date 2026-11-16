@@ -7,6 +7,7 @@ import subprocess
 import webbrowser
 import psutil
 import pyautogui
+from core.utils.config import get_resource_path
 
 VLC_DOWNLOAD_URL = "https://www.videolan.org/vlc/"
 
@@ -17,13 +18,48 @@ class VLCPlayer:
         self.process = None
 
     def _find_vlc(self) -> str | None:
+        # 1. Проверяем реестр Windows
+        if sys.platform == "win32":
+            try:
+                import winreg
+                reg_paths = [
+                    (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\vlc.exe"),
+                    (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\vlc.exe"),
+                    (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\VideoLAN\VLC"),
+                    (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\VideoLAN\VLC"),
+                    (winreg.HKEY_CURRENT_USER, r"SOFTWARE\VideoLAN\VLC"),
+                ]
+                for root_key, subkey in reg_paths:
+                    try:
+                        with winreg.OpenKey(root_key, subkey) as k:
+                            try:
+                                val, _ = winreg.QueryValueEx(k, "")
+                                if val and os.path.exists(val):
+                                    return val
+                            except Exception:
+                                pass
+                            try:
+                                val, _ = winreg.QueryValueEx(k, "InstallDir")
+                                if val:
+                                    cand = os.path.join(val, "vlc.exe")
+                                    if os.path.exists(cand):
+                                        return cand
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        # 2. Проверяем стандартные каталоги установки
         candidates = [
             os.path.join(os.environ.get("ProgramFiles", "C:\\Program Files"), "VideoLAN", "VLC", "vlc.exe"),
             os.path.join(os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)"), "VideoLAN", "VLC", "vlc.exe"),
+            os.path.join(os.environ.get("ProgramW6432", "C:\\Program Files"), "VideoLAN", "VLC", "vlc.exe"),
             os.path.join(os.environ.get("LocalAppData", ""), "Programs", "VideoLAN", "VLC", "vlc.exe")
         ]
         for path in candidates:
-            if os.path.exists(path):
+            if path and os.path.exists(path):
                 return path
         return None
 
@@ -33,17 +69,31 @@ class VLCPlayer:
         return self.vlc_path is not None
 
     def _get_installer_path(self) -> str:
+        candidates = [
+            get_resource_path("assets", "installers", "vlc_installer.exe"),
+            get_resource_path("installers", "vlc_installer.exe"),
+            get_resource_path("assets", "vlc_installer.exe")
+        ]
         if getattr(sys, 'frozen', False):
-            base_dir = os.path.dirname(sys.executable)
-        else:
-            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        return os.path.join(base_dir, "assets", "installers", "vlc_installer.exe")
+            exe_dir = os.path.dirname(sys.executable)
+            candidates.extend([
+                os.path.join(exe_dir, "_internal", "assets", "installers", "vlc_installer.exe"),
+                os.path.join(exe_dir, "assets", "installers", "vlc_installer.exe"),
+                os.path.join(exe_dir, "_internal", "vlc_installer.exe"),
+                os.path.join(exe_dir, "vlc_installer.exe")
+            ])
+        for p in candidates:
+            if p and os.path.exists(p):
+                return p
+        return candidates[0]
 
     def install_silent(self) -> bool:
         installer = self._get_installer_path()
         if not os.path.exists(installer):
+            print(f"[VLC Installer Warning]: Установщик не найден по пути: {installer}")
             return False
         try:
+            print(f"[VLC Installer]: Запуск тихого установщика из {installer}...")
             ret = ctypes.windll.shell32.ShellExecuteW(
                 None,
                 "runas",
@@ -53,12 +103,16 @@ class VLCPlayer:
                 1
             )
             if ret > 32:
-                for _ in range(60):
+                for i in range(60):
                     time.sleep(1)
                     if self.is_available():
+                        print(f"[VLC Installer]: VLC успешно установлен и готов к работе ({i + 1} сек.)")
                         return True
+            else:
+                print(f"[VLC Installer Error]: ShellExecute вернул код {ret}")
             return False
-        except Exception:
+        except Exception as e:
+            print(f"[VLC Installer Exception]: {e}")
             return False
 
     def open_download_page(self):

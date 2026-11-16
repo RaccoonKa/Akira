@@ -55,9 +55,11 @@ config_template = os.path.join(base_dir, 'personal_data', 'configs', 'config.tem
 if os.path.exists(config_template):
     datas.append((config_template, os.path.join('personal_data', 'configs')))
 
-dict_json_path = os.path.join(base_dir, 'core', 'utils', 'pronunciation_dict.json')
-if os.path.exists(dict_json_path):
-    datas.append((dict_json_path, os.path.join('core', 'utils')))
+core_utils_dir = os.path.join(base_dir, 'core', 'utils')
+if os.path.exists(core_utils_dir):
+    for f in os.listdir(core_utils_dir):
+        if f.endswith('.json'):
+            datas.append((os.path.join(core_utils_dir, f), os.path.join('core', 'utils')))
 
 datas += collect_data_files('transformers')
 datas += collect_data_files('torch')

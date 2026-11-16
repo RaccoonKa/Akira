@@ -27,12 +27,23 @@ GAME_STOP_WORDS = [
 ]
 
 
+from core.utils.config import get_resource_path
+
+
 def _get_aliases_path() -> str:
+    path = get_resource_path("core", "utils", "movie_aliases.json")
+    if os.path.exists(path):
+        return path
     if getattr(sys, 'frozen', False):
-        base_dir = os.path.dirname(sys.executable)
-    else:
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    return os.path.join(base_dir, "core", "utils", "movie_aliases.json")
+        exe_dir = os.path.dirname(sys.executable)
+        candidates = [
+            os.path.join(exe_dir, "_internal", "core", "utils", "movie_aliases.json"),
+            os.path.join(exe_dir, "core", "utils", "movie_aliases.json"),
+        ]
+        for c in candidates:
+            if os.path.exists(c):
+                return c
+    return path
 
 
 def load_movie_aliases() -> dict:

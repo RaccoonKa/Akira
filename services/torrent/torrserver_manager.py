@@ -6,24 +6,32 @@ import urllib.parse
 import subprocess
 import requests
 import tempfile
+from core.utils.config import get_resource_path, get_user_data_path
 
 TORRSERVER_PORT = 8090
 TORRSERVER_URL = f"http://127.0.0.1:{TORRSERVER_PORT}"
 
 
 def get_torrserver_bin_path() -> str:
-    if getattr(sys, 'frozen', False):
-        base_dir = os.path.dirname(sys.executable)
-    else:
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
     paths_to_check = [
-        os.path.join(base_dir, "assets", "bin", "torrserver.exe"),
-        os.path.join(base_dir, "bin", "torrserver.exe"),
-        os.path.join(base_dir, "torrserver.exe")
+        get_resource_path("assets", "installers", "torrserver.exe"),
+        get_resource_path("assets", "bin", "torrserver.exe"),
+        get_resource_path("installers", "torrserver.exe"),
+        get_resource_path("bin", "torrserver.exe"),
+        get_resource_path("torrserver.exe")
     ]
+    if getattr(sys, 'frozen', False):
+        exe_dir = os.path.dirname(sys.executable)
+        paths_to_check.extend([
+            os.path.join(exe_dir, "_internal", "assets", "installers", "torrserver.exe"),
+            os.path.join(exe_dir, "assets", "installers", "torrserver.exe"),
+            os.path.join(exe_dir, "_internal", "assets", "bin", "torrserver.exe"),
+            os.path.join(exe_dir, "assets", "bin", "torrserver.exe"),
+            os.path.join(exe_dir, "_internal", "torrserver.exe"),
+            os.path.join(exe_dir, "torrserver.exe")
+        ])
     for p in paths_to_check:
-        if os.path.exists(p):
+        if p and os.path.exists(p):
             return p
     return paths_to_check[0]
 
@@ -53,6 +61,9 @@ class TorrServerManager:
             print(f"[TorrServer Error]: Файл {bin_path} не найден!")
             return False
 
+        torr_data_dir = get_user_data_path("torrserver")
+        os.makedirs(torr_data_dir, exist_ok=True)
+
         try:
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -61,7 +72,8 @@ class TorrServerManager:
             flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
             self.process = subprocess.Popen(
-                [bin_path, "-p", str(TORRSERVER_PORT)],
+                [bin_path, "-p", str(TORRSERVER_PORT), "-d", torr_data_dir],
+                cwd=torr_data_dir,
                 startupinfo=startupinfo,
                 creationflags=flags,
                 stdout=subprocess.DEVNULL,
@@ -71,7 +83,7 @@ class TorrServerManager:
             for _ in range(25):
                 time.sleep(0.2)
                 if self.is_running():
-                    print("[TorrServer]: Локальный сервер запущен на порту 8090")
+                    print(f"[TorrServer]: Локальный сервер запущен на порту {TORRSERVER_PORT}")
                     return True
         except Exception as e:
             print(f"[TorrServer Start Error]: {e}")

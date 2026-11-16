@@ -153,10 +153,18 @@ class YandexMusicManager:
         if HAS_VLC and self.player:
             return True
 
-        from services.hdrezka.rezka_player import install_vlc_silent, is_vlc_available
+        from services.torrent.vlc_player import vlc_player
 
         if not HAS_VLC:
-            if install_vlc_silent() or is_vlc_available():
+            if vlc_player.is_available() or vlc_player.install_silent():
+                vlc_exe = vlc_player.vlc_path or vlc_player._find_vlc()
+                if vlc_exe:
+                    vlc_dir = os.path.dirname(vlc_exe)
+                    try:
+                        os.add_dll_directory(vlc_dir)
+                    except Exception:
+                        pass
+                    os.environ["PATH"] = vlc_dir + os.pathsep + os.environ.get("PATH", "")
                 try:
                     import vlc as _vlc
                     vlc = _vlc
