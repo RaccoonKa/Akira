@@ -43,6 +43,7 @@ class GuiAdapter:
 
         self._cached_sota_target = None
         self._cached_happ_target = None
+        self._cached_browsec_target = None
 
     def _get_system_scale(self) -> int:
         try:
@@ -73,19 +74,29 @@ class GuiAdapter:
 
     def _collect_template_paths(self, app_name: str, subfolder: str = "") -> list:
         scale_folder = self._get_closest_scale_folder()
-        app_dir = os.path.join(self.templates_dir, scale_folder, app_name)
+        candidates = []
 
+        # 1. Поиск по системному масштабу (100, 125...)
+        d1 = os.path.join(self.templates_dir, scale_folder, app_name)
         if subfolder:
-            app_dir = os.path.join(app_dir, subfolder)
+            d1 = os.path.join(d1, subfolder)
+        candidates.append(d1)
 
-        if not os.path.exists(app_dir):
-            return []
+        # 2. Прямой поиск в templates/<app_name>/...
+        d2 = os.path.join(self.templates_dir, app_name)
+        if subfolder:
+            d2 = os.path.join(d2, subfolder)
+        candidates.append(d2)
 
         template_paths = []
-        for root, _, files in os.walk(app_dir):
-            for file in files:
-                if file.lower().endswith(".png"):
-                    template_paths.append(os.path.join(root, file))
+        for c_dir in candidates:
+            if os.path.exists(c_dir):
+                for root, _, files in os.walk(c_dir):
+                    for file in files:
+                        if file.lower().endswith(".png"):
+                            template_paths.append(os.path.join(root, file))
+            if template_paths:
+                break
 
         return template_paths
 
@@ -102,7 +113,7 @@ class GuiAdapter:
             ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
             w = rect.right - rect.left
             h = rect.bottom - rect.top
-            if w > 100 and h > 100:
+            if w > 100 and h > 100 and rect.left > -10000:
                 try:
                     if bottom_only:
                         top_bound = rect.bottom - int(h * 0.28)
@@ -186,30 +197,42 @@ class GuiAdapter:
             w = rect.right - rect.left
             h = rect.bottom - rect.top
 
-            is_visible = bool(ctypes.windll.user32.IsWindowVisible(hwnd))
+            class_buff = ctypes.create_unicode_buffer(256)
+            ctypes.windll.user32.GetClassNameW(hwnd, class_buff, 256)
+            class_name = class_buff.value.strip()
 
-            matched = False
-            if any(kw.lower() in window_title for kw in title_keywords):
-                matched = True
-            elif process_names:
+            is_visible = bool(ctypes.windll.user32.IsWindowVisible(hwnd))
+            is_iconic = bool(ctypes.windll.user32.IsIconic(hwnd))
+
+            title_matched = any(kw.lower() in window_title for kw in title_keywords) if title_keywords else False
+            proc_matched = False
+            if process_names:
                 lpdw_pid = ctypes.c_ulong()
                 ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(lpdw_pid))
                 try:
                     p = psutil.Process(lpdw_pid.value)
-                    p_name = p.name().lower()
+                    p_name = (p.name() or "").lower()
                     if any(pn.lower() in p_name for pn in process_names):
-                        matched = True
+                        proc_matched = True
                 except Exception:
                     pass
 
-            if matched:
+            if title_matched or proc_matched:
                 score = 0
+                if title_matched:
+                    score += 50
+                if class_name == "Chrome_WidgetWin_1":
+                    score += 40
+                elif "Chrome_WidgetWin" in class_name:
+                    score += 20
                 if is_visible:
                     score += 20
-                if w > 150 and h > 150:
-                    score += 20
+                if is_iconic:
+                    score += 15
+                if w > 150 and h > 150 and rect.left > -10000:
+                    score += 30
                 if length > 0:
-                    score += 10
+                    score += 20
                 candidates.append((score, hwnd))
 
             return True
@@ -223,12 +246,56 @@ class GuiAdapter:
         return 0
 
     def _show_and_focus(self, hwnd: int):
-        if hwnd and ctypes.windll.user32.IsWindow(hwnd):
-            ctypes.windll.user32.ShowWindow(hwnd, 9)
-            ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)
-            ctypes.windll.user32.SetForegroundWindow(hwnd)
-            ctypes.windll.user32.keybd_event(0x12, 0, 2, 0)
-            time.sleep(0.2)
+        if not hwnd or not ctypes.windll.user32.IsWindow(hwnd):
+            return
+
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+
+        # 1. Если окно свернуто, восстанавливаем
+        if user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        else:
+            user32.ShowWindow(hwnd, 5)  # SW_SHOW
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+
+        # 2. Обход Windows Foreground Lock через виртуальный Alt и AttachThreadInput
+        # Сначала гарантируем отпускание клавиши Alt на случай залипания
+        user32.keybd_event(0x12, 0, 2, 0)  # KEYEVENTF_KEYUP
+        time.sleep(0.02)
+        user32.keybd_event(0x12, 0, 0, 0)  # KEYEVENTF_KEYDOWN
+        time.sleep(0.02)
+        user32.keybd_event(0x12, 0, 2, 0)  # KEYEVENTF_KEYUP
+        time.sleep(0.02)
+
+        fore_hwnd = user32.GetForegroundWindow()
+        cur_thread = kernel32.GetCurrentThreadId()
+        target_thread = user32.GetWindowThreadProcessId(hwnd, None)
+        fore_thread = user32.GetWindowThreadProcessId(fore_hwnd, None) if fore_hwnd else 0
+
+        attached_fore = False
+        attached_target = False
+
+        if fore_thread and fore_thread != cur_thread:
+            attached_fore = bool(user32.AttachThreadInput(cur_thread, fore_thread, True))
+        if target_thread and target_thread != cur_thread:
+            attached_target = bool(user32.AttachThreadInput(cur_thread, target_thread, True))
+
+        user32.BringWindowToTop(hwnd)
+        user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040)
+        user32.SetWindowPos(hwnd, -2, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040)
+        user32.SetForegroundWindow(hwnd)
+        user32.SetActiveWindow(hwnd)
+        user32.ShowWindowAsync(hwnd, 9)
+
+        if attached_target:
+            user32.AttachThreadInput(cur_thread, target_thread, False)
+        if attached_fore:
+            user32.AttachThreadInput(cur_thread, fore_thread, False)
+
+        # Всегда гарантированно отпускаем Alt
+        user32.keybd_event(0x12, 0, 2, 0)
+        time.sleep(0.1)
 
     def _minimize(self, hwnd: int):
         if hwnd and ctypes.windll.user32.IsWindow(hwnd):
@@ -384,6 +451,41 @@ class GuiAdapter:
             self._cached_happ_target = target
         return target or ""
 
+    def _find_browsec_target(self) -> str:
+        if self._cached_browsec_target and os.path.exists(self._cached_browsec_target):
+            return self._cached_browsec_target
+
+        reg_path = self._get_path_from_uninstall_registry("Browsec") or self._get_path_from_protocol_registry("browsec")
+        if reg_path:
+            self._cached_browsec_target = reg_path
+            return reg_path
+
+        # 1. Проверяем стандартную папку установки Electron
+        localappdata = os.environ.get("LOCALAPPDATA", "")
+        std_electron_path = os.path.join(localappdata, "Programs", "browsec-desktop", "Browsec.exe")
+        if os.path.exists(std_electron_path):
+            self._cached_browsec_target = std_electron_path
+            return std_electron_path
+
+        # 2. Ищем по процессам и стандартным каталогам
+        target = self._find_target_executable("Browsec.exe", ["browsec", "browsec-desktop"])
+        if not target:
+            target = self._find_target_executable("browsec.exe", ["browsec", "browsec-desktop"])
+
+        # 3. Проверяем ярлык в меню Пуск
+        if not target:
+            appdata = os.environ.get("APPDATA", "")
+            lnk_path = os.path.join(appdata, r"Microsoft\Windows\Start Menu\Programs\Browsec.lnk")
+            if os.path.exists(lnk_path):
+                target = lnk_path
+
+        if not target:
+            target = shutil.which("Browsec.exe") or shutil.which("browsec.exe")
+
+        if target:
+            self._cached_browsec_target = target
+        return target or ""
+
     def _launch_target(self, target_path: str):
         try:
             os.startfile(target_path)
@@ -486,3 +588,145 @@ class GuiAdapter:
 
         except Exception as e:
             return f"Не удалось управлять Хапп: {e}"
+
+    def connect_browsec(self):
+        return self._set_browsec_state(target_state=True)
+
+    def disconnect_browsec(self):
+        return self._set_browsec_state(target_state=False)
+
+    def _set_browsec_state(self, target_state: bool):
+        try:
+            target_path = self._find_browsec_target()
+
+            # 1. Проверяем, есть ли уже видимое окно Browsec прямо на экране
+            hwnd = self._get_window_hwnd(["Browsec"], ["browsec.exe"])
+            is_already_on_screen = False
+
+            if hwnd and ctypes.windll.user32.IsWindow(hwnd):
+                rect = wintypes.RECT()
+                ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
+                w = rect.right - rect.left
+                h = rect.bottom - rect.top
+                is_iconic = bool(ctypes.windll.user32.IsIconic(hwnd))
+                is_vis = bool(ctypes.windll.user32.IsWindowVisible(hwnd))
+                if is_vis and not is_iconic and rect.left > -10000 and w > 150 and h > 150:
+                    is_already_on_screen = True
+
+            # 2. Если окно не видно на экране (оно свернуто в трей, минимизировано или не запущено),
+            # запускаем приложение для передачи сигнала Electron развернуть окно на передний план
+            if not is_already_on_screen:
+                if not target_path:
+                    return "Не удалось найти приложение Browsec."
+                self._launch_target(target_path)
+
+            # 3. Быстро дожидаемся развернутого окна (максимум 2.5 секунды вместо прежних 8)
+            window_ready = False
+            for _ in range(12):
+                hwnd = self._get_window_hwnd(["Browsec"], ["browsec.exe"])
+                if hwnd and ctypes.windll.user32.IsWindow(hwnd):
+                    self._show_and_focus(hwnd)
+                    rect = wintypes.RECT()
+                    ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
+                    w = rect.right - rect.left
+                    h = rect.bottom - rect.top
+                    is_iconic = bool(ctypes.windll.user32.IsIconic(hwnd))
+                    if not is_iconic and rect.left > -10000 and w > 150 and h > 150:
+                        window_ready = True
+                        break
+                time.sleep(0.2)
+
+            if not hwnd or not window_ready:
+                return "Не удалось дождаться открытия окна Browsec"
+
+            self._show_and_focus(hwnd)
+            time.sleep(0.35)
+
+            # 4. Сбор шаблонов для обоих состояний
+            on_templates = self._collect_template_paths("browsec", subfolder="on")
+            off_templates = self._collect_template_paths("browsec", subfolder="off")
+            if not on_templates or not off_templates:
+                all_browsec = self._collect_template_paths("browsec")
+                on_templates = on_templates or all_browsec
+                off_templates = off_templates or all_browsec
+
+            # 5. Быстрое и надёжное распознавание тумблера и его цвета
+            current_is_on = None
+            toggle_coords = None
+
+            for _ in range(6):
+                rect = wintypes.RECT()
+                ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
+                w = rect.right - rect.left
+                h = rect.bottom - rect.top
+
+                if w > 100 and h > 100 and rect.left > -10000:
+                    try:
+                        screen_pil = ImageGrab.grab(bbox=(rect.left, rect.top, rect.right, rect.bottom))
+                        screen_bgr = cv2.cvtColor(np.array(screen_pil), cv2.COLOR_RGB2BGR)
+                        screen_gray = cv2.cvtColor(screen_bgr, cv2.COLOR_BGR2GRAY)
+
+                        best_on_score, best_on_loc, on_shape = -1.0, None, (60, 120)
+                        best_off_score, best_off_loc, off_shape = -1.0, None, (60, 120)
+
+                        for tpl_path in on_templates:
+                            tpl = cv2.imread(tpl_path, cv2.IMREAD_GRAYSCALE)
+                            if tpl is not None and screen_gray.shape[0] >= tpl.shape[0] and screen_gray.shape[1] >= tpl.shape[1]:
+                                res = cv2.matchTemplate(screen_gray, tpl, cv2.TM_CCOEFF_NORMED)
+                                _, max_v, _, max_l = cv2.minMaxLoc(res)
+                                if max_v > best_on_score:
+                                    best_on_score = max_v
+                                    best_on_loc = max_l
+                                    on_shape = tpl.shape
+
+                        for tpl_path in off_templates:
+                            tpl = cv2.imread(tpl_path, cv2.IMREAD_GRAYSCALE)
+                            if tpl is not None and screen_gray.shape[0] >= tpl.shape[0] and screen_gray.shape[1] >= tpl.shape[1]:
+                                res = cv2.matchTemplate(screen_gray, tpl, cv2.TM_CCOEFF_NORMED)
+                                _, max_v, _, max_l = cv2.minMaxLoc(res)
+                                if max_v > best_off_score:
+                                    best_off_score = max_v
+                                    best_off_loc = max_l
+                                    off_shape = tpl.shape
+
+                        # Если найден тумблер (порог 0.50 для устойчивости к масштабу)
+                        if max(best_on_score, best_off_score) >= 0.50:
+                            active_loc = best_on_loc if best_on_score >= best_off_score else best_off_loc
+                            active_shape = on_shape if best_on_score >= best_off_score else off_shape
+                            bx, by = active_loc
+                            bw, bh = active_shape[1], active_shape[0]
+
+                            crop = screen_bgr[by:by+bh, bx:bx+bw]
+                            hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+                            green_pixels = int(np.count_nonzero(cv2.inRange(hsv, np.array([35, 40, 40]), np.array([85, 255, 255]))))
+
+                            # В активном зелёном тумблере > 1500 зелёных пикселей, в сером 0
+                            current_is_on = (green_pixels > 200)
+                            toggle_coords = (rect.left + bx + bw // 2, rect.top + by + bh // 2)
+                            break
+                    except Exception as e:
+                        print(f"[Browsec Detection Error]: {e}")
+
+                time.sleep(0.15)
+
+            if current_is_on is None:
+                self._minimize(hwnd)
+                return "Открыла Browsec, но не смогла распознать тумблер"
+
+            # 6. Если Browsec уже находится в желаемом состоянии
+            if current_is_on == target_state:
+                self._minimize(hwnd)
+                return "Browsec уже " + ("включен!" if target_state else "выключен!")
+
+            # 7. Кликаем по тумблеру для смены состояния
+            if toggle_coords:
+                self._safe_click(toggle_coords[0], toggle_coords[1])
+                time.sleep(0.4)
+                self._minimize(hwnd)
+                return "Включила Browsec!" if target_state else "Выключила Browsec!"
+
+            self._minimize(hwnd)
+            return "Не удалось переключить тумблер Browsec"
+
+        except Exception as e:
+            return f"Не удалось управлять Browsec: {e}"

@@ -1,4 +1,7 @@
+import os
 import re
+import shutil
+import psutil
 from core.utils.config import load_config, save_config
 from services.vpn.adapters.core_adapter import CoreAdapter
 from services.vpn.adapters.gui_adapter import GuiAdapter
@@ -6,6 +9,11 @@ from services.vpn.adapters.gui_adapter import GuiAdapter
 
 class VpnManager:
     VPN_ALIASES = {
+        "browsec": [
+            "browsec", "броусек", "браусек", "бросек", "браусик", "броусик",
+            "browsec vpn", "броусек впн", "браусек впн", "бросек впн",
+            "бровсек", "бровзек", "browzec"
+        ],
         "sota": [
             "сота", "sota", "соту", "соте", "сотой", "соты", "сотовый",
             "sota vpn", "sota connect", "сота впн", "соту впн", "соте впн",
@@ -38,6 +46,14 @@ class VpnManager:
         ]
     }
 
+    VPN_DISPLAY_NAMES = {
+        "browsec": "Browsec",
+        "sota": "Sota",
+        "happ": "Happ",
+        "v2ray": "V2Ray",
+        "wireguard": "WireGuard"
+    }
+
     GENERIC_VPN_TRIGGERS = [
         "впн", "vpn", "вэ пэ эн", "вэпээн", "випиэн", "ви пи эн", "впээн", "вэпэн",
         "вэпээн", "випиэн", "вэпэн", "випэн", "впнн", "вппн", "ввпн", "впм",
@@ -48,6 +64,81 @@ class VpnManager:
         self.core = CoreAdapter()
         self.gui = GuiAdapter()
         self.last_active_vpn = None
+
+    def is_process_running(self, process_names: list) -> bool:
+        """Проверяет, запущен ли хотя бы один процесс из списка."""
+        low_names = [p.lower() for p in process_names]
+        for proc in psutil.process_iter(['name']):
+            try:
+                pname = (proc.info['name'] or '').lower()
+                if any(pname == target for target in low_names):
+                    return True
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        return False
+
+    def detect_installed_vpns(self) -> list[str]:
+        """Определяет, какие VPN-клиенты установлены в системе у пользователя."""
+        installed = []
+
+        # 1. Browsec
+        try:
+            if self.gui._find_browsec_target() or self.is_process_running(["browsec.exe"]):
+                installed.append("browsec")
+        except Exception:
+            pass
+
+        # 2. Sota
+        try:
+            if self.gui._find_sota_target() or self.is_process_running(["sota connect.exe", "sotaconnect.exe", "sota.exe", "sotaconnectclient.exe"]):
+                installed.append("sota")
+        except Exception:
+            pass
+
+        # 3. Happ
+        try:
+            if self.gui._find_happ_target() or self.is_process_running(["happ.exe"]):
+                installed.append("happ")
+        except Exception:
+            pass
+
+        # 4. V2Ray / Xray
+        try:
+            if (os.path.exists(r"C:\v2ray\v2ray.exe")
+                    or shutil.which("v2ray.exe")
+                    or shutil.which("xray.exe")
+                    or self.is_process_running(["v2ray.exe", "xray.exe"])):
+                installed.append("v2ray")
+        except Exception:
+            pass
+
+        # 5. WireGuard
+        try:
+            prog_files = os.environ.get("PROGRAMFILES", r"C:\Program Files")
+            wg_path = os.path.join(prog_files, "WireGuard", "wireguard.exe")
+            if (os.path.exists(wg_path)
+                    or shutil.which("wireguard.exe")
+                    or self.is_process_running(["wireguard.exe"])):
+                installed.append("wireguard")
+        except Exception:
+            pass
+
+        return installed
+
+    def get_running_vpns(self) -> list[str]:
+        """Возвращает список VPN-клиентов, которые запущены прямо сейчас."""
+        running = []
+        checks = [
+            ("browsec", ["browsec.exe"]),
+            ("sota", ["sota connect.exe", "sotaconnect.exe", "sota.exe", "sotaconnectclient.exe"]),
+            ("happ", ["happ.exe"]),
+            ("v2ray", ["v2ray.exe", "xray.exe"]),
+            ("wireguard", ["wireguard.exe"])
+        ]
+        for key, procs in checks:
+            if self.is_process_running(procs):
+                running.append(key)
+        return running
 
     def get_configured_vpn(self) -> str:
         cfg = load_config()
@@ -75,9 +166,19 @@ class VpnManager:
         return any(re.search(r'\b' + re.escape(w) + r'\b', text_low) for w in self.GENERIC_VPN_TRIGGERS)
 
     def connect(self, specific_vpn: str = None) -> str:
-        target = specific_vpn or self.get_configured_vpn()
+        target = specific_vpn
+        if not target or target == "none":
+            installed = self.detect_installed_vpns()
+            if len(installed) == 1:
+                target = installed[0]
+            else:
+                target = self.get_configured_vpn()
 
-        if target == "sota":
+        if target == "browsec":
+            res = self.gui.connect_browsec()
+            self.last_active_vpn = "browsec"
+            return res
+        elif target == "sota":
             res = self.gui.connect_sota()
             self.last_active_vpn = "sota"
             return res
@@ -97,9 +198,23 @@ class VpnManager:
             return "none"
 
     def disconnect(self, specific_vpn: str = None) -> str:
-        target = specific_vpn or self.last_active_vpn or self.get_configured_vpn()
+        target = specific_vpn or self.last_active_vpn
+        if not target or target == "none":
+            running = self.get_running_vpns()
+            if len(running) == 1:
+                target = running[0]
+            else:
+                installed = self.detect_installed_vpns()
+                if len(installed) == 1:
+                    target = installed[0]
+                else:
+                    target = self.get_configured_vpn()
 
-        if target == "sota":
+        if target == "browsec":
+            res = self.gui.disconnect_browsec()
+            self.last_active_vpn = None
+            return res
+        elif target == "sota":
             res = self.gui.disconnect_sota()
             self.last_active_vpn = None
             return res
