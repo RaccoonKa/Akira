@@ -1,3 +1,4 @@
+import os
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QLineEdit
 )
@@ -19,7 +20,9 @@ class SpotifyAuthWorker(QThread):
 
     def run(self):
         try:
-            cache_path = get_user_data_path(".spotify_cache")
+            cache_dir = get_user_data_path("cache")
+            os.makedirs(cache_dir, exist_ok=True)
+            cache_path = os.path.join(cache_dir, ".spotify_cache")
             scope = (
                 "user-read-playback-state "
                 "user-modify-playback-state "

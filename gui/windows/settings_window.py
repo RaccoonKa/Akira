@@ -1485,7 +1485,9 @@ class SettingsFrame(QFrame):
             self.lbl_alarm_status.show()
             QGuiApplication.processEvents()
 
-            target_wav = get_user_data_path("custom_alarm.wav")
+            sounds_dir = get_user_data_path("sounds")
+            os.makedirs(sounds_dir, exist_ok=True)
+            target_wav = os.path.join(sounds_dir, "custom_alarm.wav")
             ok = convert_audio_to_wav(file_path, target_wav)
 
             if ok and os.path.exists(target_wav) and is_valid_wav(target_wav):
@@ -1884,7 +1886,25 @@ class SettingsFrame(QFrame):
         idx_alarm = self.alarm_sound_combo.findData(alarm_sound_val)
         if idx_alarm != -1:
             self.alarm_sound_combo.setCurrentIndex(idx_alarm)
-        self.custom_alarm_path = cfg.get("custom_alarm_path", "")
+
+        sounds_dir = get_user_data_path("sounds")
+        os.makedirs(sounds_dir, exist_ok=True)
+        new_alarm_path = os.path.join(sounds_dir, "custom_alarm.wav")
+        old_alarm_path = get_user_data_path("custom_alarm.wav")
+
+        if os.path.exists(old_alarm_path) and not os.path.exists(new_alarm_path):
+            try:
+                shutil.move(old_alarm_path, new_alarm_path)
+            except Exception:
+                pass
+
+        saved_alarm_path = cfg.get("custom_alarm_path", "")
+        if saved_alarm_path == old_alarm_path and os.path.exists(new_alarm_path):
+            saved_alarm_path = new_alarm_path
+            cfg["custom_alarm_path"] = new_alarm_path
+            save_config(cfg)
+
+        self.custom_alarm_path = saved_alarm_path
         self.btn_choose_custom_alarm.setVisible(alarm_sound_val == "custom")
 
         gender_val = cfg.get("user_gender", "male").lower()
