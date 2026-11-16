@@ -35,6 +35,21 @@ os.environ["QT_LOGGING_RULES"] = "qt.qpa.window=false"
 os.environ["SSL_CERT_FILE"] = certifi.where()
 os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 
+from PyQt6.QtCore import qInstallMessageHandler, QtMsgType
+
+def _qt_message_handler(msg_type, context, message):
+    # Подавляем диагностические сообщения завершения QThreadStorage
+    if "QThreadStorage" in message:
+        return
+    if "qt.qpa" in getattr(context, "category", ""):
+        return
+    if msg_type == QtMsgType.QtFatalMsg:
+        print(f"[Qt Fatal]: {message}", file=sys.stderr)
+    elif msg_type == QtMsgType.QtCriticalMsg:
+        print(f"[Qt Critical]: {message}", file=sys.stderr)
+
+qInstallMessageHandler(_qt_message_handler)
+
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QIcon
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
@@ -149,6 +164,8 @@ def main():
 
     tray = SystemTray(window, app)
     tray.show()
+
+    app.aboutToQuit.connect(window.shutdown)
 
     sys.exit(app.exec())
 

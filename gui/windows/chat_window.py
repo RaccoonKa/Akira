@@ -11,7 +11,7 @@ from services.telegram.telegram_bot import TelegramBotThread
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTextEdit, QLineEdit, QFrame, QFileDialog, QGridLayout,
-    QGraphicsOpacityEffect, QSizePolicy
+    QGraphicsOpacityEffect, QSizePolicy, QApplication
 )
 from PyQt6.QtCore import (
     Qt, QPoint, QRect, QRectF, QTimer, QPropertyAnimation, QVariantAnimation,
@@ -325,7 +325,9 @@ class AudioVisualizerWorker(QThread):
     def stop(self):
         self.running = False
         if self.isRunning():
-            self.wait(1000)
+            if not self.wait(600):
+                self.terminate()
+                self.wait(200)
 
 
 class CommandWorker(QThread):
@@ -2573,9 +2575,12 @@ class MainWindow(QWidget):
         self.hide()
         try:
             self.shutdown()
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[Shutdown Error]: {e}")
         volume_ducker.force_restore()
+        app = QApplication.instance()
+        if app:
+            app.quit()
         os._exit(0)
 
     def toggle_manual_listen(self):
@@ -3052,28 +3057,64 @@ class MainWindow(QWidget):
         self.close_animated()
 
     def shutdown(self):
+        if getattr(self, '_is_shutting_down', False):
+            return
+        self._is_shutting_down = True
+
         volume_ducker.force_restore()
 
-        if hasattr(self, 'battery_timer') and self.battery_timer.isActive():
+        if hasattr(self, 'battery_timer') and self.battery_timer and self.battery_timer.isActive():
             self.battery_timer.stop()
 
-        if hasattr(self, 'audio_worker') and self.audio_worker.isRunning():
+        if hasattr(self, 'audio_worker') and self.audio_worker and self.audio_worker.isRunning():
             self.audio_worker.stop()
 
-        if hasattr(self, 'tts_thread') and self.tts_thread.isRunning():
+        if hasattr(self, 'tts_thread') and self.tts_thread and self.tts_thread.isRunning():
             self.tts_thread.stop()
-            self.tts_thread.wait(1000)
+            if not self.tts_thread.wait(600):
+                self.tts_thread.terminate()
+                self.tts_thread.wait(200)
 
         self.stop_vision()
         if hasattr(self, 'vision_thread') and self.vision_thread and self.vision_thread.isRunning():
-            self.vision_thread.wait(1000)
+            if not self.vision_thread.wait(600):
+                self.vision_thread.terminate()
+                self.vision_thread.wait(200)
 
-        if hasattr(self, 'stt_thread') and self.stt_thread.isRunning():
+        if hasattr(self, 'stt_thread') and self.stt_thread and self.stt_thread.isRunning():
             self.stt_thread.stop_thread()
-            self.stt_thread.wait(1000)
+            if not self.stt_thread.wait(600):
+                self.stt_thread.terminate()
+                self.stt_thread.wait(200)
 
         if hasattr(self, 'telegram_thread') and self.telegram_thread and self.telegram_thread.isRunning():
             self.telegram_thread.stop()
+            if not self.telegram_thread.wait(800):
+                self.telegram_thread.terminate()
+                self.telegram_thread.wait(200)
+
+        if hasattr(self, 'update_checker') and self.update_checker and self.update_checker.isRunning():
+            self.update_checker.terminate()
+            self.update_checker.wait(200)
+
+        if hasattr(self, 'settings_panel') and getattr(self.settings_panel, 'downloader_thread', None):
+            dl = self.settings_panel.downloader_thread
+            if dl and dl.isRunning():
+                dl.terminate()
+                dl.wait(200)
+
+        if hasattr(self, 'studio_frame') and self.studio_frame:
+            for attr in ('worker', 'title_worker'):
+                sw = getattr(self.studio_frame, attr, None)
+                if sw and sw.isRunning():
+                    sw.terminate()
+                    sw.wait(200)
+
+        for worker_name in ('voice_worker', 'text_worker', 'mini_text_worker'):
+            worker = getattr(self, worker_name, None)
+            if worker and worker.isRunning():
+                worker.terminate()
+                worker.wait(200)
 
         if hasattr(self, 'command_parser') and hasattr(self.command_parser, 'reminder_manager'):
             self.command_parser.reminder_manager.stop_ringing()

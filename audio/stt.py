@@ -432,4 +432,10 @@ class STTThread(QThread):
     def stop_thread(self):
         self._running = False
         ym_manager.unduck()
-        self.wait()
+        try:
+            self.audio_queue.put_nowait(b"")
+        except Exception:
+            pass
+        if not self.wait(500):
+            self.terminate()
+            self.wait(100)

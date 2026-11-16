@@ -205,7 +205,9 @@ class VisionThread(QThread):
 
     def stop(self):
         self.is_running = False
-        self.wait()
+        if not self.wait(800):
+            self.terminate()
+            self.wait(200)
 
         if getattr(self, 'gesture_detector', None) is not None:
             if hasattr(self.gesture_detector, 'detector'):
