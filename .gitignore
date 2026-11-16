@@ -71,8 +71,10 @@ personal_data/creator.key
 
 # AI agents
 .cursorrules
+scratch/
 
 # Персональные данные и токены
+personal_data/activity/
 personal_data/configs/config.json
 personal_data/configs/pairing_session.json
 personal_data/configs/user_memory.json
