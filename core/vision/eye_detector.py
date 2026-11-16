@@ -1,4 +1,5 @@
 import sys
+import os
 from pathlib import Path
 from collections import deque
 import cv2
@@ -7,25 +8,27 @@ import onnxruntime as ort
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
+from core.utils.config import get_resource_path
 
 
 class EyeDetector:
     def __init__(self):
-        if getattr(sys, 'frozen', False):
-            project_dir = Path(sys.executable).parent
-        else:
-            project_dir = Path(__file__).resolve().parent.parent.parent
-
         candidate_paths = [
-            project_dir / "optimized_models" / "eye_model" / "eye_state_model.onnx",
-            project_dir / "models" / "eye_model" / "eye_state_model.onnx",
-            project_dir / "optimized_models" / "eye_state_model.onnx",
-            project_dir / "models" / "eye_state_model.onnx",
+            get_resource_path("optimized_models", "eye_model", "eye_state_model.onnx"),
+            get_resource_path("models", "eye_model", "eye_state_model.onnx"),
+            get_resource_path("optimized_models", "eye_state_model.onnx"),
+            get_resource_path("models", "eye_state_model.onnx"),
         ]
+        if getattr(sys, 'frozen', False):
+            exe_dir = os.path.dirname(sys.executable)
+            candidate_paths.extend([
+                os.path.join(exe_dir, "_internal", "optimized_models", "eye_model", "eye_state_model.onnx"),
+                os.path.join(exe_dir, "optimized_models", "eye_model", "eye_state_model.onnx"),
+            ])
 
         self.model_path = None
         for p in candidate_paths:
-            if p.exists():
+            if p and os.path.exists(p):
                 self.model_path = str(p)
                 break
 
@@ -47,7 +50,23 @@ class EyeDetector:
 
         self.face_landmarker = None
         try:
-            task_file = project_dir / "optimized_models" / "face_landmarker" / "face_landmarker.task"
+            task_candidates = [
+                get_resource_path("optimized_models", "face_landmarker", "face_landmarker.task"),
+                get_resource_path("models", "face_landmarker", "face_landmarker.task"),
+            ]
+            if getattr(sys, 'frozen', False):
+                exe_dir = os.path.dirname(sys.executable)
+                task_candidates.extend([
+                    os.path.join(exe_dir, "_internal", "optimized_models", "face_landmarker", "face_landmarker.task"),
+                    os.path.join(exe_dir, "optimized_models", "face_landmarker", "face_landmarker.task"),
+                ])
+            task_file = None
+            for tc in task_candidates:
+                if tc and os.path.exists(tc):
+                    task_file = str(tc)
+                    break
+            if not task_file:
+                task_file = task_candidates[0]
 
             base_options = python.BaseOptions(model_asset_path=str(task_file))
             options = vision.FaceLandmarkerOptions(

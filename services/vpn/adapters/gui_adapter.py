@@ -12,19 +12,34 @@ import pyautogui
 import winreg
 import shutil
 
+from core.utils.config import get_resource_path
+
 pyautogui.FAILSAFE = False
 
 
 class GuiAdapter:
     def __init__(self):
+        cand_list = [
+            get_resource_path("services", "vpn", "templates"),
+            get_resource_path("templates")
+        ]
         if getattr(sys, 'frozen', False):
             base_app = os.path.dirname(sys.executable)
-            cand1 = os.path.join(base_app, "services", "vpn", "templates")
-            cand2 = os.path.join(base_app, "templates")
-            self.templates_dir = cand1 if os.path.exists(cand1) else cand2
+            cand_list.extend([
+                os.path.join(base_app, "_internal", "services", "vpn", "templates"),
+                os.path.join(base_app, "services", "vpn", "templates"),
+                os.path.join(base_app, "_internal", "templates"),
+                os.path.join(base_app, "templates"),
+            ])
         else:
             self.base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            self.templates_dir = os.path.join(self.base_dir, "templates")
+            cand_list.append(os.path.join(self.base_dir, "templates"))
+
+        self.templates_dir = cand_list[0]
+        for c in cand_list:
+            if c and os.path.exists(c):
+                self.templates_dir = c
+                break
 
         self._cached_sota_target = None
         self._cached_happ_target = None
