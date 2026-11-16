@@ -589,144 +589,97 @@ class GuiAdapter:
         except Exception as e:
             return f"Не удалось управлять Хапп: {e}"
 
-    def connect_browsec(self):
-        return self._set_browsec_state(target_state=True)
+    def is_browsec_tunnel_active(self) -> bool:
+        """Проверяет, активен ли VPN-туннель Browsec (sing-box/xray)."""
+        for proc in psutil.process_iter(['name']):
+            try:
+                p_name = (proc.info.get('name') or '').lower()
+                if p_name in ['browbox.exe', 'browray.exe']:
+                    return True
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        return False
 
-    def disconnect_browsec(self):
-        return self._set_browsec_state(target_state=False)
+    def is_browsec_app_running(self) -> bool:
+        """Проверяет, запущен ли клиент Browsec или его туннели."""
+        for proc in psutil.process_iter(['name']):
+            try:
+                p_name = (proc.info.get('name') or '').lower()
+                if p_name in ['browsec.exe', 'browbox.exe', 'browray.exe']:
+                    return True
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        return False
 
-    def _set_browsec_state(self, target_state: bool):
+    def _ensure_browsec_autoconnect_enabled(self):
+        """Гарантирует, что в настройках Browsec включено автоподключение к последнему серверу."""
         try:
-            target_path = self._find_browsec_target()
-
-            # 1. Проверяем, есть ли уже видимое окно Browsec прямо на экране
-            hwnd = self._get_window_hwnd(["Browsec"], ["browsec.exe"])
-            is_already_on_screen = False
-
-            if hwnd and ctypes.windll.user32.IsWindow(hwnd):
-                rect = wintypes.RECT()
-                ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
-                w = rect.right - rect.left
-                h = rect.bottom - rect.top
-                is_iconic = bool(ctypes.windll.user32.IsIconic(hwnd))
-                is_vis = bool(ctypes.windll.user32.IsWindowVisible(hwnd))
-                if is_vis and not is_iconic and rect.left > -10000 and w > 150 and h > 150:
-                    is_already_on_screen = True
-
-            # 2. Если окно не видно на экране (оно свернуто в трей, минимизировано или не запущено),
-            # запускаем приложение для передачи сигнала Electron развернуть окно на передний план
-            if not is_already_on_screen:
-                if not target_path:
-                    return "Не удалось найти приложение Browsec."
-                self._launch_target(target_path)
-
-            # 3. Быстро дожидаемся развернутого окна (максимум 2.5 секунды вместо прежних 8)
-            window_ready = False
-            for _ in range(12):
-                hwnd = self._get_window_hwnd(["Browsec"], ["browsec.exe"])
-                if hwnd and ctypes.windll.user32.IsWindow(hwnd):
-                    self._show_and_focus(hwnd)
-                    rect = wintypes.RECT()
-                    ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
-                    w = rect.right - rect.left
-                    h = rect.bottom - rect.top
-                    is_iconic = bool(ctypes.windll.user32.IsIconic(hwnd))
-                    if not is_iconic and rect.left > -10000 and w > 150 and h > 150:
-                        window_ready = True
-                        break
-                time.sleep(0.2)
-
-            if not hwnd or not window_ready:
-                return "Не удалось дождаться открытия окна Browsec"
-
-            self._show_and_focus(hwnd)
-            time.sleep(0.35)
-
-            # 4. Сбор шаблонов для обоих состояний
-            on_templates = self._collect_template_paths("browsec", subfolder="on")
-            off_templates = self._collect_template_paths("browsec", subfolder="off")
-            if not on_templates or not off_templates:
-                all_browsec = self._collect_template_paths("browsec")
-                on_templates = on_templates or all_browsec
-                off_templates = off_templates or all_browsec
-
-            # 5. Быстрое и надёжное распознавание тумблера и его цвета
-            current_is_on = None
-            toggle_coords = None
-
-            for _ in range(6):
-                rect = wintypes.RECT()
-                ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
-                w = rect.right - rect.left
-                h = rect.bottom - rect.top
-
-                if w > 100 and h > 100 and rect.left > -10000:
-                    try:
-                        screen_pil = ImageGrab.grab(bbox=(rect.left, rect.top, rect.right, rect.bottom))
-                        screen_bgr = cv2.cvtColor(np.array(screen_pil), cv2.COLOR_RGB2BGR)
-                        screen_gray = cv2.cvtColor(screen_bgr, cv2.COLOR_BGR2GRAY)
-
-                        best_on_score, best_on_loc, on_shape = -1.0, None, (60, 120)
-                        best_off_score, best_off_loc, off_shape = -1.0, None, (60, 120)
-
-                        for tpl_path in on_templates:
-                            tpl = cv2.imread(tpl_path, cv2.IMREAD_GRAYSCALE)
-                            if tpl is not None and screen_gray.shape[0] >= tpl.shape[0] and screen_gray.shape[1] >= tpl.shape[1]:
-                                res = cv2.matchTemplate(screen_gray, tpl, cv2.TM_CCOEFF_NORMED)
-                                _, max_v, _, max_l = cv2.minMaxLoc(res)
-                                if max_v > best_on_score:
-                                    best_on_score = max_v
-                                    best_on_loc = max_l
-                                    on_shape = tpl.shape
-
-                        for tpl_path in off_templates:
-                            tpl = cv2.imread(tpl_path, cv2.IMREAD_GRAYSCALE)
-                            if tpl is not None and screen_gray.shape[0] >= tpl.shape[0] and screen_gray.shape[1] >= tpl.shape[1]:
-                                res = cv2.matchTemplate(screen_gray, tpl, cv2.TM_CCOEFF_NORMED)
-                                _, max_v, _, max_l = cv2.minMaxLoc(res)
-                                if max_v > best_off_score:
-                                    best_off_score = max_v
-                                    best_off_loc = max_l
-                                    off_shape = tpl.shape
-
-                        # Если найден тумблер (порог 0.50 для устойчивости к масштабу)
-                        if max(best_on_score, best_off_score) >= 0.50:
-                            active_loc = best_on_loc if best_on_score >= best_off_score else best_off_loc
-                            active_shape = on_shape if best_on_score >= best_off_score else off_shape
-                            bx, by = active_loc
-                            bw, bh = active_shape[1], active_shape[0]
-
-                            crop = screen_bgr[by:by+bh, bx:bx+bw]
-                            hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
-                            green_pixels = int(np.count_nonzero(cv2.inRange(hsv, np.array([35, 40, 40]), np.array([85, 255, 255]))))
-
-                            # В активном зелёном тумблере > 1500 зелёных пикселей, в сером 0
-                            current_is_on = (green_pixels > 200)
-                            toggle_coords = (rect.left + bx + bw // 2, rect.top + by + bh // 2)
-                            break
-                    except Exception as e:
-                        print(f"[Browsec Detection Error]: {e}")
-
-                time.sleep(0.15)
-
-            if current_is_on is None:
-                self._minimize(hwnd)
-                return "Открыла Browsec, но не смогла распознать тумблер"
-
-            # 6. Если Browsec уже находится в желаемом состоянии
-            if current_is_on == target_state:
-                self._minimize(hwnd)
-                return "Browsec уже " + ("включен!" if target_state else "выключен!")
-
-            # 7. Кликаем по тумблеру для смены состояния
-            if toggle_coords:
-                self._safe_click(toggle_coords[0], toggle_coords[1])
-                time.sleep(0.4)
-                self._minimize(hwnd)
-                return "Включила Browsec!" if target_state else "Выключила Browsec!"
-
-            self._minimize(hwnd)
-            return "Не удалось переключить тумблер Browsec"
-
+            appdata = os.environ.get("APPDATA", "")
+            cfg_path = os.path.join(appdata, "browsec-desktop", "config.json")
+            if os.path.exists(cfg_path):
+                import json
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                if not cfg.get("settings-auto-connect-vpn"):
+                    cfg["settings-auto-connect-vpn"] = True
+                    with open(cfg_path, "w", encoding="utf-8") as f:
+                        json.dump(cfg, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            return f"Не удалось управлять Browsec: {e}"
+            print(f"[Browsec AutoConnect Config Error]: {e}")
+
+    def connect_browsec(self) -> str:
+        """
+        Надежное подключение Browsec:
+        1. Если туннель browbox уже активен -> Browsec уже включен!
+        2. Обеспечивает флаг 'settings-auto-connect-vpn': true в config.json Browsec
+        3. Если процесс Browsec висел без туннеля, перезапускает его для мгновенного коннекта
+        4. Запускает Browsec.exe
+        """
+        try:
+            if self.is_browsec_tunnel_active():
+                return "Browsec уже включен!"
+
+            self._ensure_browsec_autoconnect_enabled()
+
+            target_path = self._find_browsec_target()
+            if not target_path:
+                return "Не удалось найти приложение Browsec."
+
+            flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
+            # Если Browsec висел в фоне без туннеля, перезапускаем для срабатывания автоконнекта
+            if self.is_browsec_app_running():
+                subprocess.run(["taskkill", "/F", "/IM", "Browsec.exe", "/T"], capture_output=True, creationflags=flags)
+                time.sleep(0.3)
+
+            self._launch_target(target_path)
+            return "Включила Browsec!"
+        except Exception as e:
+            return f"Не удалось включить Browsec: {e}"
+
+    def disconnect_browsec(self) -> str:
+        """
+        Надежное отключение Browsec без графических костылей, падений и UAC:
+        - Проверяет активность процессов
+        - Мягко закрывает Browsec через taskkill (Electron перехватывает will-quit и выполняет stopVpn)
+        - Принудительно глушит туннельные процессы browbox/browray
+        """
+        try:
+            if not self.is_browsec_app_running():
+                return "Browsec уже выключен!"
+
+            flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
+            # 1. Мягкое закрытие Browsec (вызывает Electron will-quit stopVpn для очистки сетевых настроек)
+            subprocess.run(["taskkill", "/IM", "Browsec.exe"], capture_output=True, creationflags=flags)
+            time.sleep(0.4)
+
+            # 2. Принудительное завершение туннелей browbox и browray (если остались)
+            subprocess.run(["taskkill", "/F", "/IM", "browbox.exe", "/T"], capture_output=True, creationflags=flags)
+            subprocess.run(["taskkill", "/F", "/IM", "browray.exe", "/T"], capture_output=True, creationflags=flags)
+            subprocess.run(["taskkill", "/F", "/IM", "Browsec.exe", "/T"], capture_output=True, creationflags=flags)
+
+            time.sleep(0.2)
+            return "Выключила Browsec!"
+        except Exception as e:
+            return f"Не удалось выключить Browsec: {e}"

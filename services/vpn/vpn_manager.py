@@ -83,7 +83,7 @@ class VpnManager:
 
         # 1. Browsec
         try:
-            if self.gui._find_browsec_target() or self.is_process_running(["browsec.exe"]):
+            if self.gui._find_browsec_target() or self.is_process_running(["browsec.exe", "browbox.exe", "browray.exe"]):
                 installed.append("browsec")
         except Exception:
             pass
@@ -129,7 +129,7 @@ class VpnManager:
         """Возвращает список VPN-клиентов, которые запущены прямо сейчас."""
         running = []
         checks = [
-            ("browsec", ["browsec.exe"]),
+            ("browsec", ["browsec.exe", "browbox.exe", "browray.exe"]),
             ("sota", ["sota connect.exe", "sotaconnect.exe", "sota.exe", "sotaconnectclient.exe"]),
             ("happ", ["happ.exe"]),
             ("v2ray", ["v2ray.exe", "xray.exe"]),
