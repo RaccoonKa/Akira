@@ -533,6 +533,30 @@ class CodeBlockWidget(QFrame):
         """)
 
 
+def detect_code_language(code: str) -> str:
+    """Определяет язык программирования по характерным конструкциям."""
+    if not code:
+        return "code"
+    low = code.lower()
+    if re.search(r'\b(def|import|elif|from\s+\w+\s+import|print\s*\()\b', code):
+        return "python"
+    if re.search(r'\b(const|let|var|function|console\.log|=>)\b', code):
+        return "javascript"
+    if re.search(r'<\/?(html|div|span|p|head|body|script|style)\b', low):
+        return "html"
+    if re.search(r'\b(select\s+.+\s+from|insert\s+into|update\s+.+\s+set|create\s+table)\b', low):
+        return "sql"
+    if re.search(r'\b(namespace|using\s+system|public\s+class|console\.writeline)\b', low):
+        return "csharp"
+    if re.search(r'\b(fn\s+main|println!|let\s+mut)\b', code):
+        return "rust"
+    if re.search(r'\b(package\s+main|func\s+main)\b', code):
+        return "go"
+    if re.search(r'\b(curl|chmod|grep|sudo|apt-get|npm\s+run|pip\s+install)\b', low):
+        return "bash"
+    return "code"
+
+
 def parse_message_blocks(raw_text: str) -> list[tuple[str, object]]:
     """
     Разбирает ответ Акиры на последовательность текстовых блоков и блоков кода:
@@ -541,7 +565,7 @@ def parse_message_blocks(raw_text: str) -> list[tuple[str, object]]:
     if not raw_text:
         return []
 
-    pattern = re.compile(r"```([a-zA-Z0-9_\-\+#\.]*)[ \t]*\r?\n?(.*?)```", re.DOTALL)
+    pattern = re.compile(r"```[ \t]*([a-zA-Z0-9_\-\+#\.]*)[ \t]*\r?\n?(.*?)```", re.DOTALL)
     blocks = []
     last_end = 0
 
@@ -551,19 +575,23 @@ def parse_message_blocks(raw_text: str) -> list[tuple[str, object]]:
             txt = raw_text[last_end:start].strip()
             if txt:
                 blocks.append(("text", txt))
-        lang = match.group(1).strip() or "code"
+        lang = match.group(1).strip()
         code = match.group(2)
+        if not lang or lang.lower() == "code":
+            lang = detect_code_language(code)
         blocks.append(("code", (lang, code)))
         last_end = end
 
     if last_end < len(raw_text):
         rem = raw_text[last_end:].strip()
         if rem:
-            # Если нейросеть не закрыла тройные кавычки в конце ответа
-            unclosed = re.match(r"^```([a-zA-Z0-9_\-\+#\.]*)[ \t]*\r?\n(.*)$", rem, re.DOTALL)
+            unclosed = re.match(r"^```[ \t]*([a-zA-Z0-9_\-\+#\.]*)[ \t]*\r?\n?(.*)$", rem, re.DOTALL)
             if unclosed:
-                lang = unclosed.group(1).strip() or "code"
-                blocks.append(("code", (lang, unclosed.group(2))))
+                lang = unclosed.group(1).strip()
+                code = unclosed.group(2)
+                if not lang or lang.lower() == "code":
+                    lang = detect_code_language(code)
+                blocks.append(("code", (lang, code)))
             else:
                 blocks.append(("text", rem))
 

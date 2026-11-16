@@ -18,6 +18,7 @@ QTextEdit#ChatHistory {
     color: #fffde7;
     border: none;
     font-size: 13px;
+    line-height: 1.45;
 }
 QLineEdit#InputField {
     background-color: #070705;
@@ -835,6 +836,7 @@ QTextEdit#ChatHistory {
     color: #111318;
     border: none;
     font-size: 13px;
+    line-height: 1.45;
 }
 QLineEdit#InputField {
     background-color: #ffffff;

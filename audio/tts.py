@@ -13,6 +13,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 from piper.voice import PiperVoice
 from core.utils.config import get_resource_path, load_config
 from core.system.actions import ym_manager
+from core.utils.text_cleaner import clean_voice_text
 
 ort.set_default_logger_severity(3)
 
@@ -286,6 +287,11 @@ class TTSThread(QThread):
         return vol_factor
 
     def _parse_speech_and_laugh_segments(self, raw_text: str):
+        if not raw_text:
+            return []
+
+        # 0. Очищаем текст от блоков кода, бэктиков и лишнего форматирования для чистого голоса
+        raw_text = clean_voice_text(raw_text)
         if not raw_text:
             return []
 

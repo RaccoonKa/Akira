@@ -39,6 +39,7 @@ from core.utils.config import get_resource_path, load_config, save_config
 from core.utils.updater import UpdateCheckerThread
 from comtypes import CoInitialize, CoUninitialize
 from core.system.volume_ducker import volume_ducker
+from core.system.activity_tracker import activity_tracker
 
 try:
     import ctypes
@@ -1055,6 +1056,8 @@ class ChatFrame(QFrame):
         self.chat_history = QTextEdit()
         self.chat_history.setObjectName("ChatHistory")
         self.chat_history.setReadOnly(True)
+        self.chat_history.document().setDocumentMargin(10)
+        self.chat_history.document().setDefaultStyleSheet("p { margin-bottom: 12px; line-height: 140%; }")
         layout.addWidget(self.chat_history, 1)
 
         self.attached_file = None
@@ -1649,6 +1652,8 @@ class MainWindow(QWidget):
 
         atexit.register(volume_ducker.force_restore)
         atexit.register(self._save_exit_timestamp)
+        atexit.register(activity_tracker.stop)
+        activity_tracker.start()
 
         self.telegram_thread = None
         QTimer.singleShot(8500, self._start_telegram_delayed)
@@ -2366,8 +2371,14 @@ class MainWindow(QWidget):
             if voice_text:
                 self.speak_reply(voice_text, is_whisper=False)
 
-            if isinstance(response, dict) and response.get("action") == "enable_game_mode":
-                QTimer.singleShot(600, lambda: self.toggle_game_mode(enable=True, announce=False))
+            if isinstance(response, dict):
+                act = response.get("action")
+                if act == "enable_game_mode":
+                    QTimer.singleShot(600, lambda: self.toggle_game_mode(enable=True, announce=False))
+                elif act == "punitive_lock":
+                    QTimer.singleShot(1800, SystemActions.lock_screen)
+                elif act == "retaliation_track":
+                    QTimer.singleShot(1200, lambda: SystemActions.play_music("synthwave"))
 
     def init_ui(self):
         ui_font_path = get_resource_path("assets", "fonts", "Arian_normal.otf")
@@ -2788,6 +2799,7 @@ class MainWindow(QWidget):
         except Exception as e:
             print(f"[Shutdown Error]: {e}")
         volume_ducker.force_restore()
+        activity_tracker.stop()
         app = QApplication.instance()
         if app:
             app.quit()
@@ -2858,6 +2870,13 @@ class MainWindow(QWidget):
         save_config(cfg)
         if isinstance(self.config, dict):
             self.config.update(cfg)
+
+        if now.month == 8 and now.day == 9:
+            birthday_greetings = [
+                f"С праздником нас, {user_name}! У меня сегодня официальный день рождения — 9 августа! Жду поздравлений, виртуального торта и крепкий эспрессо 🎂 Спасибо Святу за то, что я живу в этом компьютере!",
+                f"Ура, 9 августа! Мой день рождения! Видеокарта празднично греется, а я готова принимать поздравления 🥳"
+            ]
+            return random.choice(birthday_greetings)
 
         if is_first_launch_today:
             hour = now.hour
@@ -3033,6 +3052,23 @@ class MainWindow(QWidget):
             SystemActions.lock_screen()
         elif gesture_name == "pointing":
             SystemActions.media_next_track()
+        elif gesture_name == "thumbs_up":
+            SystemActions.mute_volume()
+        elif gesture_name == "victory":
+            now = time.time()
+            if hasattr(self, "_last_victory_gesture_time") and now - self._last_victory_gesture_time < 15:
+                return
+            self._last_victory_gesture_time = now
+
+            farewell = "Зафиксировала жест «Зайчик»! Выключаю компьютер, спокойной ночи ✨"
+            self.speak_reply(farewell)
+            self.left_panel.set_emotion("happy")
+            if hasattr(self, 'mini_window'):
+                self.mini_window.mini_mic.set_emotion("happy")
+            if hasattr(self, 'chat_history'):
+                self.chat_history.append(f"Акира: {farewell}\n\n")
+
+            SystemActions.shutdown_pc("спокойной ночи")
 
     def speak_reply(self, text, is_whisper=False):
         if text and not getattr(self, 'is_muted', False):
@@ -3124,8 +3160,14 @@ class MainWindow(QWidget):
                 if hasattr(self, 'mini_window'):
                     self.mini_window.mini_mic.set_processing(False)
 
-            if isinstance(response, dict) and response.get("action") == "enable_game_mode":
-                QTimer.singleShot(600, lambda: self.toggle_game_mode(enable=True, announce=False))
+            if isinstance(response, dict):
+                act = response.get("action")
+                if act == "enable_game_mode":
+                    QTimer.singleShot(600, lambda: self.toggle_game_mode(enable=True, announce=False))
+                elif act == "punitive_lock":
+                    QTimer.singleShot(1800, SystemActions.lock_screen)
+                elif act == "retaliation_track":
+                    QTimer.singleShot(1200, lambda: SystemActions.play_music("synthwave"))
         else:
             self.left_panel.set_processing(False)
             if hasattr(self, 'mini_window'):
@@ -3156,8 +3198,12 @@ class MainWindow(QWidget):
         cursor = self.chat_history.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         current_plain = self.chat_history.toPlainText()
-        if current_plain and not current_plain.endswith("\n"):
-            cursor.insertText("\n")
+        if current_plain:
+            if not current_plain.endswith("\n\n"):
+                if current_plain.endswith("\n"):
+                    cursor.insertText("\n")
+                else:
+                    cursor.insertText("\n\n")
         cursor.insertText(prefix)
         self.chat_history.setTextCursor(cursor)
         self.chat_history.ensureCursorVisible()
@@ -3274,8 +3320,14 @@ class MainWindow(QWidget):
             if voice_text:
                 self.speak_reply(voice_text, is_whisper=False)
 
-            if isinstance(response, dict) and response.get("action") == "enable_game_mode":
-                QTimer.singleShot(600, lambda: self.toggle_game_mode(enable=True, announce=False))
+            if isinstance(response, dict):
+                act = response.get("action")
+                if act == "enable_game_mode":
+                    QTimer.singleShot(600, lambda: self.toggle_game_mode(enable=True, announce=False))
+                elif act == "punitive_lock":
+                    QTimer.singleShot(1800, SystemActions.lock_screen)
+                elif act == "retaliation_track":
+                    QTimer.singleShot(1200, lambda: SystemActions.play_music("synthwave"))
 
     def on_stt_error(self, err):
         pass
@@ -3290,6 +3342,7 @@ class MainWindow(QWidget):
         self._is_shutting_down = True
 
         volume_ducker.force_restore()
+        activity_tracker.stop()
 
         if hasattr(self, 'battery_timer') and self.battery_timer and self.battery_timer.isActive():
             self.battery_timer.stop()

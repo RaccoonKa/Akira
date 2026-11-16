@@ -37,7 +37,6 @@ class RouterAiOAuthWorker(QThread):
 
     def run(self):
         try:
-            # 1. Генерируем PKCE code_verifier и SHA-256 code_challenge
             verifier_bytes = secrets.token_bytes(32)
             code_verifier = base64.urlsafe_b64encode(verifier_bytes).rstrip(b"=").decode("ascii")
             digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
@@ -64,10 +63,10 @@ class RouterAiOAuthWorker(QThread):
                         "display:flex;align-items:center;justify-content:center;height:100vh;margin:0;}"
                         ".card{background:#13151c;border:1px solid #78735f;border-radius:14px;"
                         "padding:28px 36px;text-align:center;max-width:420px;}"
-                        "h2{margin:0 0 10px;color:#ffffff;font-size:20px;}"
+                        "h2{margin:0 0 10px;color:#ffffff;font-size:20px;font-weight:normal;}"
                         "p{margin:0;color:#a69f8d;font-size:14px;line-height:1.5;}"
                         "</style></head><body><div class='card'>"
-                        "<h2>Готово! Ключ передан в Акиру ✨</h2>"
+                        "<h2>Готово! Ключ передан в Акиру</h2>"
                         "<p>Авторизация прошла успешно. Эту вкладку браузера можно закрыть.</p>"
                         "</div></body></html>"
                     )
@@ -79,24 +78,21 @@ class RouterAiOAuthWorker(QThread):
                 def log_message(self, format, *args):
                     pass
 
-            # 2. Поднимаем локальный сервер на свободном порту ОС
             self._server = HTTPServer(("127.0.0.1", 0), CallbackHandler)
             self._server.timeout = 0.5
             port = self._server.server_address[1]
             callback_url = f"http://127.0.0.1:{port}/callback"
 
-            # 3. Открываем страницу входа RouterAI (с выбором Яндекс / VK / почты)
             query = urllib.parse.urlencode({
                 "callback_url": callback_url,
                 "code_challenge": code_challenge,
                 "code_challenge_method": "S256",
             })
             webbrowser.open(f"{self.AUTH_URL}?{query}")
-            self.status_changed.emit("Браузер открыт! Войди через Яндекс / VK и нажми «Разрешить»...")
+            self.status_changed.emit("Браузер открыт — подтверди вход и нажми «Разрешить»...")
 
-            # 4. Ожидаем редирект до 3 минут с возможностью мгновенной отмены
             ticks = 0
-            max_ticks = 360  # 360 * 0.5 сек = 180 сек
+            max_ticks = 360
             while self._running and auth_code_holder["code"] is None and ticks < max_ticks:
                 self._server.handle_request()
                 ticks += 1
@@ -112,7 +108,6 @@ class RouterAiOAuthWorker(QThread):
                 self.auth_error.emit("Время ожидания истекло. Попробуй ещё раз.")
                 return
 
-            # 5. Обмениваем одноразовый code на постоянный API-ключ
             self.status_changed.emit("Получаю API-ключ от RouterAI...")
             payload = json.dumps({
                 "code": code,
@@ -132,7 +127,7 @@ class RouterAiOAuthWorker(QThread):
                 api_key = str(data.get("key", "")).strip()
 
             if not api_key:
-                self.auth_error.emit("RouterAI не вернул ключ. Попробуй создать его вручную на сайте.")
+                self.auth_error.emit("RouterAI не вернул ключ. Попробуй вставить его вручную.")
                 return
 
             self.auth_success.emit(api_key)
@@ -155,15 +150,25 @@ class RouterAiAuthDialog(QDialog):
         super().__init__(parent)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setFixedSize(460, 405)
         self.font_family = font_family
         self.drag_position = QPoint()
         self.oauth_worker = None
 
         if parent and hasattr(parent, "current_theme"):
             self.current_theme = parent.current_theme
+        elif parent and hasattr(parent, "window") and hasattr(parent.window(), "current_theme"):
+            self.current_theme = parent.window().current_theme
         else:
             self.current_theme = load_config().get("theme", "dark")
+
+        cfg = load_config()
+        api_keys = cfg.get("api_keys", {})
+        self.existing_key = (
+            api_keys.get("routerai", "").strip()
+            or api_keys.get("openrouter", "").strip()
+        )
+
+        self.setFixedSize(460, 358 if self.existing_key else 322)
 
         screen = QGuiApplication.primaryScreen().availableGeometry()
         self.move(
@@ -176,57 +181,129 @@ class RouterAiAuthDialog(QDialog):
     def _init_ui(self):
         is_light = (self.current_theme == "light")
         title_col = "#111318" if is_light else "#ded7c4"
-        text_col = "#1f2328" if is_light else "#fffde7"
-        sub_col = "#555e6d" if is_light else "rgba(255, 253, 231, 0.65)"
-        card_bg = "rgba(255, 255, 255, 0.88)" if is_light else "rgba(14, 12, 7, 0.78)"
-        border_col = "rgba(17, 19, 24, 0.22)" if is_light else "#78735f"
+        text_col = "#111318" if is_light else "#fffde7"
+        sub_col = "#555e6d" if is_light else "rgba(255, 253, 231, 0.52)"
+        card_bg = "rgba(255, 255, 255, 0.90)" if is_light else "rgba(14, 13, 9, 0.86)"
+        border_col = "rgba(17, 19, 24, 0.20)" if is_light else "rgba(120, 115, 95, 0.35)"
+        hl_bg = "rgba(17, 19, 24, 0.07)" if is_light else "rgba(222, 215, 196, 0.12)"
+        hl_fg = "#000000" if is_light else "#ffffff"
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 16, 18, 16)
-        layout.setSpacing(10)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
 
-        # Заголовок
+        # --- Шапка окна ---
         header_row = QHBoxLayout()
+        header_row.setContentsMargins(2, 0, 0, 0)
+        header_row.setSpacing(8)
+
         title_lbl = QLabel("ПОДКЛЮЧЕНИЕ ROUTERAI")
-        title_lbl.setFont(QFont(self.font_family, 12, QFont.Weight.Bold))
-        title_lbl.setStyleSheet(f"color: {title_col}; letter-spacing: 1px;")
+        title_lbl.setFont(QFont(self.font_family, 11))
+        title_lbl.setStyleSheet(f"color: {title_col}; letter-spacing: 0.9px; background: transparent;")
         header_row.addWidget(title_lbl)
+
+        status_badge = QLabel("АКТИВЕН" if self.existing_key else "НЕ ПОДКЛЮЧЕН")
+        status_badge.setFont(QFont(self.font_family, 8))
+        if is_light:
+            status_badge.setStyleSheet("""
+                background-color: rgba(17, 19, 24, 0.08);
+                color: #111318;
+                border: 1px solid rgba(17, 19, 24, 0.22);
+                border-radius: 6px;
+                padding: 2px 7px;
+                letter-spacing: 0.6px;
+            """)
+        else:
+            status_badge.setStyleSheet("""
+                background-color: rgba(222, 215, 196, 0.12);
+                color: #ded7c4;
+                border: 1px solid rgba(120, 115, 95, 0.45);
+                border-radius: 6px;
+                padding: 2px 7px;
+                letter-spacing: 0.6px;
+            """)
+        header_row.addWidget(status_badge)
         header_row.addStretch()
 
         close_btn = QPushButton("✕")
-        close_btn.setObjectName("CloseBtn")
-        close_btn.setFixedSize(24, 24)
+        close_btn.setFixedSize(26, 26)
+        close_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        if is_light:
+            close_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: transparent;
+                    color: #111318;
+                    border: none;
+                    outline: none;
+                    border-radius: 6px;
+                    font-size: 13px;
+                }
+                QPushButton:hover {
+                    background-color: #e53935;
+                    color: #ffffff;
+                }
+            """)
+        else:
+            close_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: transparent;
+                    color: #ded7c4;
+                    border: none;
+                    outline: none;
+                    border-radius: 6px;
+                    font-size: 13px;
+                }
+                QPushButton:hover {
+                    background-color: #ff5252;
+                    color: #ffffff;
+                }
+            """)
         close_btn.clicked.connect(self.reject)
         header_row.addWidget(close_btn)
         layout.addLayout(header_row)
 
-        # Карточка 1: Быстрый вход через браузер (Яндекс / VK)
+        # --- Разделитель под заголовком ---
+        divider = QFrame()
+        divider.setFixedHeight(1)
+        div_col = "rgba(17, 19, 24, 0.14)" if is_light else "rgba(120, 115, 95, 0.35)"
+        divider.setStyleSheet(f"background-color: {div_col}; border: none;")
+        layout.addWidget(divider)
+
+        # --- Карточка 1: Быстрый вход в 1 клик ---
         oauth_card = QFrame()
         oauth_card.setStyleSheet(f"""
             QFrame {{
                 background-color: {card_bg};
                 border: 1.2px solid {border_col};
-                border-radius: 10px;
+                border-radius: 11px;
             }}
         """)
         oauth_l = QVBoxLayout(oauth_card)
-        oauth_l.setContentsMargins(12, 10, 12, 10)
-        oauth_l.setSpacing(8)
+        oauth_l.setContentsMargins(14, 12, 14, 12)
+        oauth_l.setSpacing(10)
 
-        desc_lbl = QLabel(
-            "Авторизуйся в один клик через <b>Яндекс ID</b>, <b>VK ID</b> или почту — "
-            "Акира сама получит API-ключ и разблокирует в Студии модели "
-            "<b>DeepSeek</b>, <b>Claude Opus</b> и <b>Gemini Carbon</b>."
-        )
+        def _hl(word: str) -> str:
+            return f'<span style="background-color: {hl_bg}; color: {hl_fg};">{word}</span>'
+
+        desc_lbl = QLabel()
         desc_lbl.setFont(QFont(self.font_family, 10))
+        desc_lbl.setTextFormat(Qt.TextFormat.RichText)
+        desc_lbl.setText(
+            f'<div style="line-height: 145%;">'
+            f'Войди через {_hl("Яндекс ID")}, {_hl("VK ID")} или почту — '
+            f'Акира сама получит ключ и откроет в Студии модели '
+            f'{_hl("DeepSeek")}, {_hl("Claude Opus")} и {_hl("Gemini Carbon")}.'
+            f'</div>'
+        )
         desc_lbl.setWordWrap(True)
         desc_lbl.setStyleSheet(f"color: {text_col}; border: none; background: transparent;")
         oauth_l.addWidget(desc_lbl)
 
-        self.btn_oauth = QPushButton("ВОЙТИ ЧЕРЕЗ ЯНДЕКС / VK (В 1 КЛИК)")
+        self.btn_oauth = QPushButton("ВОЙТИ ЧЕРЕЗ ЯНДЕКС / VK")
         self.btn_oauth.setFixedHeight(34)
-        self.btn_oauth.setFont(QFont(self.font_family, 10, QFont.Weight.Bold))
+        self.btn_oauth.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_oauth.setFont(QFont(self.font_family, 10))
         self.btn_oauth.setCursor(Qt.CursorShape.PointingHandCursor)
         if is_light:
             self.btn_oauth.setStyleSheet("""
@@ -234,8 +311,9 @@ class RouterAiAuthDialog(QDialog):
                     background-color: #111318;
                     color: #ffffff;
                     border: none;
+                    outline: none;
                     border-radius: 7px;
-                    letter-spacing: 0.6px;
+                    letter-spacing: 0.7px;
                 }
                 QPushButton:hover { background-color: #2b313d; }
                 QPushButton:disabled { background-color: #94a3b8; color: #f8fafc; }
@@ -244,10 +322,11 @@ class RouterAiAuthDialog(QDialog):
             self.btn_oauth.setStyleSheet("""
                 QPushButton {
                     background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ede8db, stop:1 #d6cebe);
-                    color: #0d0a05;
+                    color: #121008;
                     border: none;
+                    outline: none;
                     border-radius: 7px;
-                    letter-spacing: 0.6px;
+                    letter-spacing: 0.7px;
                 }
                 QPushButton:hover { background: #ffffff; }
                 QPushButton:disabled { background: #3b382e; color: #8c8572; }
@@ -255,50 +334,45 @@ class RouterAiAuthDialog(QDialog):
         self.btn_oauth.clicked.connect(self._start_oauth)
         oauth_l.addWidget(self.btn_oauth)
 
-        self.status_lbl = QLabel("Пополнение баланса на сайте от 100 ₽ через СБП или карту РФ")
+        self.status_lbl = QLabel("")
         self.status_lbl.setFont(QFont(self.font_family, 9))
         self.status_lbl.setWordWrap(True)
         self.status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_lbl.setStyleSheet(f"color: {sub_col}; border: none; background: transparent;")
+        self.status_lbl.hide()
         oauth_l.addWidget(self.status_lbl)
 
         layout.addWidget(oauth_card)
 
-        # Карточка 2: Ручной ввод ключа и пополнение
+        # --- Карточка 2: Ручной ввод ключа ---
         manual_card = QFrame()
         manual_card.setStyleSheet(f"""
             QFrame {{
                 background-color: {card_bg};
                 border: 1.2px solid {border_col};
-                border-radius: 10px;
+                border-radius: 11px;
             }}
         """)
         manual_l = QVBoxLayout(manual_card)
-        manual_l.setContentsMargins(12, 10, 12, 10)
-        manual_l.setSpacing(7)
+        manual_l.setContentsMargins(14, 11, 14, 12)
+        manual_l.setSpacing(8)
 
         manual_title = QLabel("ИЛИ ВСТАВЬ API-КЛЮЧ ВРУЧНУЮ")
-        manual_title.setFont(QFont(self.font_family, 8, QFont.Weight.Bold))
-        manual_title.setStyleSheet(f"color: {sub_col}; letter-spacing: 0.8px; border: none; background: transparent;")
+        manual_title.setFont(QFont(self.font_family, 8))
+        manual_title.setStyleSheet(f"color: {sub_col}; letter-spacing: 0.9px; border: none; background: transparent;")
         manual_l.addWidget(manual_title)
 
         input_row = QHBoxLayout()
-        input_row.setSpacing(6)
+        input_row.setSpacing(7)
 
         self.key_input = QLineEdit()
         self.key_input.setEchoMode(QLineEdit.EchoMode.PasswordEchoOnEdit)
         self.key_input.setPlaceholderText("sk-...")
-        self.key_input.setFixedHeight(30)
+        self.key_input.setFixedHeight(32)
         self.key_input.setFont(QFont("Consolas", 10))
 
-        cfg = load_config()
-        api_keys = cfg.get("api_keys", {})
-        existing_key = (
-            api_keys.get("routerai", "").strip()
-            or api_keys.get("openrouter", "").strip()
-        )
-        if existing_key:
-            self.key_input.setText(existing_key)
+        if self.existing_key:
+            self.key_input.setText(self.existing_key)
 
         if is_light:
             self.key_input.setStyleSheet("""
@@ -306,8 +380,11 @@ class RouterAiAuthDialog(QDialog):
                     background-color: #ffffff;
                     color: #111318;
                     border: 1.5px solid #111318;
-                    border-radius: 6px;
-                    padding: 0px 8px;
+                    border-radius: 7px;
+                    padding: 0px 10px;
+                }
+                QLineEdit:focus {
+                    border: 2px solid #000000;
                 }
             """)
         else:
@@ -316,32 +393,45 @@ class RouterAiAuthDialog(QDialog):
                     background-color: rgba(7, 7, 5, 0.92);
                     color: #ded7c4;
                     border: 1px solid #78735f;
-                    border-radius: 6px;
-                    padding: 0px 8px;
+                    border-radius: 7px;
+                    padding: 0px 10px;
+                }
+                QLineEdit:hover {
+                    border: 1px solid #9e9780;
+                    background-color: #12110d;
+                }
+                QLineEdit:focus {
+                    border: 1px solid #ded7c4;
+                    background-color: #15130f;
                 }
             """)
+        self.key_input.returnPressed.connect(self._save_manual_key)
         input_row.addWidget(self.key_input, 1)
 
         btn_paste = QPushButton("ВСТАВИТЬ")
-        btn_paste.setFixedSize(72, 30)
-        btn_paste.setFont(QFont(self.font_family, 8, QFont.Weight.Bold))
+        btn_paste.setFixedSize(76, 32)
+        btn_paste.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        btn_paste.setFont(QFont(self.font_family, 8))
         btn_paste.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_paste.clicked.connect(self._paste_from_clipboard)
         input_row.addWidget(btn_paste)
 
         btn_save = QPushButton("СОХРАНИТЬ")
-        btn_save.setFixedSize(82, 30)
-        btn_save.setFont(QFont(self.font_family, 8, QFont.Weight.Bold))
+        btn_save.setFixedSize(86, 32)
+        btn_save.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        btn_save.setFont(QFont(self.font_family, 8))
         btn_save.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_save.clicked.connect(self._save_manual_key)
         input_row.addWidget(btn_save)
 
         sec_btn_css = (
-            "QPushButton { background-color: #ffffff; color: #111318; border: 1.5px solid #111318; border-radius: 6px; }"
+            "QPushButton { background-color: #ffffff; color: #111318; border: 1.5px solid #111318; "
+            "border-radius: 7px; outline: none; letter-spacing: 0.5px; }"
             "QPushButton:hover { background-color: #111318; color: #ffffff; }"
             if is_light else
-            "QPushButton { background-color: rgba(120, 115, 95, 0.22); color: #ded7c4; border: 1px solid #78735f; border-radius: 6px; }"
-            "QPushButton:hover { background-color: rgba(222, 215, 196, 0.25); color: #ffffff; }"
+            "QPushButton { background-color: rgba(8, 8, 6, 0.85); color: #ded7c4; border: 1px solid #78735f; "
+            "border-radius: 7px; outline: none; letter-spacing: 0.5px; }"
+            "QPushButton:hover { background-color: #1e1b14; border-color: #9e9780; color: #ffffff; }"
         )
         btn_paste.setStyleSheet(sec_btn_css)
         btn_save.setStyleSheet(sec_btn_css)
@@ -349,30 +439,24 @@ class RouterAiAuthDialog(QDialog):
         manual_l.addLayout(input_row)
         layout.addWidget(manual_card)
 
-        # Нижняя панель: ссылка на пополнение и кнопка отключения
-        bottom_row = QHBoxLayout()
-        bottom_row.setSpacing(8)
+        # --- Кнопка отключения (показывается только если ключ уже сохранён) ---
+        if self.existing_key:
+            bottom_row = QHBoxLayout()
+            bottom_row.addStretch()
 
-        btn_topup = QPushButton("ПОПОЛНИТЬ БАЛАНС (СБП / КАРТА)")
-        btn_topup.setFixedHeight(28)
-        btn_topup.setFont(QFont(self.font_family, 8, QFont.Weight.Bold))
-        btn_topup.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_topup.setStyleSheet(sec_btn_css)
-        btn_topup.clicked.connect(lambda: webbrowser.open("https://routerai.ru/credits"))
-        bottom_row.addWidget(btn_topup, 1)
-
-        if existing_key:
-            btn_disconnect = QPushButton("ОТКЛЮЧИТЬ")
-            btn_disconnect.setFixedHeight(28)
-            btn_disconnect.setFixedWidth(96)
-            btn_disconnect.setFont(QFont(self.font_family, 8, QFont.Weight.Bold))
+            btn_disconnect = QPushButton("ОТКЛЮЧИТЬ КЛЮЧ")
+            btn_disconnect.setFixedSize(134, 28)
+            btn_disconnect.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            btn_disconnect.setFont(QFont(self.font_family, 8))
             btn_disconnect.setCursor(Qt.CursorShape.PointingHandCursor)
             btn_disconnect.setStyleSheet("""
                 QPushButton {
-                    background-color: rgba(255, 82, 82, 0.14);
+                    background-color: rgba(255, 82, 82, 0.12);
                     color: #ff5252;
-                    border: 1px solid rgba(255, 82, 82, 0.45);
-                    border-radius: 6px;
+                    border: 1px solid rgba(255, 82, 82, 0.40);
+                    outline: none;
+                    border-radius: 7px;
+                    letter-spacing: 0.6px;
                 }
                 QPushButton:hover {
                     background-color: #ff5252;
@@ -381,8 +465,16 @@ class RouterAiAuthDialog(QDialog):
             """)
             btn_disconnect.clicked.connect(self._disconnect_key)
             bottom_row.addWidget(btn_disconnect)
+            layout.addLayout(bottom_row)
 
-        layout.addLayout(bottom_row)
+    def _show_status(self, text: str, color: str = None):
+        is_light = (self.current_theme == "light")
+        default_col = "#555e6d" if is_light else "rgba(255, 253, 231, 0.65)"
+        self.status_lbl.setStyleSheet(
+            f"color: {color or default_col}; border: none; background: transparent;"
+        )
+        self.status_lbl.setText(text)
+        self.status_lbl.show()
 
     def _start_oauth(self):
         if self.oauth_worker and self.oauth_worker.isRunning():
@@ -390,6 +482,7 @@ class RouterAiAuthDialog(QDialog):
 
         self.btn_oauth.setEnabled(False)
         self.btn_oauth.setText("ОЖИДАЮ ВХОД В БРАУЗЕРЕ...")
+        self._show_status("Открываю страницу авторизации RouterAI...")
 
         self.oauth_worker = RouterAiOAuthWorker(self)
         self.oauth_worker.status_changed.connect(self._on_oauth_status)
@@ -398,20 +491,18 @@ class RouterAiAuthDialog(QDialog):
         self.oauth_worker.start()
 
     def _on_oauth_status(self, text: str):
-        self.status_lbl.setText(text)
+        self._show_status(text)
 
     def _on_oauth_success(self, api_key: str):
         self.key_input.setText(api_key)
-        self.status_lbl.setText("✓ Ключ успешно получен и сохранён!")
-        self.status_lbl.setStyleSheet("color: #22c55e; font-weight: bold; border: none; background: transparent;")
+        self._show_status("✓ Ключ успешно получен и сохранён", "#22c55e")
         self.key_saved.emit(api_key)
         self.accept()
 
     def _on_oauth_error(self, err: str):
         self.btn_oauth.setEnabled(True)
-        self.btn_oauth.setText("ВОЙТИ ЧЕРЕЗ ЯНДЕКС / VK (В 1 КЛИК)")
-        self.status_lbl.setText(err)
-        self.status_lbl.setStyleSheet("color: #ff5252; border: none; background: transparent;")
+        self.btn_oauth.setText("ВОЙТИ ЧЕРЕЗ ЯНДЕКС / VK")
+        self._show_status(err, "#ff5252")
 
     def _paste_from_clipboard(self):
         text = QGuiApplication.clipboard().text().strip()
@@ -421,8 +512,7 @@ class RouterAiAuthDialog(QDialog):
     def _save_manual_key(self):
         key = self.key_input.text().strip()
         if not key:
-            self.status_lbl.setText("Сначала вставь ключ или нажми «Войти через Яндекс / VK».")
-            self.status_lbl.setStyleSheet("color: #ff5252; border: none; background: transparent;")
+            self._show_status("Вставь ключ или нажми «Войти через Яндекс / VK».", "#ff5252")
             return
         self.key_saved.emit(key)
         self.accept()

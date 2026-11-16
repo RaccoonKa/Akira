@@ -28,7 +28,7 @@ from gui.widgets.code_formatter import (
     print_markdown_console,
 )
 
-from core.utils.text_cleaner import clean_chat_display_text, CHAT_ACTION_TAG_REGEX as ACTION_TAG_REGEX
+from core.utils.text_cleaner import clean_chat_display_text, clean_voice_text, CHAT_ACTION_TAG_REGEX as ACTION_TAG_REGEX
 
 SVG_SIDEBAR = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/>
@@ -517,7 +517,9 @@ class StudioAkiraStream(QWidget):
         if not getattr(self, "_tokens", None):
             if hasattr(self, "_stream_timer"):
                 self._stream_timer.stop()
-            self._sync_theme_refs(parse_message_blocks(self._streamed_text))
+            final_blocks = parse_message_blocks(self._streamed_text)
+            self._apply_blocks_to_widgets(final_blocks)
+            self._sync_theme_refs(final_blocks)
             return
 
         for _ in range(self._chunk_size):
@@ -525,6 +527,17 @@ class StudioAkiraStream(QWidget):
                 self._streamed_text += self._tokens.pop(0)
 
         blocks = parse_message_blocks(self._streamed_text)
+        self._apply_blocks_to_widgets(blocks)
+
+        if callable(self._on_stream_tick):
+            self._on_stream_tick()
+
+        if not self._tokens:
+            if hasattr(self, "_stream_timer"):
+                self._stream_timer.stop()
+            self._sync_theme_refs(blocks)
+
+    def _apply_blocks_to_widgets(self, blocks):
         for idx, (b_type, b_val) in enumerate(blocks):
             if idx < len(self._rendered_widgets):
                 old_type, widget = self._rendered_widgets[idx]
@@ -534,27 +547,29 @@ class StudioAkiraStream(QWidget):
                     new_w = self._create_block_widget(b_type, b_val)
                     self.content_col.insertWidget(idx + 1, new_w)
                     self._rendered_widgets[idx] = (b_type, new_w)
-                elif idx == len(blocks) - 1:
+                else:
                     if b_type == "text":
-                        widget.setText(markdown_to_rich_html(b_val, theme=self.current_theme))
+                        new_html = markdown_to_rich_html(b_val, theme=self.current_theme)
+                        if widget.text() != new_html:
+                            widget.setText(new_html)
                     else:
                         _, code_body = b_val
                         clean_code = code_body.strip("\n")
-                        widget.code = clean_code
-                        widget.code_edit.setPlainText(clean_code)
-                        lines_count = max(2, min(26, len(clean_code.splitlines())))
-                        widget.code_edit.setFixedHeight(lines_count * 18 + 16)
+                        if widget.code != clean_code:
+                            widget.code = clean_code
+                            widget.code_edit.setPlainText(clean_code)
+                            lines_count = max(2, min(26, len(clean_code.splitlines())))
+                            widget.code_edit.setFixedHeight(lines_count * 18 + 16)
             else:
                 new_w = self._create_block_widget(b_type, b_val)
                 self.content_col.addWidget(new_w)
                 self._rendered_widgets.append((b_type, new_w))
 
-        if callable(self._on_stream_tick):
-            self._on_stream_tick()
-
-        if not self._tokens:
-            self._stream_timer.stop()
-            self._sync_theme_refs(blocks)
+        # Если количество блоков уменьшилось, удаляем лишние виджеты с конца
+        while len(self._rendered_widgets) > len(blocks):
+            _, extra_w = self._rendered_widgets.pop()
+            self.content_col.removeWidget(extra_w)
+            extra_w.deleteLater()
 
     def _sync_theme_refs(self, blocks):
         self.code_blocks.clear()
@@ -1419,7 +1434,8 @@ class HistorySessionCard(QFrame):
         layout.addLayout(text_col, 1)
 
         self.del_btn = QPushButton("✕")
-        self.del_btn.setFixedSize(22, 22)
+        self.del_btn.setFixedSize(26, 26)
+        self.del_btn.setToolTip("Удалить диалог")
         self.del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.del_btn.clicked.connect(self._on_delete)
         layout.addWidget(self.del_btn)
@@ -1505,12 +1521,16 @@ class HistorySessionCard(QFrame):
         except Exception:
             return "Недавно"
 
-    def _on_delete(self):
+    def _on_delete(self, *args):
         self.delete_requested.emit(self.session_id)
 
     def mousePressEvent(self, event):
         if self._is_editing:
             event.accept()
+            return
+        child = self.childAt(event.pos())
+        if child in (self.del_btn, self.edit_btn, self.title_edit):
+            super().mousePressEvent(event)
             return
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit(self.session_id)
@@ -1586,12 +1606,13 @@ class HistorySessionCard(QFrame):
                 color: {del_col};
                 background: transparent;
                 border: none;
-                font-size: 11px;
-                border-radius: 4px;
+                font-size: 13px;
+                font-weight: bold;
+                border-radius: 5px;
             }}
             QPushButton:hover {{
                 color: #ff4d4f;
-                background-color: rgba(255, 77, 79, 0.16);
+                background-color: rgba(255, 77, 79, 0.18);
             }}
         """)
 
@@ -1987,11 +2008,18 @@ class StudioFrame(QFrame):
         studio_db.delete_session(session_id)
         sessions = studio_db.get_sessions()
         existing_ids = [s["id"] for s in sessions]
+
         if self.current_session_id == session_id or self.current_session_id not in existing_ids:
             if sessions:
                 self.load_session(sessions[0]["id"])
             else:
-                self.create_new_dialog()
+                self._clear_feed()
+                self.dock.model_combo.refresh_models()
+                model = self.dock.model_combo.currentData()
+                new_id = studio_db.create_session(title="Новый диалог", model=model)
+                self.load_session(new_id)
+                sessions = studio_db.get_sessions()
+
         self.drawer.refresh_sessions(sessions, self.current_session_id)
 
     def _on_session_renamed(self, session_id: int, new_title: str):
@@ -2213,7 +2241,9 @@ class StudioFrame(QFrame):
                         self.title_worker.start()
 
             if voice_text and hasattr(self.main_window, 'speak_reply'):
-                self.main_window.speak_reply(voice_text, is_whisper=False)
+                clean_v = clean_voice_text(voice_text)
+                if clean_v:
+                    self.main_window.speak_reply(clean_v, is_whisper=False)
 
     def _on_title_generated(self, session_id: int, title: str):
         studio_db.update_session_title(session_id, title)

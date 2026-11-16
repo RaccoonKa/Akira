@@ -49,6 +49,7 @@ class StudioChatDatabase:
 
     def _get_connection(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        conn.execute("PRAGMA foreign_keys = ON;")
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -111,37 +112,31 @@ class StudioChatDatabase:
 
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC);")
+
+                # Очистка сиротских сообщений от ранее некорректно удалённых диалогов
+                cursor.execute("DELETE FROM messages WHERE session_id NOT IN (SELECT id FROM sessions);")
+
+                # Если сессий нет вовсе, сбрасываем и счетчики автоинкремента
+                cursor.execute("SELECT COUNT(*) FROM sessions;")
+                if cursor.fetchone()[0] == 0:
+                    cursor.execute("DELETE FROM messages;")
+                    cursor.execute("DELETE FROM sqlite_sequence WHERE name IN ('sessions', 'messages');")
+
                 conn.commit()
             finally:
                 conn.close()
 
-        # Автоматически нормализуем существующие сессии (1..N) при старте
-        self.resequence_sessions()
-
     def resequence_sessions(self):
-        """Переиндексирует все существующие сессии подряд (1, 2, 3...) и обновляет счетчик автоинкремента."""
+        """Сбрасывает последовательность автоинкремента, если база диалогов пуста."""
         with self.db_lock:
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
-                cursor.execute("SELECT id FROM sessions ORDER BY id ASC")
-                rows = cursor.fetchall()
-                if not rows:
+                cursor.execute("SELECT COUNT(*) FROM sessions")
+                if cursor.fetchone()[0] == 0:
+                    cursor.execute("DELETE FROM messages")
                     cursor.execute("DELETE FROM sqlite_sequence WHERE name IN ('sessions', 'messages')")
                     conn.commit()
-                    return
-
-                needs_resequence = any(r[0] != idx for idx, r in enumerate(rows, start=1))
-                if needs_resequence:
-                    for new_id, row in enumerate(rows, start=1):
-                        old_id = row[0]
-                        if old_id != new_id:
-                            cursor.execute("UPDATE sessions SET id = ? WHERE id = ?", (-new_id, old_id))
-                    cursor.execute("UPDATE sessions SET id = -id WHERE id < 0")
-
-                max_id = len(rows)
-                cursor.execute("UPDATE sqlite_sequence SET seq = ? WHERE name = 'sessions'", (max_id,))
-                conn.commit()
             finally:
                 conn.close()
 
@@ -205,23 +200,17 @@ class StudioChatDatabase:
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
+                cursor.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
                 cursor.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
-                cursor.execute("SELECT id FROM sessions ORDER BY id ASC")
-                rows = cursor.fetchall()
-                if not rows:
+
+                cursor.execute("SELECT COUNT(*) FROM sessions")
+                remaining_count = cursor.fetchone()[0]
+                if remaining_count == 0:
+                    cursor.execute("DELETE FROM messages")
                     cursor.execute("DELETE FROM sqlite_sequence WHERE name IN ('sessions', 'messages')")
                     print(f"[StudioDB] Диалог #{session_id} удалён. Все диалоги очищены, счетчик ID сброшен на 1")
                 else:
-                    needs_resequence = any(r[0] != idx for idx, r in enumerate(rows, start=1))
-                    if needs_resequence:
-                        for new_id, row in enumerate(rows, start=1):
-                            old_id = row[0]
-                            if old_id != new_id:
-                                cursor.execute("UPDATE sessions SET id = ? WHERE id = ?", (-new_id, old_id))
-                        cursor.execute("UPDATE sessions SET id = -id WHERE id < 0")
-                    max_id = len(rows)
-                    cursor.execute("UPDATE sqlite_sequence SET seq = ? WHERE name = 'sessions'", (max_id,))
-                    print(f"[StudioDB] Диалог #{session_id} удалён. Диалоги упорядочены: 1..{max_id}")
+                    print(f"[StudioDB] Диалог #{session_id} и его история удалены (осталось диалогов: {remaining_count})")
                 conn.commit()
             finally:
                 conn.close()

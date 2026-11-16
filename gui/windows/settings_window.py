@@ -1205,24 +1205,6 @@ class SettingsFrame(QFrame):
 
         self.card_sys.add_layout(row_sys_top)
 
-        cell_vpn = QFrame(self.card_sys.content_widget)
-        cell_vpn.setObjectName("BentoCell")
-        cell_vpn_l = QHBoxLayout(cell_vpn)
-        cell_vpn_l.setContentsMargins(8, 6, 8, 6)
-        lbl_v = QLabel("VPN")
-        lbl_v.setObjectName("ToggleLabel")
-        lbl_v.setFont(QFont(self.font_family, 10))
-        cell_vpn_l.addWidget(lbl_v)
-        cell_vpn_l.addStretch()
-        self.vpn_combo = NoScrollComboBox(cell_vpn)
-        self.vpn_combo.setObjectName("SettingCombo")
-        self.vpn_combo.setFont(QFont(self.font_family, 9))
-        self.vpn_combo.setFixedWidth(82)
-        for name, key in [("Нет", "none"), ("Sota", "sota"), ("Happ", "happ"), ("V2Ray", "v2ray"), ("WG", "wireguard")]:
-            self.vpn_combo.addItem(name, key)
-        cell_vpn_l.addWidget(self.vpn_combo)
-        self.card_sys.add_widget(cell_vpn)
-
         row_vol = QFrame(self.card_sys.content_widget)
         row_vol.setObjectName("BentoCell")
         row_vol_l = QHBoxLayout(row_vol)
@@ -1576,7 +1558,6 @@ class SettingsFrame(QFrame):
         self.theme_combo.currentIndexChanged.connect(self.auto_save)
         self.voice_slider.sliderReleased.connect(self.auto_save)
         self.alarm_sound_combo.currentIndexChanged.connect(self.auto_save)
-        self.vpn_combo.currentIndexChanged.connect(self.auto_save)
         self.spotify_toggle.toggled.connect(self.auto_save)
         self.face_rec_toggle.toggled.connect(self.auto_save)
         self.eye_tracking_toggle.toggled.connect(self.auto_save)
@@ -2160,11 +2141,6 @@ class SettingsFrame(QFrame):
         if idx_g != -1:
             self.gender_combo.setCurrentIndex(idx_g)
 
-        vpn_val = cfg.get("vpn_service", "none").lower()
-        idx = self.vpn_combo.findData(vpn_val)
-        if idx != -1:
-            self.vpn_combo.setCurrentIndex(idx)
-
         use_sp = cfg.get("music_service", "yandex") == "spotify" or cfg.get("use_spotify", False)
         self.spotify_toggle.setChecked(use_sp)
 
@@ -2242,7 +2218,6 @@ class SettingsFrame(QFrame):
         config_data["voice_volume"] = self.voice_slider.value()
         config_data["alarm_sound"] = self.alarm_sound_combo.currentData()
         config_data["custom_alarm_path"] = self.custom_alarm_path
-        config_data["vpn_service"] = self.vpn_combo.currentData()
 
         use_spotify_val = self.spotify_toggle.isChecked()
         config_data["music_service"] = "spotify" if use_spotify_val else "yandex"
