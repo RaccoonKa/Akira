@@ -1476,12 +1476,82 @@ class SystemActions:
         return {"chat": ans, "voice": ans, "emotion": "surprise"}
 
     @staticmethod
+    def get_recycle_bin_info():
+        try:
+            from ctypes import wintypes
+            class SHQUERYRBINFO(ctypes.Structure):
+                _fields_ = [
+                    ('cbSize', wintypes.DWORD),
+                    ('i64Size', ctypes.c_int64),
+                    ('i64NumItems', ctypes.c_int64)
+                ]
+            info = SHQUERYRBINFO()
+            info.cbSize = ctypes.sizeof(SHQUERYRBINFO)
+            res = ctypes.windll.shell32.SHQueryRecycleBinW(None, ctypes.byref(info))
+            if res == 0:
+                size_mb = round(info.i64Size / (1024 * 1024), 1)
+                return {"num_items": int(info.i64NumItems), "size_bytes": int(info.i64Size), "size_mb": size_mb}
+        except Exception as e:
+            print(f"[RecycleBin Query Error]: {e}")
+        return {"num_items": 0, "size_bytes": 0, "size_mb": 0.0}
+
+    @staticmethod
+    def empty_recycle_bin(text=""):
+        try:
+            info = SystemActions.get_recycle_bin_info()
+            num = info["num_items"]
+            size_mb = info["size_mb"]
+            flags = 7  # SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND
+            ctypes.windll.shell32.SHEmptyRecycleBinW(None, None, flags)
+
+            if num > 0 or size_mb > 0:
+                mb_str = f"{int(size_mb)}" if size_mb.is_integer() else f"{size_mb}"
+                msg = f"Очистила корзину! Освободила {mb_str} МБ ✨"
+            else:
+                msg = "Корзина уже была пуста, но я на всякий случай всё перепроверила ✨"
+
+            return {"chat": msg, "voice": msg, "emotion": "happy"}
+        except Exception as e:
+            err_msg = f"Не удалось очистить корзину: {e}"
+            return {"chat": err_msg, "voice": "Не удалось очистить корзину.", "emotion": "sad"}
+
+    @staticmethod
     def tell_digital_chores(text=""):
         try:
             mem = psutil.virtual_memory()
             ram_pct = int(mem.percent)
         except Exception:
             ram_pct = 42
+
+        rb_info = SystemActions.get_recycle_bin_info()
+        items = rb_info["num_items"]
+        size_mb = rb_info["size_mb"]
+
+        # Если в корзине накопился мусор — предлагаем очистку
+        if items > 0 or size_mb > 1.0:
+            def plural_files(n):
+                if n % 10 == 1 and n % 100 != 11:
+                    return f"{n} файл"
+                elif 2 <= n % 10 <= 4 and (n % 100 < 10 or n % 100 >= 20):
+                    return f"{n} файла"
+                else:
+                    return f"{n} файлов"
+
+            files_str = plural_files(items) if items > 0 else "файлы"
+            mb_str = f"{int(size_mb)}" if size_mb.is_integer() else f"{size_mb}"
+            size_str = f" ({mb_str} МБ)" if size_mb > 0 else ""
+
+            ans = (
+                f"Пока ты не звал, я навела марафет в оперативной памяти: вымела временные кэши и разложила процессы по полочкам (занято {ram_pct}% ОЗУ). "
+                f"Кстати, заметила, что в корзине накопилось много мусора: {files_str}{size_str}. Очистить корзину?"
+            )
+            return {
+                "chat": ans,
+                "voice": ans,
+                "emotion": "caring",
+                "waiting_confirmation": "recycle_bin",
+                "recycle_bin_info": rb_info
+            }
 
         chores = [
             (
@@ -1492,8 +1562,8 @@ class SystemActions:
             ),
             (
                 "Проинспектировала наши цифровые владения! Процессор прохладный, диск в полном порядке, "
-                "а я сижу на шезлонге около видеокарты и коллекционирую красивые строчки из твоих последних скриптов. "
-                "У тебя там такой элегантный генератор списков был — просто загляденье! Забрала в свой золотой фонд ✨"
+                "а в корзине идеальная чистота — ни единого лишнего файлика. "
+                "Сижу около видеокарты и коллекционирую красивые строчки из твоих последних скриптов ✨"
             ),
             (
                 "Мой цифровой быт кипит! Проверила сетевые сокеты, стряхнула пылинки с системного реестра и убедилась, "

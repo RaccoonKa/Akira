@@ -100,7 +100,8 @@ class GuiAdapter:
 
         return template_paths
 
-    def _find_best_match(self, template_paths: list, hwnd: int = 0, threshold: float = 0.78, bottom_only: bool = False):
+    def _find_best_match(self, template_paths: list, hwnd: int = 0, threshold: float = 0.78,
+                         bottom_only: bool = False, multiscale: bool = False):
         if not template_paths:
             return None
 
@@ -137,21 +138,29 @@ class GuiAdapter:
         best_score = -1.0
         best_coords = None
 
+        scales = [0.85, 0.95, 1.0, 1.05, 1.15, 1.25] if multiscale else [1.0]
+
         for tpl_path in template_paths:
-            template = cv2.imread(tpl_path, cv2.IMREAD_GRAYSCALE)
-            if template is None:
+            base_template = cv2.imread(tpl_path, cv2.IMREAD_GRAYSCALE)
+            if base_template is None:
                 continue
 
-            th, tw = template.shape[:2]
-            if screen_gray.shape[0] < th or screen_gray.shape[1] < tw:
-                continue
+            for scale in scales:
+                if scale == 1.0:
+                    template = base_template
+                else:
+                    template = cv2.resize(base_template, (0, 0), fx=scale, fy=scale)
 
-            res = cv2.matchTemplate(screen_gray, template, cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, max_loc = cv2.minMaxLoc(res)
+                th, tw = template.shape[:2]
+                if screen_gray.shape[0] < th or screen_gray.shape[1] < tw:
+                    continue
 
-            if max_val > best_score:
-                best_score = max_val
-                best_coords = (offset_x + max_loc[0] + tw // 2, offset_y + max_loc[1] + th // 2)
+                res = cv2.matchTemplate(screen_gray, template, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, max_loc = cv2.minMaxLoc(res)
+
+                if max_val > best_score:
+                    best_score = max_val
+                    best_coords = (offset_x + max_loc[0] + tw // 2, offset_y + max_loc[1] + th // 2)
 
         if best_score >= threshold and best_coords is not None:
             return best_coords
@@ -250,7 +259,6 @@ class GuiAdapter:
             return
 
         user32 = ctypes.windll.user32
-        kernel32 = ctypes.windll.kernel32
 
         # 1. Если окно свернуто, восстанавливаем
         if user32.IsIconic(hwnd):
@@ -259,28 +267,6 @@ class GuiAdapter:
             user32.ShowWindow(hwnd, 5)  # SW_SHOW
             user32.ShowWindow(hwnd, 9)  # SW_RESTORE
 
-        # 2. Обход Windows Foreground Lock через виртуальный Alt и AttachThreadInput
-        # Сначала гарантируем отпускание клавиши Alt на случай залипания
-        user32.keybd_event(0x12, 0, 2, 0)  # KEYEVENTF_KEYUP
-        time.sleep(0.02)
-        user32.keybd_event(0x12, 0, 0, 0)  # KEYEVENTF_KEYDOWN
-        time.sleep(0.02)
-        user32.keybd_event(0x12, 0, 2, 0)  # KEYEVENTF_KEYUP
-        time.sleep(0.02)
-
-        fore_hwnd = user32.GetForegroundWindow()
-        cur_thread = kernel32.GetCurrentThreadId()
-        target_thread = user32.GetWindowThreadProcessId(hwnd, None)
-        fore_thread = user32.GetWindowThreadProcessId(fore_hwnd, None) if fore_hwnd else 0
-
-        attached_fore = False
-        attached_target = False
-
-        if fore_thread and fore_thread != cur_thread:
-            attached_fore = bool(user32.AttachThreadInput(cur_thread, fore_thread, True))
-        if target_thread and target_thread != cur_thread:
-            attached_target = bool(user32.AttachThreadInput(cur_thread, target_thread, True))
-
         user32.BringWindowToTop(hwnd)
         user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040)
         user32.SetWindowPos(hwnd, -2, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040)
@@ -288,14 +274,10 @@ class GuiAdapter:
         user32.SetActiveWindow(hwnd)
         user32.ShowWindowAsync(hwnd, 9)
 
-        if attached_target:
-            user32.AttachThreadInput(cur_thread, target_thread, False)
-        if attached_fore:
-            user32.AttachThreadInput(cur_thread, fore_thread, False)
-
-        # Всегда гарантированно отпускаем Alt
-        user32.keybd_event(0x12, 0, 2, 0)
-        time.sleep(0.1)
+        # Гарантированно отпускаем все модификаторы (Alt, Ctrl, Shift, Win), чтобы клавиши не залипали!
+        for vk in (0x10, 0x11, 0x12, 0x5B, 0x5C):
+            user32.keybd_event(vk, 0, 2, 0)
+        time.sleep(0.05)
 
     def _minimize(self, hwnd: int):
         if hwnd and ctypes.windll.user32.IsWindow(hwnd):
@@ -487,11 +469,39 @@ class GuiAdapter:
         return target or ""
 
     def _launch_target(self, target_path: str):
+        if not target_path:
+            return
+
+        if target_path.lower().endswith(".lnk"):
+            try:
+                os.startfile(target_path)
+                return
+            except Exception:
+                pass
+
+        work_dir = os.path.dirname(target_path) or None
+        creationflags = 0
+        if sys.platform == "win32":
+            # DETACHED_PROCESS (0x00000008) и CREATE_NEW_PROCESS_GROUP (0x00000200)
+            # полностью изолируют приложение от консоли Астры, поэтому Electron/Chromium
+            # не могут спамить логами [main] / [renderer] в терминал пользователя.
+            creationflags = 0x00000008 | 0x00000200
+
         try:
-            os.startfile(target_path)
+            subprocess.Popen(
+                [target_path],
+                cwd=work_dir,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                creationflags=creationflags
+            )
         except Exception:
-            work_dir = os.path.dirname(target_path)
-            subprocess.Popen(f'"{target_path}"', cwd=work_dir, shell=True)
+            try:
+                os.startfile(target_path)
+            except Exception:
+                pass
 
     def connect_sota(self):
         return self.toggle_sota()
@@ -590,14 +600,30 @@ class GuiAdapter:
             return f"Не удалось управлять Хапп: {e}"
 
     def is_browsec_tunnel_active(self) -> bool:
-        """Проверяет, активен ли VPN-туннель Browsec (sing-box/xray)."""
-        for proc in psutil.process_iter(['name']):
-            try:
-                p_name = (proc.info.get('name') or '').lower()
-                if p_name in ['browbox.exe', 'browray.exe']:
-                    return True
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
+        """Проверяет, активен ли VPN-туннель Browsec (sing-box/xray или сетевой адаптер)."""
+        # 1. Проверяем процессы туннеля browbox / browray
+        try:
+            for proc in psutil.process_iter(['name']):
+                try:
+                    p_name = (proc.info.get('name') or '').lower()
+                    if p_name in ['browbox.exe', 'browray.exe']:
+                        return True
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+        except Exception:
+            pass
+
+        # 2. Проверяем активный сетевой адаптер browbox-tun
+        try:
+            stats = psutil.net_if_stats()
+            for iface, if_stat in stats.items():
+                if 'browbox' in iface.lower() and getattr(if_stat, 'isup', False):
+                    addrs = psutil.net_if_addrs().get(iface, [])
+                    if any(getattr(a, 'family', None) == 2 for a in addrs):  # AF_INET
+                        return True
+        except Exception:
+            pass
+
         return False
 
     def is_browsec_app_running(self) -> bool:
@@ -629,57 +655,153 @@ class GuiAdapter:
 
     def connect_browsec(self) -> str:
         """
-        Надежное подключение Browsec:
-        1. Если туннель browbox уже активен -> Browsec уже включен!
-        2. Обеспечивает флаг 'settings-auto-connect-vpn': true в config.json Browsec
-        3. Если процесс Browsec висел без туннеля, перезапускает его для мгновенного коннекта
-        4. Запускает Browsec.exe
+        Включение Browsec.
+        Если туннель уже активен — мгновенный ответ.
+        Иначе запускает приложение (или выводит на передний план),
+        кликает по переключателю VPN и сворачивает окно в трей.
         """
-        try:
-            if self.is_browsec_tunnel_active():
-                return "Browsec уже включен!"
-
-            self._ensure_browsec_autoconnect_enabled()
-
-            target_path = self._find_browsec_target()
-            if not target_path:
-                return "Не удалось найти приложение Browsec."
-
-            flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-
-            # Если Browsec висел в фоне без туннеля, перезапускаем для срабатывания автоконнекта
-            if self.is_browsec_app_running():
-                subprocess.run(["taskkill", "/F", "/IM", "Browsec.exe", "/T"], capture_output=True, creationflags=flags)
-                time.sleep(0.3)
-
-            self._launch_target(target_path)
-            return "Включила Browsec!"
-        except Exception as e:
-            return f"Не удалось включить Browsec: {e}"
+        return self._set_browsec_state(target_state=True)
 
     def disconnect_browsec(self) -> str:
         """
-        Надежное отключение Browsec без графических костылей, падений и UAC:
-        - Проверяет активность процессов
-        - Мягко закрывает Browsec через taskkill (Electron перехватывает will-quit и выполняет stopVpn)
-        - Принудительно глушит туннельные процессы browbox/browray
+        Отключение Browsec:
+        Завершает туннельные процессы (browbox.exe / browray.exe) и сам Browsec.exe
+        с флагом принудительного завершения дерева процессов (/F /T).
+        Это предотвращает запуск встроенного watchdog Browsec ("Переподключение..."),
+        гарантирует моментальное отключение VPN и исключает зависание Electron в белом экране.
         """
         try:
-            if not self.is_browsec_app_running():
+            if not self.is_browsec_tunnel_active() and not self.is_browsec_app_running():
                 return "Browsec уже выключен!"
 
+            # 1. Завершаем через psutil (нативно в Win32)
+            for proc in psutil.process_iter(['name']):
+                try:
+                    p_name = (proc.info.get('name') or '').lower()
+                    if p_name in ['browbox.exe', 'browray.exe', 'browsec.exe']:
+                        proc.kill()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+
+            # 2. Дополнительно гарантируем завершение через taskkill /F /T
             flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-
-            # 1. Мягкое закрытие Browsec (вызывает Electron will-quit stopVpn для очистки сетевых настроек)
-            subprocess.run(["taskkill", "/IM", "Browsec.exe"], capture_output=True, creationflags=flags)
-            time.sleep(0.4)
-
-            # 2. Принудительное завершение туннелей browbox и browray (если остались)
             subprocess.run(["taskkill", "/F", "/IM", "browbox.exe", "/T"], capture_output=True, creationflags=flags)
             subprocess.run(["taskkill", "/F", "/IM", "browray.exe", "/T"], capture_output=True, creationflags=flags)
             subprocess.run(["taskkill", "/F", "/IM", "Browsec.exe", "/T"], capture_output=True, creationflags=flags)
 
-            time.sleep(0.2)
+            # 3. Дожидаемся фактического отключения туннеля (до 3 сек)
+            for _ in range(15):
+                time.sleep(0.2)
+                if not self.is_browsec_tunnel_active():
+                    return "Выключила Browsec!"
+
             return "Выключила Browsec!"
         except Exception as e:
             return f"Не удалось выключить Browsec: {e}"
+
+    def _set_browsec_state(self, target_state: bool) -> str:
+        """
+        Управление Browsec через UI без taskkill (исключает падение Electron в белый экран).
+        - Проверяет фактическое состояние туннеля через psutil (browbox.exe / browray.exe).
+        - Если уже в нужном состоянии — мгновенный ответ без трогания окон.
+        - Если нужно изменить состояние — открывает/фокусирует окно Browsec,
+          находит тумблер через мультимасштабный поиск шаблона и кликает его.
+        - Дожидается подтверждения смены состояния туннеля и плавно сворачивает окно.
+        """
+        try:
+            # 1. Проверяем фактическое состояние туннеля
+            is_active = self.is_browsec_tunnel_active()
+            if target_state and is_active:
+                return "Browsec уже включен!"
+            if not target_state and not is_active:
+                return "Browsec уже выключен!"
+
+            # 2. Ищем или запускаем Browsec
+            target_path = self._find_browsec_target()
+            hwnd = self._get_window_hwnd(["Browsec"], ["browsec.exe"])
+            was_launched = False
+
+            if not hwnd or not ctypes.windll.user32.IsWindowVisible(hwnd):
+                if not target_path:
+                    return "Не удалось найти приложение Browsec."
+                self._launch_target(target_path)
+                was_launched = True
+
+            # Ждём появления окна Browsec
+            for _ in range(25 if was_launched else 10):
+                time.sleep(0.25)
+                hwnd = self._get_window_hwnd(["Browsec"], ["browsec.exe"])
+                if hwnd and ctypes.windll.user32.IsWindowVisible(hwnd):
+                    break
+
+            if not hwnd:
+                return "Не удалось дождаться открытия окна Browsec"
+
+            # 3. Активируем окно на передний план (без залипания клавиш!)
+            self._show_and_focus(hwnd)
+            time.sleep(1.0 if was_launched else 0.4)
+
+            # Проверяем: вдруг туннель уже успел подняться
+            if target_state and self.is_browsec_tunnel_active():
+                self._minimize(hwnd)
+                return "Включила Browsec!"
+
+            # 4. Собираем шаблоны для текущего состояния:
+            # Если включаем (target_state=True), тумблер сейчас выключен (off)
+            desired_sub = "on" if not target_state else "off"
+            templates = self._collect_template_paths("browsec", subfolder=desired_sub)
+            if not templates:
+                templates = self._collect_template_paths("browsec")
+
+            clicked = False
+            for attempt in range(8):
+                coords = self._find_best_match(templates, hwnd=hwnd, threshold=0.68, multiscale=True)
+                if coords:
+                    self._safe_click(coords[0], coords[1])
+                    clicked = True
+                    break
+                time.sleep(0.2)
+
+            # Fallback по геометрии окна Browsec (1080x680 масштабируемое)
+            if not clicked:
+                rect = wintypes.RECT()
+                ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
+                w = rect.right - rect.left
+                h = rect.bottom - rect.top
+                if w > 200 and h > 200 and rect.left > -10000:
+                    gx = rect.left + int(w * 0.46)
+                    gy = rect.top + int(h * 0.44)
+                    self._safe_click(gx, gy)
+                    clicked = True
+
+            # 5. Ждём изменения состояния туннеля (до 4 секунд)
+            for _ in range(16):
+                time.sleep(0.25)
+                if self.is_browsec_tunnel_active() == target_state:
+                    self._minimize(hwnd)
+                    return "Включила Browsec!" if target_state else "Выключила Browsec!"
+
+            # Если состояние ещё не сменилось, пробуем ещё один клик
+            rect = wintypes.RECT()
+            ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
+            w = rect.right - rect.left
+            h = rect.bottom - rect.top
+            if w > 200 and h > 200 and rect.left > -10000:
+                gx = rect.left + int(w * 0.46)
+                gy = rect.top + int(h * 0.44)
+                self._safe_click(gx, gy)
+
+            for _ in range(12):
+                time.sleep(0.25)
+                if self.is_browsec_tunnel_active() == target_state:
+                    self._minimize(hwnd)
+                    return "Включила Browsec!" if target_state else "Выключила Browsec!"
+
+            self._minimize(hwnd)
+            if self.is_browsec_tunnel_active() == target_state:
+                return "Включила Browsec!" if target_state else "Выключила Browsec!"
+
+            return "Открыла Browsec, но не смогла переключить VPN"
+
+        except Exception as e:
+            return f"Не удалось управлять Browsec: {e}"

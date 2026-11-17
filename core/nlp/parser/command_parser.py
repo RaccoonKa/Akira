@@ -86,7 +86,8 @@ CANONICAL_USER_TEXTS = {
     "tell_digital_chores": "Чем ты занимаешься в системе?",
     "get_time_greeting": "Привет!",
     "tell_memory_archive": "Вспомни наши победы",
-    "friday_chill_mode": "Включи пятничный режим"
+    "friday_chill_mode": "Включи пятничный режим",
+    "empty_recycle_bin": "Очисти корзину"
 }
 
 
@@ -99,6 +100,7 @@ class CommandParser:
         self.doc_parser = DocumentParser()
         self.waiting_for_zapret = False
         self.waiting_for_vpn = False
+        self.waiting_for_recycle_bin = False
         self.pending_vpn_action = "connect"
         self.pending_vpn_options = []
         self.last_emotion = "neutral"
@@ -158,7 +160,8 @@ class CommandParser:
             "tell_digital_chores": "tell_digital_chores",
             "get_time_greeting": "get_time_greeting",
             "tell_memory_archive": "tell_memory_archive",
-            "friday_chill_mode": "friday_chill_mode"
+            "friday_chill_mode": "friday_chill_mode",
+            "empty_recycle_bin": "empty_recycle_bin"
         }
 
         self.nlu = None
@@ -393,6 +396,15 @@ class CommandParser:
         ]
         if any(ct in text_low for ct in chores_triggers) and len(text_low.split()) <= 6:
             return "tell_digital_chores"
+
+        recycle_triggers = [
+            "очисти корзину", "очистить корзину", "почисти корзину", "почистить корзину",
+            "выброси мусор", "выбросить мусор", "очисти мусор", "освободи корзину",
+            "опустоши корзину", "опустошить корзину", "очисти корзину от мусора",
+            "удали мусор из корзины", "почисти мусор", "очисти корзинку"
+        ]
+        if any(rt in text_low for rt in recycle_triggers):
+            return "empty_recycle_bin"
 
         time_greeting_triggers = [
             "доброе утро", "с добрым утром", "доброго утречка", "доброе утречко",
@@ -1555,6 +1567,43 @@ class CommandParser:
                 "is_whisper": is_whisper
             }
 
+        if self.waiting_for_recycle_bin:
+            affirmatives = [
+                "да", "чисти", "очисти", "очищай", "давай", "удали", "конечно",
+                "давай чисти", "чисти давай", "да чисти", "почисти", "ага", "давай почисти",
+                "убирай", "очистить", "чисть", "выбрасывай", "выброси", "сделай", "да давай",
+                "да, чисти", "да, давай", "чисти, конечно", "да очисти", "да очищай"
+            ]
+            negatives = [
+                "нет", "не надо", "не чисти", "оставь", "отмена", "потом", "не сейчас",
+                "не-а", "не стоит", "позже", "забудь", "хватит", "стоп"
+            ]
+            words = set(re.findall(r'\w+', text_low))
+            is_yes = any(text_low == aff or aff in text_low or aff in words for aff in affirmatives)
+            is_no = any(text_low == neg or neg in text_low or neg in words for neg in negatives)
+
+            if is_yes and not is_no:
+                self.waiting_for_recycle_bin = False
+                res = SystemActions.empty_recycle_bin()
+                return {
+                    "user_display": "Очистить корзину",
+                    "chat": res.get("chat", "Очистила корзину! ✨"),
+                    "voice": res.get("voice", "Очистила корзину!"),
+                    "emotion": "happy",
+                    "is_whisper": is_whisper
+                }
+            elif is_no:
+                self.waiting_for_recycle_bin = False
+                return {
+                    "user_display": "Не надо",
+                    "chat": "Хорошо, оставила всё в корзине как есть 👌",
+                    "voice": "Хорошо, оставила всё как есть.",
+                    "emotion": "neutral",
+                    "is_whisper": is_whisper
+                }
+            else:
+                self.waiting_for_recycle_bin = False
+
         open_match = re.match(r'^(?:(?:акира|аки),?\s*)?(?:открой|запусти|вруби|подруби|включи)\s+(.+)$', text_low)
         if open_match:
             candidate_app = open_match.group(1).strip()
@@ -1797,6 +1846,8 @@ class CommandParser:
 
                 if res is not None:
                     if isinstance(res, dict):
+                        if res.get("waiting_confirmation") == "recycle_bin":
+                            self.waiting_for_recycle_bin = True
                         res.setdefault("user_display", canonical_display)
                         res.setdefault("is_whisper", is_whisper)
                         if "emotion" not in res:

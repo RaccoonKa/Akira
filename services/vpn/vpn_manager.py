@@ -136,7 +136,9 @@ class VpnManager:
             ("wireguard", ["wireguard.exe"])
         ]
         for key, procs in checks:
-            if self.is_process_running(procs):
+            if key == "browsec" and self.gui.is_browsec_tunnel_active():
+                running.append(key)
+            elif self.is_process_running(procs):
                 running.append(key)
         return running
 
