@@ -11,6 +11,7 @@ import sounddevice as sd
 import onnxruntime as ort
 from PyQt6.QtCore import QThread, pyqtSignal
 from piper.voice import PiperVoice
+from piper.config import SynthesisConfig
 from core.utils.config import get_resource_path, load_config
 from core.system.actions import ym_manager
 from core.utils.text_cleaner import clean_voice_text
@@ -230,7 +231,7 @@ class TTSThread(QThread):
             except Exception as e:
                 print(f"[Whisper Piper Init Error]: {e}")
 
-    def _clean_text_for_tts(self, text):
+    def _clean_text_for_tts(self, text, is_clause=False):
         if not text:
             return ""
 
@@ -273,10 +274,14 @@ class TTSThread(QThread):
         cleaned = re.sub(r'[^\w\s\.,!?\-\u0301]', '', cleaned)
         cleaned = re.sub(r'\s+', ' ', cleaned).strip()
 
-        if cleaned and not cleaned.endswith(('.', '?')):
-            cleaned += '.'
+        if cleaned and re.search(r'[a-zа-яё0-9]', cleaned):
+            if is_clause:
+                cleaned = cleaned.rstrip('.,!? ') + ','
+            elif not cleaned.endswith(('.', '?')):
+                cleaned += '.'
+            return cleaned
 
-        return cleaned
+        return ""
 
     def _get_volume_factor(self, is_whisper=False):
         cfg = load_config()
@@ -285,6 +290,69 @@ class TTSThread(QThread):
         if is_whisper:
             vol_factor *= 0.65
         return vol_factor
+
+    def _get_synthesis_config(self, is_whisper=False):
+        cfg = load_config()
+        # length_scale > 1.0 замедляет темп речи (1.09 дает ~9% более размеренную и четкую артикуляцию)
+        length_scale = float(cfg.get("voice_length_scale", 1.09))
+        if is_whisper:
+            length_scale = max(1.0, length_scale * 0.98)
+        return SynthesisConfig(length_scale=length_scale)
+
+    def _split_into_speech_phrases(self, text: str):
+        if not text:
+            return []
+
+        # Нормализация многоточий, переносов строк и частых сокращений
+        text = re.sub(r'\.{3,}|…', '.', text)
+        text = re.sub(r'[\r\n]+', '. ', text)
+        text = re.sub(r'\bт\.\s*д\.', 'и так далее', text, flags=re.IGNORECASE)
+        text = re.sub(r'\bт\.\s*п\.', 'и тому подобное', text, flags=re.IGNORECASE)
+        text = re.sub(r'\bт\.\s*е\.', 'то есть', text, flags=re.IGNORECASE)
+        text = re.sub(r'\bт\.\s*к\.', 'так как', text, flags=re.IGNORECASE)
+
+        raw_sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
+        if not raw_sentences:
+            raw_sentences = [text.strip()]
+
+        conj_pattern = re.compile(
+            r',\s+(?=(?:чтобы|потому что|так как|хотя|если|когда|который|которая|которое|которые|при этом|в то время как|но|а|дабы|зато|также|однако)\b)',
+            re.IGNORECASE
+        )
+
+        phrases = []
+        for sent in raw_sentences:
+            if not sent:
+                continue
+            words = sent.split()
+            # Короткие предложения читаем целиком
+            if len(words) <= 11:
+                phrases.append(('sentence', sent))
+                continue
+
+            # Длинное предложение: сначала разбиваем по знакам препинания (; : —)
+            sub_parts = [p.strip() for p in re.split(r'(?<=[;:])\s+|(?<=\s[—–-])\s*', sent) if p.strip()]
+
+            refined_parts = []
+            for sp in sub_parts:
+                sp_words = sp.split()
+                if len(sp_words) > 11:
+                    c_parts = [cp.strip() for cp in conj_pattern.split(sp) if cp.strip()]
+                    if len(c_parts) > 1:
+                        refined_parts.extend(c_parts)
+                    else:
+                        refined_parts.append(sp)
+                else:
+                    refined_parts.append(sp)
+
+            if len(refined_parts) > 1:
+                for i, p in enumerate(refined_parts):
+                    is_last = (i == len(refined_parts) - 1)
+                    phrases.append(('sentence' if is_last else 'clause', p))
+            else:
+                phrases.append(('sentence', sent))
+
+        return phrases
 
     def _parse_speech_and_laugh_segments(self, raw_text: str):
         if not raw_text:
@@ -305,12 +373,13 @@ class TTSThread(QThread):
         for idx, token in enumerate(tokens):
             clean_tok = re.sub(r'^[,\s!?:;.\-]+', '', token).strip()
             if clean_tok:
-                # Разбиваем текст на предложения
-                sentences = [s.strip() for s in re.split(r'(?<=[.?])\s+', clean_tok) if s.strip()]
-                for s in (sentences if sentences else [clean_tok]):
-                    cleaned_s = self._clean_text_for_tts(s)
-                    if cleaned_s:
-                        raw_items.append(('text', cleaned_s))
+                # Разбиваем текст на фразы и предложения с естественными границами
+                phrases = self._split_into_speech_phrases(clean_tok)
+                for p_type, p_text in phrases:
+                    is_clause = (p_type == 'clause')
+                    cleaned_p = self._clean_text_for_tts(p_text, is_clause=is_clause)
+                    if cleaned_p and re.search(r'[a-zа-яё0-9]', cleaned_p):
+                        raw_items.append((p_type, cleaned_p))
             if idx < len(tokens) - 1:
                 raw_items.append(('laugh', None))
 
@@ -331,11 +400,19 @@ class TTSThread(QThread):
 
         segments = self._parse_speech_and_laugh_segments(raw_text)
         if not segments:
-            segments = [('text', self._clean_text_for_tts(raw_text))]
+            cleaned = self._clean_text_for_tts(raw_text)
+            if cleaned and re.search(r'[a-zа-яё0-9]', cleaned):
+                segments = [('sentence', cleaned)]
 
-        pause_bytes = np.zeros(int(sample_rate * 0.25), dtype=np.int16).tobytes()
+        # Естественные паузы:
+        # Между завершенными предложениями (.!?) — ~350 мс
+        sentence_pause_bytes = np.zeros(int(sample_rate * 0.35), dtype=np.int16).tobytes()
+        # Между частями сложного предложения (clauses) — связующая микропауза ~150 мс
+        clause_pause_bytes = np.zeros(int(sample_rate * 0.15), dtype=np.int16).tobytes()
         laugh_pause_bytes = np.zeros(int(sample_rate * 0.20), dtype=np.int16).tobytes()
         silence_padding = np.zeros(int(sample_rate * 0.15), dtype=np.int16).tobytes()
+
+        syn_config = self._get_synthesis_config(is_whisper=is_whisper)
 
         audio_queue = queue.Queue(maxsize=300)
         self._audio_queue = audio_queue
@@ -349,15 +426,15 @@ class TTSThread(QThread):
                     laugh_chunk = get_random_laugh_bytes(sample_rate)
                     if laugh_chunk:
                         # Небольшая пауза перед смехом, если перед ним была речь
-                        if idx > 0 and segments[idx - 1][0] == 'text':
+                        if idx > 0 and segments[idx - 1][0] in ('sentence', 'clause'):
                             audio_queue.put(laugh_pause_bytes)
                         audio_queue.put(laugh_chunk)
                         # Пауза после смеха перед последующей речью
-                        if idx < len(segments) - 1 and segments[idx + 1][0] == 'text':
+                        if idx < len(segments) - 1 and segments[idx + 1][0] in ('sentence', 'clause'):
                             audio_queue.put(laugh_pause_bytes)
                 else:
-                    sentence = seg_content
-                    for chunk in voice.synthesize(sentence):
+                    phrase_text = seg_content
+                    for chunk in voice.synthesize(phrase_text, syn_config=syn_config):
                         if self._stopped:
                             break
                         chunk_bytes = chunk.audio_int16_bytes
@@ -365,7 +442,10 @@ class TTSThread(QThread):
                             audio_queue.put(chunk_bytes)
 
                     if idx < len(segments) - 1 and not self._stopped:
-                        audio_queue.put(pause_bytes)
+                        if seg_type == 'clause':
+                            audio_queue.put(clause_pause_bytes)
+                        else:
+                            audio_queue.put(sentence_pause_bytes)
 
             audio_queue.put(None)
 
@@ -450,9 +530,10 @@ class TTSThread(QThread):
 
             if self._is_warmup:
                 cleaned_warmup = self._clean_text_for_tts(self.warmup_text)
+                syn_cfg = self._get_synthesis_config(is_whisper=self.is_whisper)
                 for v in (self.main_voice, self.whisper_voice):
                     if v and cleaned_warmup:
-                        for _ in v.synthesize(cleaned_warmup):
+                        for _ in v.synthesize(cleaned_warmup, syn_config=syn_cfg):
                             break
 
                 if self.greeting_to_precache and not self._stopped:
@@ -461,21 +542,25 @@ class TTSThread(QThread):
 
                     if target_voice and cleaned_greeting:
                         target_sr = target_voice.config.sample_rate
-                        greeting_sentences = [s.strip() for s in re.split(r'(?<=[.?])\s+', cleaned_greeting) if s.strip()]
-                        if not greeting_sentences:
-                            greeting_sentences = [cleaned_greeting]
+                        greeting_phrases = self._split_into_speech_phrases(self.greeting_to_precache)
+                        if not greeting_phrases:
+                            greeting_phrases = [('sentence', cleaned_greeting)]
 
                         audio_parts = []
-                        pause_np = np.zeros(int(target_sr * 0.25), dtype=np.float32)
+                        sent_pause_np = np.zeros(int(target_sr * 0.35), dtype=np.float32)
+                        clause_pause_np = np.zeros(int(target_sr * 0.15), dtype=np.float32)
                         vol_factor = self._get_volume_factor(is_whisper=self.is_whisper)
 
-                        for g_idx, g_sent in enumerate(greeting_sentences):
-                            g_chunks = b"".join(c.audio_int16_bytes for c in target_voice.synthesize(g_sent))
+                        for g_idx, (g_type, g_sent) in enumerate(greeting_phrases):
+                            cleaned_g = self._clean_text_for_tts(g_sent, is_clause=(g_type == 'clause'))
+                            if not cleaned_g:
+                                continue
+                            g_chunks = b"".join(c.audio_int16_bytes for c in target_voice.synthesize(cleaned_g, syn_config=syn_cfg))
                             if g_chunks:
                                 part_np = np.frombuffer(g_chunks, dtype=np.int16).astype(np.float32) / 32768.0
                                 audio_parts.append(part_np * vol_factor)
-                                if g_idx < len(greeting_sentences) - 1:
-                                    audio_parts.append(pause_np)
+                                if g_idx < len(greeting_phrases) - 1:
+                                    audio_parts.append(clause_pause_np if g_type == 'clause' else sent_pause_np)
 
                         if audio_parts:
                             padding = np.zeros(int(target_sr * 0.15), dtype=np.float32)
