@@ -20,7 +20,7 @@ from PyQt6.QtCore import (
     QSize, QPointF, QByteArray
 )
 from PyQt6.QtGui import (
-    QPainter, QPen, QColor, QLinearGradient, QRadialGradient,
+    QPainter, QPen, QColor, QLinearGradient, QRadialGradient, QGradient,
     QBrush, QPainterPath, QFont, QFontDatabase, QGuiApplication,
     QIcon, QPixmap, QTextCursor
 )
@@ -933,15 +933,32 @@ class AkiraMiniMicWidget(AkiraMicWidget):
         super().mousePressEvent(event)
 
 class ThinkingLabel(QLabel):
+    """Парящий статус размышлений Акиры с бегущим градиентом в цвет эмоции."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self._opacity = 0.0
         self._offset_y = 6.0
         self.current_theme = "dark"
+        self._accent_color = QColor("#ded7c4")
         self.setObjectName("ThinkingStatusLabel")
         self.setFixedHeight(20)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setStyleSheet("background: transparent; border: none;")
+
+        self._shimmer_phase = 0.0
+        self._shimmer_timer = QTimer(self)
+        self._shimmer_timer.setInterval(24)
+        self._shimmer_timer.timeout.connect(self._on_shimmer_tick)
+
+    def _on_shimmer_tick(self):
+        self._shimmer_phase = (self._shimmer_phase + 0.013) % 1.0
+        if self.isVisible():
+            self.update()
+
+    def set_accent_color(self, color: QColor):
+        self._accent_color = QColor(color)
+        if self.isVisible():
+            self.update()
 
     def set_theme(self, theme: str):
         self.current_theme = theme
@@ -956,6 +973,11 @@ class ThinkingLabel(QLabel):
     def set_progress(self, val: float):
         self._opacity = max(0.0, min(1.0, float(val)))
         self._offset_y = (1.0 - self._opacity) * 6.0
+        if self._opacity > 0.01:
+            if not self._shimmer_timer.isActive():
+                self._shimmer_timer.start()
+        else:
+            self._shimmer_timer.stop()
         self.update()
 
     def paintEvent(self, event):
@@ -968,15 +990,53 @@ class ThinkingLabel(QLabel):
         painter.translate(0, self._offset_y)
 
         font = self.font()
-        font.setItalic(True)
         painter.setFont(font)
 
-        if self.current_theme == "light":
-            col = QColor(17, 19, 24, int(self._opacity * 165))
-        else:
-            col = QColor(222, 215, 196, int(self._opacity * 180))
+        fm = painter.fontMetrics()
+        text_w = max(40.0, float(fm.horizontalAdvance(self.text())))
+        is_light = (self.current_theme == "light")
 
-        painter.setPen(col)
+        # Базовый цвет букв парящий: в темной теме под цвет рамочки chat_window (#ded7c4), в светлой (#111318)
+        if is_light:
+            base_col = QColor(17, 19, 24, int(155 * self._opacity))
+        else:
+            base_col = QColor(222, 215, 196, int(150 * self._opacity))
+
+        wave_w = max(90.0, text_w * 0.40)
+        cx = -wave_w + self._shimmer_phase * (text_w + 2.0 * wave_w)
+        sx = cx - wave_w / 2.0
+        ex = cx + wave_w / 2.0
+
+        grad = QLinearGradient(sx, 0, ex, 0)
+        grad.setSpread(QGradient.Spread.PadSpread)
+
+        accent = QColor(self._accent_color)
+        h = accent.hue()
+        s = accent.saturation()
+        v = accent.value()
+        if is_light:
+            if h < 0:
+                h = 35
+            accent_peak = QColor.fromHsv(h, min(255, s + 35), max(40, int(v * 0.78)), int(255 * self._opacity))
+        else:
+            if h < 0:
+                h = 42
+            accent_peak = QColor.fromHsv(h, min(255, int(s * 1.15)), 255, int(255 * self._opacity))
+
+        mid_col = QColor(
+            int(base_col.red() * 0.35 + accent_peak.red() * 0.65),
+            int(base_col.green() * 0.35 + accent_peak.green() * 0.65),
+            int(base_col.blue() * 0.35 + accent_peak.blue() * 0.65),
+            int(min(255, (base_col.alpha() + accent_peak.alpha()) * 0.6))
+        )
+
+        grad.setColorAt(0.0, base_col)
+        grad.setColorAt(0.32, mid_col)
+        grad.setColorAt(0.50, accent_peak)
+        grad.setColorAt(0.68, mid_col)
+        grad.setColorAt(1.0, base_col)
+
+        painter.setPen(QPen(QBrush(grad), 1.0))
         painter.drawText(self.rect(), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, self.text())
         painter.end()
 
@@ -1216,6 +1276,9 @@ class ChatFrame(QFrame):
         self._last_phrase = random.choice(pool)
         self.thinking_label.setText(self._last_phrase)
         self.thinking_label.set_theme(self.current_theme)
+        self.thinking_label.set_accent_color(
+            QColor.fromHsv(int(self.cur_h) % 360, int(self.cur_s), int(self.cur_v))
+        )
         self.thinking_label.set_progress(0.0)
         self.thinking_label.show()
 
@@ -1303,6 +1366,10 @@ class ChatFrame(QFrame):
         self.cur_h += (self.target_h - self.cur_h) * rate
         self.cur_s += (self.target_s - self.cur_s) * rate
         self.cur_v += (self.target_v - self.cur_v) * rate
+        if hasattr(self, 'thinking_label') and self.thinking_label.isVisible():
+            self.thinking_label.set_accent_color(
+                QColor.fromHsv(int(self.cur_h) % 360, int(self.cur_s), int(self.cur_v))
+            )
         self.update()
 
     def paintEvent(self, event):
@@ -2919,11 +2986,10 @@ class MainWindow(QWidget):
             return random.choice(quick_reboot_phrases)
 
         return_phrases = [
-            f"С возвращением, {user_name}! Продолжаем делать дела?",
-            f"Рада тебя снова видеть, {user_name}! Чем займёмся?",
-            f"С возвращением! Я на связи и готова к работе.",
-            f"О, ты снова здесь! Жду твоих команд.",
-            f"Ты снова здесь! Прекрасно. Жду твоих указаний."
+            f"С возвращением! Я уже начала скучать. Продолжим?",
+            f"Ты вернулся — и это отличная новость. С чего начнём?",
+            f"О, ты вернулся! Я как раз думала о тебе. Чем займёмся?",
+            f"Ты снова здесь. Прекрасно — значит, продолжим наше маленькое приключение."
         ]
         return random.choice(return_phrases)
 

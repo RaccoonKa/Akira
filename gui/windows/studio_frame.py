@@ -13,8 +13,8 @@ from PyQt6.QtCore import (
     QVariantAnimation, QEasingCurve, QByteArray, QEvent
 )
 from PyQt6.QtGui import (
-    QPainter, QPen, QColor, QLinearGradient, QRadialGradient,
-    QBrush, QPainterPath, QFont, QFontDatabase, QIcon, QPixmap,
+    QPainter, QPen, QColor, QLinearGradient, QRadialGradient, QGradient,
+    QBrush, QPainterPath, QFont, QFontMetrics, QFontDatabase, QIcon, QPixmap,
     QTextCursor, QGuiApplication, QImage
 )
 from PyQt6.QtSvg import QSvgRenderer
@@ -283,7 +283,7 @@ class StudioWorker(QThread):
 
 
 class StudioTitleWorker(QThread):
-    """Фоновый генератор краткого заголовка темы диалога."""
+    """Фоновый генератор краткого заголовка темы диалога с помощью нейросети."""
     title_ready = pyqtSignal(int, str)
 
     def __init__(self, parser, session_id: int, user_text: str, akira_text: str, parent=None):
@@ -297,8 +297,8 @@ class StudioTitleWorker(QThread):
         prompt = (
             "Сформулируй краткую суть темы диалога на русском языке для заголовка вкладки.\n"
             "ТРЕБОВАНИЯ:\n"
-            "1. Длина строго от 2 до 5 слов.\n"
-            "2. Первая буква заглавная, без точки, без кавычек и вводных слов.\n"
+            "1. Длина строго от 2 до 4 слов.\n"
+            "2. Первая буква заглавная, без точки в конце, без кавычек и вводных слов.\n"
             f"Вопрос пользователя: {self.user_text[:200]}\n"
             f"Ответ: {self.akira_text[:200]}\n"
             "Заголовок:"
@@ -308,31 +308,49 @@ class StudioTitleWorker(QThread):
         try:
             llm = getattr(self.parser, 'llm', None)
             if llm:
-                # Приоритет — быстрый и дешёвый DeepSeek V4.1 Flash через RouterAI
+                # 1. Приоритет — быстрые не-reasoning модели RouterAI (deepseek-chat, gpt-4o-mini, gemini-2.5-flash-lite)
                 if hasattr(llm, "_init_routerai") and llm._init_routerai()[0]:
-                    slug = llm.ROUTERAI_MODELS.get("kasumi", "deepseek/deepseek-v4.1-flash")
-                    response = llm.routerai_client.chat.completions.create(
-                        model=slug,
-                        messages=[{"role": "user", "content": prompt}],
-                        temperature=0.3,
-                        max_tokens=30
-                    )
-                    if response and getattr(response, "choices", None):
-                        title = getattr(response.choices[0].message, "content", "") or ""
-                elif hasattr(llm, "_init_gigachat") and llm._init_gigachat()[0]:
-                    res = llm.giga_client.chat({
-                        "model": llm.giga_model_name,
-                        "messages": [{"role": "user", "content": prompt}]
-                    })
-                    if res and getattr(res, "choices", None):
-                        title = getattr(res.choices[0].message, "content", "") or ""
+                    candidate_models = [
+                        "deepseek/deepseek-chat",
+                        "openai/gpt-4o-mini",
+                        "google/gemini-2.5-flash-lite"
+                    ]
+                    for cand in candidate_models:
+                        try:
+                            response = llm.routerai_client.chat.completions.create(
+                                model=cand,
+                                messages=[{"role": "user", "content": prompt}],
+                                temperature=0.3,
+                                max_tokens=30
+                            )
+                            if response and getattr(response, "choices", None):
+                                txt = getattr(response.choices[0].message, "content", "") or ""
+                                if txt.strip():
+                                    title = txt.strip()
+                                    break
+                        except Exception:
+                            continue
+
+                # 2. Если RouterAI недоступен или не вернул ответ, используем GigaChat
+                if not title and hasattr(llm, "_init_gigachat") and llm._init_gigachat()[0]:
+                    try:
+                        ans = llm._ask_gigachat([{"role": "user", "content": prompt}])
+                        if ans and isinstance(ans, str) and not ans.startswith("Ай, споткнулась"):
+                            title = ans.strip()
+                    except Exception:
+                        pass
         except Exception:
             pass
 
-        clean_title = title.replace('"', '').replace("'", '').replace("«", '').replace("»", '').strip()
-        if not clean_title or len(clean_title) < 3 or clean_title.lower().startswith("заголовок"):
+        clean_title = title.replace('"', '').replace("'", '').replace("«", '').replace("»", '').replace("“", '').replace("”", '').strip()
+        clean_title = re.sub(r'^(?:заголовок|тема)\s*[:—\-]\s*', '', clean_title, flags=re.IGNORECASE).strip()
+        clean_title = clean_title.rstrip('.!? ')
+
+        if not clean_title or len(clean_title) < 3:
             words = [w for w in self.user_text.strip().split() if len(w) > 1][:4]
             clean_title = " ".join(words).capitalize() if words else "Диалог"
+        else:
+            clean_title = clean_title[0].upper() + clean_title[1:]
 
         if len(clean_title) > 34:
             clean_title = clean_title[:31] + "..."
@@ -597,10 +615,10 @@ class StudioAkiraStream(QWidget):
 
 
 class StudioThinkingLabel(QWidget):
-    """Статус размышлений Акиры в стеклянной капсуле с плавной сменой фраз."""
+    """Парящий статус размышлений Акиры с бегущим градиентом в цвет её текущей эмоции."""
     def __init__(self, font_family: str, theme: str = "dark", parent=None):
         super().__init__(parent)
-        self.setFixedHeight(26)
+        self.setFixedHeight(22)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setFont(QFont(font_family, 9))
 
@@ -610,12 +628,24 @@ class StudioThinkingLabel(QWidget):
         self._progress = 1.0
         self._accent_color = QColor("#ded7c4")
 
+        # Анимация плавной смены фраз (OutCubic)
         self._anim = QVariantAnimation(self)
-        self._anim.setDuration(420)
+        self._anim.setDuration(400)
         self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._anim.valueChanged.connect(self._on_anim_step)
         self._anim.finished.connect(self._on_anim_finished)
+
+        # Непрерывный переливающийся бегающий шиммер букв
+        self._shimmer_phase = 0.0
+        self._shimmer_timer = QTimer(self)
+        self._shimmer_timer.setInterval(24)
+        self._shimmer_timer.timeout.connect(self._on_shimmer_tick)
         self.hide()
+
+    def _on_shimmer_tick(self):
+        self._shimmer_phase = (self._shimmer_phase + 0.013) % 1.0
+        if self.isVisible():
+            self.update()
 
     def set_theme(self, theme: str):
         self.current_theme = theme
@@ -633,7 +663,10 @@ class StudioThinkingLabel(QWidget):
         self._new_text = text
         self._accent_color = QColor(color)
         self._progress = 0.0
+        self._shimmer_phase = 0.0
         self.show()
+        if not self._shimmer_timer.isActive():
+            self._shimmer_timer.start()
         self._anim.setStartValue(0.0)
         self._anim.setEndValue(1.0)
         self._anim.start()
@@ -647,12 +680,15 @@ class StudioThinkingLabel(QWidget):
         self._new_text = text
         self._accent_color = QColor(color)
         self._progress = 0.0
+        if not self._shimmer_timer.isActive():
+            self._shimmer_timer.start()
         self._anim.setStartValue(0.0)
         self._anim.setEndValue(1.0)
         self._anim.start()
 
     def stop_and_hide(self):
         self._anim.stop()
+        self._shimmer_timer.stop()
         self._old_text = ""
         self._new_text = ""
         self.hide()
@@ -666,6 +702,54 @@ class StudioThinkingLabel(QWidget):
         self._progress = 1.0
         self.update()
 
+    def _build_shimmer_pen(self, text: str, opacity: float = 1.0) -> QPen:
+        fm = self.fontMetrics()
+        text_w = max(40.0, float(fm.horizontalAdvance(text)))
+
+        is_light = (self.current_theme == "light")
+        # Базовый цвет букв парящий: в темной теме под цвет рамочки chat_window (#ded7c4), в светлой (#111318)
+        if is_light:
+            base_col = QColor(17, 19, 24, int(155 * opacity))
+        else:
+            base_col = QColor(222, 215, 196, int(150 * opacity))
+
+        wave_w = max(90.0, text_w * 0.40)
+        cx = -wave_w + self._shimmer_phase * (text_w + 2.0 * wave_w)
+        sx = cx - wave_w / 2.0
+        ex = cx + wave_w / 2.0
+
+        grad = QLinearGradient(sx, 0, ex, 0)
+        grad.setSpread(QGradient.Spread.PadSpread)
+
+        # Переливающийся блик строго в цвет текущей эмоции Акиры
+        accent = QColor(self._accent_color)
+        h = accent.hue()
+        s = accent.saturation()
+        v = accent.value()
+        if is_light:
+            if h < 0:
+                h = 35
+            accent_peak = QColor.fromHsv(h, min(255, s + 35), max(40, int(v * 0.78)), int(255 * opacity))
+        else:
+            if h < 0:
+                h = 42
+            accent_peak = QColor.fromHsv(h, min(255, int(s * 1.15)), 255, int(255 * opacity))
+
+        mid_col = QColor(
+            int(base_col.red() * 0.35 + accent_peak.red() * 0.65),
+            int(base_col.green() * 0.35 + accent_peak.green() * 0.65),
+            int(base_col.blue() * 0.35 + accent_peak.blue() * 0.65),
+            int(min(255, (base_col.alpha() + accent_peak.alpha()) * 0.6))
+        )
+
+        grad.setColorAt(0.0, base_col)
+        grad.setColorAt(0.32, mid_col)
+        grad.setColorAt(0.50, accent_peak)
+        grad.setColorAt(0.68, mid_col)
+        grad.setColorAt(1.0, base_col)
+
+        return QPen(QBrush(grad), 1.0)
+
     def paintEvent(self, event):
         if not self._new_text and not self._old_text:
             return
@@ -675,54 +759,30 @@ class StudioThinkingLabel(QWidget):
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         painter.setFont(self.font())
 
-        fm = self.fontMetrics()
         p = self._progress
-        pad_x = 12
+        pad_x = 4.0
+        rect = QRectF(pad_x, 0.0, max(10.0, float(self.width()) - pad_x * 2), float(self.height()))
 
-        new_w = fm.horizontalAdvance(self._new_text) + pad_x * 2 if self._new_text else 0
-        old_w = fm.horizontalAdvance(self._old_text) + pad_x * 2 if self._old_text else new_w
-        pill_w = min(float(self.width()), old_w + (new_w - old_w) * p)
-        pill_h = float(self.height() - 2)
-
-        # Подложка-капсула, перекрывающая фон окна для высокой читаемости
-        pill_rect = QRectF(0.5, 1.0, max(24.0, pill_w - 1.0), pill_h)
-        pill_path = QPainterPath()
-        pill_path.addRoundedRect(pill_rect, pill_h / 2.0, pill_h / 2.0)
-
-        is_light = (self.current_theme == "light")
-        bg_col = QColor(255, 255, 255, 236) if is_light else QColor(12, 13, 16, 228)
-        border_col = QColor(self._accent_color)
-        border_col.setAlpha(95 if is_light else 110)
-
-        painter.fillPath(pill_path, bg_col)
-        painter.setPen(QPen(border_col, 1.0))
-        painter.drawPath(pill_path)
-
-        text_rect = QRect(pad_x, 0, max(10, int(pill_w) - pad_x * 2), self.height())
-        painter.setClipPath(pill_path)
-
+        # Предыдущая фраза плавно уплывает вверх и растворяется
         if self._old_text and p < 1.0:
-            old_alpha = int(max(0.0, 1.0 - p * 1.6) * 245)
-            if old_alpha > 0:
-                old_col = QColor(self._accent_color)
-                old_col.setAlpha(old_alpha)
-                painter.setPen(old_col)
-                painter.drawText(
-                    text_rect.translated(0, int(round(-p * 7.0))),
-                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                    self._old_text
-                )
+            old_opacity = max(0.0, 1.0 - p * 1.25)
+            if old_opacity > 0.01:
+                painter.save()
+                painter.translate(0, -p * 6.0)
+                painter.setPen(self._build_shimmer_pen(self._old_text, old_opacity))
+                painter.drawText(rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, self._old_text)
+                painter.restore()
 
+        # Новая фраза мягко выплывает снизу с бегающим градиентом эмоции
         if self._new_text:
-            new_alpha = int(min(1.0, p * 1.25) * 255)
-            new_col = QColor(self._accent_color)
-            new_col.setAlpha(new_alpha)
-            painter.setPen(new_col)
-            painter.drawText(
-                text_rect.translated(0, int(round((1.0 - p) * 7.0))),
-                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                self._new_text
-            )
+            new_opacity = min(1.0, p * 1.25)
+            if new_opacity > 0.01:
+                painter.save()
+                if p < 1.0:
+                    painter.translate(0, (1.0 - p) * 6.0)
+                painter.setPen(self._build_shimmer_pen(self._new_text, new_opacity))
+                painter.drawText(rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, self._new_text)
+                painter.restore()
 
         painter.end()
 
@@ -1357,6 +1417,47 @@ class StudioFloatingDock(QFrame):
         painter.drawPath(path)
         painter.end()
 
+
+class ElidedLabel(QLabel):
+    """QLabel с плавной обрезкой многоточием (...) и тултипом без выталкивания соседних кнопок."""
+    def __init__(self, text: str = "", parent=None):
+        super().__init__(text, parent)
+        self._full_text = text
+        self._text_color = None
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        self.setToolTip(text)
+
+    def setText(self, text: str):
+        self._full_text = text
+        self.setToolTip(text)
+        self.update()
+
+    def text(self) -> str:
+        return self._full_text
+
+    def set_color(self, color_str: str):
+        self._text_color = QColor(color_str)
+        self.update()
+
+    def sizeHint(self) -> QSize:
+        m = QFontMetrics(self.font())
+        return QSize(m.horizontalAdvance(self._full_text), m.height())
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(20, QFontMetrics(self.font()).height())
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        metrics = QFontMetrics(self.font())
+        elided = metrics.elidedText(self._full_text, Qt.TextElideMode.ElideRight, max(0, self.width()))
+        if self._text_color:
+            painter.setPen(self._text_color)
+        else:
+            painter.setPen(self.palette().color(self.foregroundRole()))
+        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided)
+        painter.end()
+
+
 class HistorySessionCard(QFrame):
     """Карточка отдельного чата с инлайн-переименованием без рамки."""
     clicked = pyqtSignal(int)
@@ -1398,9 +1499,8 @@ class HistorySessionCard(QFrame):
         self.title_row.setContentsMargins(0, 0, 0, 0)
         self.title_row.setSpacing(4)
 
-        self.title_lbl = QLabel(self._raw_title)
+        self.title_lbl = ElidedLabel(self._raw_title)
         self.title_lbl.setFont(QFont(self.font_family, 11))
-        self.title_lbl.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
         self.title_row.addWidget(self.title_lbl)
 
         self.edit_btn = QPushButton()
@@ -1573,6 +1673,8 @@ class HistorySessionCard(QFrame):
         """)
         self.indicator.setStyleSheet(f"background-color: {ind_col}; border-radius: 1.5px; border: none;")
         self.title_lbl.setStyleSheet(f"color: {title_col}; border: none; background: transparent;")
+        if hasattr(self.title_lbl, 'set_color'):
+            self.title_lbl.set_color(title_col)
         self.sub_lbl.setStyleSheet(f"color: {sub_col}; border: none; background: transparent;")
 
         self.edit_btn.setIcon(_render_svg(SVG_EDIT, edit_col, 12))
@@ -1765,6 +1867,7 @@ class StudioHistoryDrawer(QFrame):
             item = self.list_layout.takeAt(0)
             w = item.widget()
             if w:
+                w.setParent(None)
                 w.deleteLater()
 
         if not sessions:
@@ -1800,7 +1903,7 @@ class StudioHistoryDrawer(QFrame):
 
 class StudioFrame(QFrame):
     """Студия Акиры с историей диалогов, парящим меню и динамическим селектором моделей."""
-    DRAWER_TARGET_WIDTH = 275
+    DRAWER_TARGET_WIDTH = 295
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -2247,9 +2350,15 @@ class StudioFrame(QFrame):
 
     def _on_title_generated(self, session_id: int, title: str):
         studio_db.update_session_title(session_id, title)
-        if self._is_drawer_open:
-            sessions = studio_db.get_sessions()
-            self.drawer.refresh_sessions(sessions, self.current_session_id)
+        if hasattr(self, 'drawer'):
+            if session_id in self.drawer.card_widgets:
+                card = self.drawer.card_widgets[session_id]
+                card._raw_title = title
+                card.title_lbl.setText(title)
+                card.title_edit.setText(title)
+            if self._is_drawer_open:
+                sessions = studio_db.get_sessions()
+                self.drawer.refresh_sessions(sessions, self.current_session_id)
 
     def _scroll_bottom(self):
         QTimer.singleShot(40, self.scroll.smooth_scroll_to_bottom)
