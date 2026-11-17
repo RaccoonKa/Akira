@@ -53,5 +53,6 @@ yandex-music>=2.1.1
 google-api-python-client>=2.100.0
 google-auth-oauthlib>=1.1.0
 
-# Полезные команды для сборки: wix build -acceptEula wix7 Package.wxs -o Akira_v4.0.0_Setup.msi
-# pyinstaller akira.spec --noconfirm --clean
+# Полезные команды для сборки:
+# python build_nuitka.py
+# wix build Package.wxs -arch x64 -out dist/Akira-Setup-v5.0.0.msi

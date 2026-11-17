@@ -4,7 +4,7 @@ _orig_findsource = inspect.findsource
 
 def _safe_findsource(obj):
     try:
-        return _orig_findsource(obj)
+        return _orig_findsource(objф)
     except Exception:
         return (["\n"], 0)
 
@@ -102,7 +102,7 @@ def apply_native_windows_icon(hwnd, icon_path):
             ctypes.windll.user32.SetClassLongW(hwnd, gclp_hiconsm, h_icon_small)
 
 def main():
-    myappid = 'svetozar.akira.voiceassistant.4.0.0'
+    myappid = 'svetozar.akira.voiceassistant.5.0.0'
     try:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
     except Exception:
