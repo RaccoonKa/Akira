@@ -16,9 +16,9 @@ ICON_PATH = os.path.join(BASE_DIR, "assets", "icon", "ico", "akira_icon.ico")
 PYTHON_EXE = sys.executable
 
 def step(title: str):
-    print("\n" + "=" * 70)
+    print("\n" + "=" * 67)
     print(f">> {title}")
-    print("=" * 70, flush=True)
+    print("=" * 67, flush=True)
 
 def run_cmd(cmd, env=None, check=True):
     print(f"[CMD]: {' '.join(cmd) if isinstance(cmd, list) else cmd}", flush=True)
@@ -55,6 +55,8 @@ def run_nuitka():
         "--jobs=0",                # Использовать все доступные ядра CPU
         "--lto=no",                 # Отключить LTO для многократного ускорения сборки
         "--progress-bar=auto",      # Визуальный прогресс-бар этапов компиляции
+        "--no-deployment-flag=excluded-module-usage",  # Разрешить загрузку внешних site-packages модулей, исключенных из C++ компиляции
+        "--update-check=never",     # Отключить сетевой опрос обновлений Nuitka (предотвращает WinError 5)
         
         # Плагины Nuitka
         "--enable-plugin=pyqt6",
@@ -77,9 +79,14 @@ def run_nuitka():
         "--include-package=services",
         "--include-package=audio",
         
-        # Тяжёлые C/C++ библиотеки НЕ компилируем в C++, а подключаем как бинарные модули
+        # Внешние библиотеки не компилируем в C++, а подключаем как бинарные модули из site-packages
         "--nofollow-import-to=torch",
+        "--nofollow-import-to=torchaudio",
         "--nofollow-import-to=transformers",
+        "--nofollow-import-to=huggingface_hub",
+        "--nofollow-import-to=tqdm",
+        "--nofollow-import-to=tokenizers",
+        "--nofollow-import-to=safetensors",
         "--nofollow-import-to=mediapipe",
         "--nofollow-import-to=cv2",
         "--nofollow-import-to=scipy",
@@ -91,6 +98,8 @@ def run_nuitka():
         "--nofollow-import-to=fastembed",
         "--nofollow-import-to=sklearn",
         "--nofollow-import-to=librosa",
+        "--nofollow-import-to=rapidocr_onnxruntime",
+        "--nofollow-import-to=optimum",
         
         # Исключение тестовых и интерактивных пакетов
         "--noinclude-pytest-mode=nofollow",
@@ -98,7 +107,6 @@ def run_nuitka():
         "--noinclude-IPython-mode=nofollow",
         "--noinclude-setuptools-mode=nofollow",
         "--nofollow-import-to=tkinter",
-        "--nofollow-import-to=notebook",
         "--nofollow-import-to=matplotlib",
     ]
 
@@ -136,35 +144,29 @@ def copy_runtime_assets():
     if os.path.exists(exe_src) and not os.path.exists(exe_dst):
         os.rename(exe_src, exe_dst)
 
-    # Копирование готовых пакетов site-packages в дистрибутив (torch, transformers, cv2, mediapipe и т.д.)
+    # Копирование готовых runtime-пакетов, .libs (DLL) и .pyd файлов из site-packages в дистрибутив
     site_packages = os.path.join(BASE_DIR, ".venv", "Lib", "site-packages")
-    standalone_pkgs = [
-        "torch", "torchaudio", "transformers", "huggingface_hub", "tokenizers", "safetensors",
-        "onnxruntime", "piper", "vosk", "cv2", "mediapipe", "dlib", "face_recognition",
-        "face_recognition_models", "sounddevice", "soundfile", "_soundfile_data",
-        "pycaw", "comtypes", "websockets", "fastapi", "uvicorn", "pydantic", "pydantic_core",
-        "certifi", "charset_normalizer", "idna", "urllib3", "requests", "yaml", "qrcode",
-        "numpy", "scipy", "PIL", "psutil", "pyautogui", "pydub", "yandex_music", "spotipy",
-        "fastembed", "sklearn", "librosa", "optimum", "openai", "gigachat"
-    ]
+    ignored_site_items = {
+        "__pycache__", "pip", "setuptools", "nuitka", "PyInstaller", "pkg_resources",
+        "pipreqs", "distutils-precedence.pth", "_distutils_hack", "_virtualenv.pth",
+        "_virtualenv.py", "_pyinstaller_hooks_contrib", "tests", "jedi", "sympy",
+        "IPython", "matplotlib", "mpl_toolkits"
+    }
 
-    print("Копирование готовых внешних библиотек (без избыточной перекомпиляции)...")
-    for pkg in standalone_pkgs:
-        src = os.path.join(site_packages, pkg)
-        dst = os.path.join(OUTPUT_APP_DIR, pkg)
-        if os.path.exists(src) and not os.path.exists(dst):
-            if os.path.isdir(src):
-                shutil.copytree(src, dst)
-            else:
+    print("Копирование внешних библиотек и бинарных модулей (site-packages, *.libs, *.pyd, *.dll)...")
+    copied_count = 0
+    for item in os.listdir(site_packages):
+        if item in ignored_site_items or item.endswith((".egg-info", ".whl", ".tmp")):
+            continue
+        src = os.path.join(site_packages, item)
+        dst = os.path.join(OUTPUT_APP_DIR, item)
+        copied_count += 1
+        if os.path.isdir(src):
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+        else:
+            if not os.path.exists(dst):
                 shutil.copy2(src, dst)
-
-    # Копируем отдельные .pyd / .dll файлы верхнего уровня (например _dlib_pybind11)
-    for f in os.listdir(site_packages):
-        if f.startswith("_dlib_pybind11") or f.startswith("_soundfile"):
-            s = os.path.join(site_packages, f)
-            d = os.path.join(OUTPUT_APP_DIR, f)
-            if not os.path.exists(d):
-                shutil.copy2(s, d)
+    print(f"[Libraries]: Синхронизировано {copied_count} внешних компонентов.")
 
     # Копирование ресурсов проекта в dist/Akira и dist/Akira/_internal (для обратной совместимости)
     target_locations = [OUTPUT_APP_DIR, os.path.join(OUTPUT_APP_DIR, "_internal")]
@@ -218,6 +220,63 @@ def copy_runtime_assets():
 
     print("[Assets]: Все ресурсы и модели успешно скопированы!")
 
+def clean_distribution():
+    step("3.1. Очистка дистрибутива от лишних файлов и тестов (для лимита компонентов WiX)")
+
+    # 1. Удаление неиспользуемых пакетов интерактивной разработки
+    unused_dev_pkgs = ["jedi", "sympy", "IPython", "matplotlib", "mpl_toolkits"]
+    for pkg in unused_dev_pkgs:
+        p = os.path.join(OUTPUT_APP_DIR, pkg)
+        if os.path.exists(p):
+            shutil.rmtree(p, ignore_errors=True)
+            print(f"Исключен пакет: {pkg}")
+
+    for f in ["pylab.py", "isympy.py"]:
+        p = os.path.join(OUTPUT_APP_DIR, f)
+        if os.path.exists(p):
+            try:
+                os.remove(p)
+            except Exception:
+                pass
+
+    # 2. Удаление папок тестов, C/C++ заголовочных файлов и кэша
+    # (кроме torch/testing, который требуется для torch.autograd)
+    deleted_dirs = 0
+    for root, dirs, files in list(os.walk(OUTPUT_APP_DIR, topdown=False)):
+        folder_name = os.path.basename(root).lower()
+        if folder_name in ("tests", "test", "testing", "__pycache__", "include", "docs", "htmlcov"):
+            norm_root = root.replace("\\", "/")
+            if "optimized_models" in norm_root or "assets" in norm_root or "torch/testing" in norm_root:
+                continue
+            shutil.rmtree(root, ignore_errors=True)
+            deleted_dirs += 1
+
+    # 3. Удаление тяжелых файлов отладки (.pdb) и архивов колес (.whl)
+    deleted_files = 0
+    for root, dirs, files in os.walk(OUTPUT_APP_DIR):
+        norm_root = root.replace("\\", "/")
+        if "optimized_models" in norm_root or "assets" in norm_root:
+            continue
+        for f in files:
+            f_lower = f.lower()
+            if f_lower.endswith((".whl", ".pdb")):
+                try:
+                    os.remove(os.path.join(root, f))
+                    deleted_files += 1
+                except Exception:
+                    pass
+
+    # 4. Удаление промежуточных сборочных каталогов Nuitka (main.dist, main.build),
+    # чтобы в dist оставалась только готовая сборка dist/Akira и установщик .msi
+    for intermediate in ["main.dist", "main.build", "Akira.dist", "Akira.build"]:
+        inter_path = os.path.join(DIST_DIR, intermediate)
+        if os.path.exists(inter_path) and inter_path != OUTPUT_APP_DIR:
+            shutil.rmtree(inter_path, ignore_errors=True)
+
+    total_files = sum(len(files) for _, _, files in os.walk(OUTPUT_APP_DIR))
+    print(f"[Cleanup]: Удалено {deleted_dirs} каталогов и {deleted_files} dev-файлов.")
+    print(f"[Cleanup]: Итоговое число компонентов для WiX: {total_files} (лимит MSI: 65536).")
+
 def build_msi():
     step("4. Сборка установщика .msi через WiX Toolset")
     wxs_file = os.path.join(BASE_DIR, "Package.wxs")
@@ -231,7 +290,8 @@ def build_msi():
         "wix", "build",
         wxs_file,
         "-arch", "x64",
-        "-out", output_msi
+        "-out", output_msi,
+        "--acceptEula", "wix7"
     ]
 
     run_cmd(cmd)
@@ -244,6 +304,7 @@ def main():
     prepare_dist_folder()
     run_nuitka()
     copy_runtime_assets()
+    clean_distribution()
     build_msi()
 
 if __name__ == "__main__":

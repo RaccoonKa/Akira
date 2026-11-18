@@ -11,7 +11,11 @@ import threading
 import random
 import numpy as np
 from datetime import datetime, timedelta
-from transformers.utils import logging as tf_logging
+try:
+    from transformers.utils import logging as tf_logging
+    tf_logging.set_verbosity_error()
+except Exception:
+    pass
 from core.system.actions import SystemActions, zapret_manager
 from services.vpn.vpn_manager import VpnManager
 from core.utils.config import load_config
@@ -30,8 +34,6 @@ from core.games.danetki_game import DanetkiGame
 from services.torrent.torrent_search import search_torrents
 from services.torrent.torrserver_manager import torr_manager
 from services.torrent.vlc_player import vlc_player
-
-tf_logging.set_verbosity_error()
 
 vpn_manager = VpnManager()
 

@@ -95,18 +95,18 @@ def resolve_media_path(path_str: str) -> str:
         return ""
     clean = path_str.strip().replace('\\', '/')
     if os.path.isabs(clean) and os.path.exists(clean):
-        return os.path.normpath(clean)
+        return os.path.abspath(clean)
     cwd_path = os.path.normpath(os.path.join(os.getcwd(), clean))
     if os.path.exists(cwd_path):
-        return cwd_path
+        return os.path.abspath(cwd_path)
     app_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     root_path = os.path.normpath(os.path.join(app_root, clean))
     if os.path.exists(root_path):
-        return root_path
+        return os.path.abspath(root_path)
     p_data = os.path.normpath(os.path.join(app_root, "personal_data", clean))
     if os.path.exists(p_data):
-        return p_data
-    return clean
+        return os.path.abspath(p_data)
+    return os.path.abspath(clean) if os.path.exists(clean) else clean
 
 ALL_STUDIO_MODELS = [
     ("Hikari", "hikari"),
@@ -3645,8 +3645,28 @@ class StudioFrame(QFrame):
 
         if media_type in ("image", "photo") and hasattr(card, "reveal_image"):
             card.reveal_image(file_path)
-        elif media_type in ("audio", "music") and hasattr(card, "set_ready"):
-            card.set_ready(file_path)
+        elif media_type in ("audio", "music"):
+            if hasattr(stream, "content_col"):
+                if hasattr(card, "_anim_timer") and card._anim_timer and card._anim_timer.isActive():
+                    card._anim_timer.stop()
+                if hasattr(stream, "media_cards") and card in stream.media_cards:
+                    stream.media_cards.remove(card)
+                stream.content_col.removeWidget(card)
+                card.deleteLater()
+
+                ready_card = AudioMediaCard(
+                    audio_path=file_path,
+                    emotion_color=emo_col,
+                    font_family=self.font_family,
+                    theme=self.current_theme,
+                    state="ready",
+                    parent=stream
+                )
+                stream.content_col.addWidget(ready_card)
+                stream.media_cards.append(ready_card)
+                stream._rendered_widgets.append(("audio", ready_card))
+            elif hasattr(card, "set_ready"):
+                card.set_ready(file_path)
         elif hasattr(card, "set_ready"):
             card.set_ready(file_path)
         elif hasattr(card, "reveal_image"):

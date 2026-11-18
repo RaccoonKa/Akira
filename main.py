@@ -23,6 +23,49 @@ inspect.getsource = _safe_getsource
 import os
 import sys
 
+# Гарантируем, что папка приложения и _internal находятся в sys.path
+app_dir = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, 'frozen', False) else __file__))
+for p in (app_dir, os.path.join(app_dir, "_internal")):
+    if os.path.exists(p) and p not in sys.path:
+        sys.path.insert(0, p)
+
+# Защита от сбоев проверки версий зависимостей в скомпилированном/standalone виде
+try:
+    import importlib.metadata
+    _orig_metadata_version = importlib.metadata.version
+    def _safe_metadata_version(pkg_name: str) -> str:
+        try:
+            return _orig_metadata_version(pkg_name)
+        except Exception:
+            return "999.999.999"
+    importlib.metadata.version = _safe_metadata_version
+except Exception:
+    pass
+
+# Логирование критических ошибок запуска в crash.log и нативное диалоговое окно Windows
+def _global_exception_handler(exc_type, exc_value, exc_traceback):
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        return
+    import traceback
+    err_text = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+    try:
+        from datetime import datetime
+        crash_log_path = os.path.join(os.environ.get("APPDATA", app_dir), "Akira", "crash.log")
+        os.makedirs(os.path.dirname(crash_log_path), exist_ok=True)
+        with open(crash_log_path, "a", encoding="utf-8") as f:
+            f.write(f"\n[{datetime.now()}] CRITICAL STARTUP ERROR:\n{err_text}\n")
+    except Exception:
+        pass
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(0, f"Ошибка запуска Akira:\n\n{err_text[:1200]}", "Akira Error", 0x10)
+    except Exception:
+        pass
+    sys.__excepthook__(exc_type, exc_value, exc_traceback)
+
+sys.excepthook = _global_exception_handler
+
 if sys.stdout is None:
     sys.stdout = open(os.devnull, "w", encoding="utf-8")
 if sys.stderr is None:
