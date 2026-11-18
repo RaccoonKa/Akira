@@ -4,9 +4,9 @@ _orig_findsource = inspect.findsource
 
 def _safe_findsource(obj):
     try:
-        return _orig_findsource(objф)
+        return _orig_findsource(obj)
     except Exception:
-        return (["\n"], 0)
+        return (["def stub():\n", "    pass\n"], 0)
 
 inspect.findsource = _safe_findsource
 
@@ -16,7 +16,7 @@ def _safe_getsource(obj):
     try:
         return _orig_getsource(obj)
     except Exception:
-        return "\n"
+        return "def stub():\n    pass\n"
 
 inspect.getsource = _safe_getsource
 

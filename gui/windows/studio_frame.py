@@ -10,8 +10,9 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import (
     Qt, QTimer, QSize, QRect, QRectF, QPoint, QPointF, pyqtSignal, QThread,
-    QVariantAnimation, QEasingCurve, QByteArray, QEvent
+    QVariantAnimation, QEasingCurve, QByteArray, QEvent, QUrl
 )
+from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtGui import (
     QPainter, QPen, QColor, QLinearGradient, QRadialGradient, QGradient,
     QBrush, QPainterPath, QFont, QFontMetrics, QFontDatabase, QIcon, QPixmap,
@@ -21,6 +22,7 @@ from PyQt6.QtSvg import QSvgRenderer
 from core.utils.config import get_resource_path, load_config
 from gui.styles import get_main_style
 from core.database.chat_db import studio_db
+from core.nlp.generative.media_provider import media_provider
 from gui.widgets.code_formatter import (
     CodeBlockWidget,
     parse_message_blocks,
@@ -45,6 +47,66 @@ SVG_SEND = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="
 SVG_EDIT = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
 </svg>"""
+
+SVG_MEDIA_IMAGE = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+<circle cx="8.5" cy="8.5" r="1.5"/>
+<polyline points="21 15 16 10 5 21"/>
+</svg>"""
+
+SVG_MEDIA_MUSIC = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+<path d="M9 18V5l12-2v13"/>
+<circle cx="6" cy="18" r="3"/>
+<circle cx="18" cy="16" r="3"/>
+</svg>"""
+
+SVG_SPARKLES = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+<path d="M12 3v3m0 12v3M3 12h3m12 0h3M6.34 6.34l2.12 2.12m7.08 7.08l2.12 2.12M6.34 17.66l2.12-2.12m7.08-7.08l2.12-2.12"/>
+</svg>"""
+
+SVG_PLAY = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="{color}" stroke="{color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+<polygon points="6 4 20 12 6 20 6 4"/>
+</svg>"""
+
+SVG_PAUSE = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="{color}" stroke="{color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+<rect x="6" y="4" width="4" height="16" rx="1"/>
+<rect x="14" y="4" width="4" height="16" rx="1"/>
+</svg>"""
+
+SVG_DOWNLOAD = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+<polyline points="7 10 12 15 17 10"/>
+<line x1="12" y1="15" x2="12" y2="3"/>
+</svg>"""
+
+SVG_COPY = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+</svg>"""
+
+SVG_CHECK = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+<polyline points="20 6 9 17 4 12"/>
+</svg>"""
+
+
+def resolve_media_path(path_str: str) -> str:
+    """Универсальное разрешение пути к медиафайлу (относительный или абсолютный)."""
+    if not path_str:
+        return ""
+    clean = path_str.strip().replace('\\', '/')
+    if os.path.isabs(clean) and os.path.exists(clean):
+        return os.path.normpath(clean)
+    cwd_path = os.path.normpath(os.path.join(os.getcwd(), clean))
+    if os.path.exists(cwd_path):
+        return cwd_path
+    app_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    root_path = os.path.normpath(os.path.join(app_root, clean))
+    if os.path.exists(root_path):
+        return root_path
+    p_data = os.path.normpath(os.path.join(app_root, "personal_data", clean))
+    if os.path.exists(p_data):
+        return p_data
+    return clean
 
 ALL_STUDIO_MODELS = [
     ("Hikari", "hikari"),
@@ -97,16 +159,26 @@ STUDIO_NEW_CHAT_PHRASES = [
 ]
 
 
+def _has_routerai_key() -> bool:
+    """Проверяет наличие активного ключа RouterAI или OpenRouter в config.json."""
+    try:
+        cfg = load_config()
+        api_keys = cfg.get("api_keys", {})
+        return bool(
+            api_keys.get("routerai", "").strip()
+            or api_keys.get("openrouter", "").strip()
+        )
+    except Exception:
+        return False
+
+
 def _get_available_studio_models() -> list[tuple[str, str]]:
     """Возвращает доступные слоты моделей в зависимости от настроенных ключей."""
     try:
         cfg = load_config()
         api_keys = cfg.get("api_keys", {})
         has_giga = bool(api_keys.get("gigachat", "").strip())
-        has_routerai = bool(
-            api_keys.get("routerai", "").strip()
-            or api_keys.get("openrouter", "").strip()
-        )
+        has_routerai = _has_routerai_key()
     except Exception:
         has_giga, has_routerai = True, False
 
@@ -358,6 +430,760 @@ class StudioTitleWorker(QThread):
         self.title_ready.emit(self.session_id, clean_title)
 
 
+class StudioMediaWorker(QThread):
+    """Фоновый поток генерации медиаконтента (изображения или музыки) через RouterAI."""
+    media_ready = pyqtSignal(str, str, str)  # media_type, file_path, prompt
+    media_failed = pyqtSignal(str, str)      # media_type, error_str
+
+    def __init__(self, media_type: str, prompt: str, attached_file: str = None, parent=None):
+        super().__init__(parent)
+        self.media_type = media_type
+        self.prompt = prompt
+        self.attached_file = attached_file
+
+    def run(self):
+        try:
+            if self.media_type == "image":
+                path = media_provider.generate_image(self.prompt, ref_image_path=self.attached_file)
+                self.media_ready.emit("image", path, self.prompt)
+            elif self.media_type == "music":
+                path = media_provider.generate_music(self.prompt, ref_image_path=self.attached_file)
+                self.media_ready.emit("music", path, self.prompt)
+            else:
+                self.media_failed.emit(self.media_type, f"Неизвестный тип медиа: {self.media_type}")
+        except Exception as e:
+            self.media_failed.emit(self.media_type, str(e))
+
+
+class AudioTrackBar(QWidget):
+    """Интерактивный индикатор воспроизведения аудио с волнообразной фактурой."""
+    seek_requested = pyqtSignal(float)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._progress = 0.0
+        self.current_theme = "dark"
+        self.emotion_color = QColor("#38bdf8")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._is_dragging = False
+
+    def set_progress(self, pos_ms: int, dur_ms: int):
+        if dur_ms > 0:
+            self._progress = max(0.0, min(1.0, float(pos_ms) / float(dur_ms)))
+            self.update()
+
+    def set_theme(self, theme: str, emo_col: QColor):
+        self.current_theme = theme
+        self.emotion_color = QColor(emo_col)
+        self.update()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._is_dragging = True
+            self._emit_seek(event.pos().x())
+
+    def mouseMoveEvent(self, event):
+        if self._is_dragging:
+            self._emit_seek(event.pos().x())
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._is_dragging = False
+
+    def _emit_seek(self, x: int):
+        ratio = max(0.0, min(1.0, float(x) / max(1.0, float(self.width()))))
+        self._progress = ratio
+        self.update()
+        self.seek_requested.emit(ratio)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = float(self.width()), float(self.height())
+        is_light = (self.current_theme == "light")
+
+        num_bars = 28
+        spacing = 2.0
+        total_bar_w = max(1.5, (w - (num_bars - 1) * spacing) / num_bars)
+        mid_y = h / 2.0
+        active_x = w * self._progress
+
+        for i in range(num_bars):
+            bx = i * (total_bar_w + spacing)
+            seed = (math.sin(i * 0.75) * 0.4 + math.cos(i * 1.3) * 0.3 + 0.7)
+            bar_h = max(4.0, min(h - 2.0, seed * (h - 4.0)))
+            by = mid_y - bar_h / 2.0
+
+            is_active = (bx + total_bar_w <= active_x)
+            if is_active:
+                col = self.emotion_color
+            else:
+                col = QColor(15, 23, 42, 45) if is_light else QColor(255, 255, 255, 45)
+
+            bar_rect = QRectF(bx, by, total_bar_w, bar_h)
+            path = QPainterPath()
+            path.addRoundedRect(bar_rect, 1.5, 1.5)
+            painter.fillPath(path, col)
+
+        painter.end()
+
+
+class ImageMediaCard(QFrame):
+    """Карточка сгенерированного изображения:
+    - loading: "Цифровой эфир" 60 FPS с дрейфующим градиентом эмоции, 12-18 частицами и шиммером
+    - revealing: 450ms OutCubic сканирующая полоса с открытием кадра (scale 1.03 -> 1.0)
+    - ready: просмотр изображения со скруглёнными краями и оверлей-кнопками (Копировать, Скачать)
+    """
+    def __init__(
+        self,
+        image_path: str = "",
+        emotion_color: QColor = None,
+        font_family: str = "Segoe UI",
+        theme: str = "dark",
+        state: str = "ready",
+        parent=None
+    ):
+        super().__init__(parent)
+        self.raw_image_path = image_path
+        self.image_path = resolve_media_path(image_path)
+        self.emotion_color = QColor(emotion_color) if emotion_color else QColor("#38bdf8")
+        self.font_family = font_family
+        self.current_theme = theme
+        self.state = state  # "loading", "revealing", "ready", "failed"
+        self.error_text = ""
+        self._pixmap = None
+        self._hovered = False
+
+        self._anim_timer = None
+        self._particles = []
+        self._shimmer_phase = 0.0
+        self._scan_progress = 0.0
+
+        self.setMouseTracking(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+
+        self.overlay_widget = QWidget(self)
+        self.overlay_layout = QHBoxLayout(self.overlay_widget)
+        self.overlay_layout.setContentsMargins(6, 6, 6, 6)
+        self.overlay_layout.setSpacing(6)
+        self.overlay_layout.addStretch()
+
+        self.copy_btn = QPushButton(self.overlay_widget)
+        self.copy_btn.setFixedSize(26, 26)
+        self.copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.copy_btn.setToolTip("Скопировать изображение")
+        self.copy_btn.clicked.connect(self._copy_to_clipboard)
+        self.overlay_layout.addWidget(self.copy_btn)
+
+        self.save_btn = QPushButton(self.overlay_widget)
+        self.save_btn.setFixedSize(26, 26)
+        self.save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.save_btn.setToolTip("Сохранить PNG")
+        self.save_btn.clicked.connect(self._save_image)
+        self.overlay_layout.addWidget(self.save_btn)
+
+        self._update_overlay_style()
+        self.overlay_widget.hide()
+
+        if self.state == "loading":
+            self._init_loading()
+        else:
+            self._load_pixmap()
+
+    def _init_loading(self):
+        self.state = "loading"
+        self.setFixedSize(380, 260)
+        self.overlay_widget.hide()
+
+        self._particles = []
+        for _ in range(16):
+            self._particles.append({
+                "x": random.uniform(0.05, 0.95),
+                "y": random.uniform(0.05, 0.95),
+                "vx": random.uniform(-0.002, 0.002),
+                "vy": random.uniform(-0.003, 0.003),
+                "r": random.uniform(1.8, 3.8),
+                "alpha": random.uniform(0.25, 0.75)
+            })
+
+        self._anim_timer = QTimer(self)
+        self._anim_timer.setInterval(16)
+        self._anim_timer.timeout.connect(self._on_loading_tick)
+        self._anim_timer.start()
+
+    def _on_loading_tick(self):
+        for p in self._particles:
+            p["x"] = (p["x"] + p["vx"]) % 1.0
+            p["y"] = (p["y"] + p["vy"]) % 1.0
+        self._shimmer_phase = (self._shimmer_phase + 0.016) % 2.5
+        self.update()
+
+    def reveal_image(self, file_path: str):
+        if self._anim_timer and self._anim_timer.isActive():
+            self._anim_timer.stop()
+        self.raw_image_path = file_path
+        self.image_path = resolve_media_path(file_path)
+        self._load_pixmap()
+
+        self.state = "revealing"
+        self._reveal_anim = QVariantAnimation(self)
+        self._reveal_anim.setDuration(450)
+        self._reveal_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._reveal_anim.setStartValue(0.0)
+        self._reveal_anim.setEndValue(1.0)
+        self._reveal_anim.valueChanged.connect(self._on_reveal_step)
+        self._reveal_anim.finished.connect(self._on_reveal_finished)
+        self._reveal_anim.start()
+
+    def _on_reveal_step(self, val):
+        self._scan_progress = float(val)
+        self.update()
+
+    def _on_reveal_finished(self):
+        self.state = "ready"
+        self.update()
+
+    def set_failed(self, error_msg: str):
+        if self._anim_timer and self._anim_timer.isActive():
+            self._anim_timer.stop()
+        self.state = "failed"
+        self.error_text = error_msg
+        self.setFixedSize(380, 110)
+        self.overlay_widget.hide()
+        self.update()
+
+    def _load_pixmap(self):
+        if self.image_path and os.path.exists(self.image_path):
+            self._pixmap = QPixmap(self.image_path)
+            if not self._pixmap.isNull():
+                orig_size = self._pixmap.size()
+                max_w, max_h = 440, 360
+                scaled = orig_size.scaled(max_w, max_h, Qt.AspectRatioMode.KeepAspectRatio)
+                card_w = max(280, scaled.width())
+                card_h = max(180, scaled.height())
+                self.setFixedSize(card_w, card_h)
+                self.overlay_widget.setGeometry(0, 0, card_w, 40)
+                self.state = "ready"
+                return
+        self.setFixedSize(380, 200)
+
+    def _copy_to_clipboard(self):
+        if self._pixmap and not self._pixmap.isNull():
+            QGuiApplication.clipboard().setPixmap(self._pixmap)
+            QGuiApplication.clipboard().setImage(self._pixmap.toImage())
+            self.copy_btn.setIcon(_render_svg(SVG_CHECK, "#4ade80", 14))
+            icon_col = "#1e293b" if self.current_theme == "light" else "#ded7c4"
+            QTimer.singleShot(1800, lambda: self.copy_btn.setIcon(_render_svg(SVG_COPY, icon_col, 14)))
+
+    def _save_image(self):
+        if not self._pixmap or self._pixmap.isNull():
+            return
+        default_name = os.path.basename(self.image_path) if self.image_path else "akira_art.png"
+        save_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Сохранить изображение",
+            default_name,
+            "PNG Image (*.png);;JPEG Image (*.jpg *.jpeg);;All Files (*.*)"
+        )
+        if save_path:
+            self._pixmap.save(save_path)
+
+    def mouseDoubleClickEvent(self, event):
+        if self.state == "ready" and self.image_path and os.path.exists(self.image_path):
+            try:
+                os.startfile(self.image_path)
+            except Exception:
+                pass
+        super().mouseDoubleClickEvent(event)
+
+    def enterEvent(self, event):
+        self._hovered = True
+        if self.state == "ready":
+            self.overlay_widget.show()
+            self.overlay_widget.raise_()
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered = False
+        self.overlay_widget.hide()
+        self.update()
+        super().leaveEvent(event)
+
+    def set_theme(self, theme: str, emotion_color: QColor = None):
+        self.current_theme = theme
+        if emotion_color is not None:
+            self.emotion_color = QColor(emotion_color)
+        self._update_overlay_style()
+        self.update()
+
+    def _update_overlay_style(self):
+        is_light = (self.current_theme == "light")
+        icon_col = "#1e293b" if is_light else "#ded7c4"
+        btn_bg = "rgba(255, 255, 255, 0.85)" if is_light else "rgba(15, 17, 23, 0.78)"
+        btn_border = "rgba(0, 0, 0, 0.15)" if is_light else "rgba(255, 255, 255, 0.18)"
+        btn_hover = "rgba(255, 255, 255, 0.98)" if is_light else "rgba(30, 34, 45, 0.9)"
+
+        btn_qss = f"""
+            QPushButton {{
+                background-color: {btn_bg};
+                border: 1px solid {btn_border};
+                border-radius: 6px;
+                padding: 3px;
+            }}
+            QPushButton:hover {{
+                background-color: {btn_hover};
+                border: 1px solid {self.emotion_color.name()};
+            }}
+        """
+        self.copy_btn.setStyleSheet(btn_qss)
+        self.save_btn.setStyleSheet(btn_qss)
+        self.copy_btn.setIcon(_render_svg(SVG_COPY, icon_col, 14))
+        self.save_btn.setIcon(_render_svg(SVG_DOWNLOAD, icon_col, 14))
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        w, h = self.width(), self.height()
+        is_light = (self.current_theme == "light")
+        emo = self.emotion_color
+
+        rect = QRectF(0.5, 0.5, w - 1.0, h - 1.0)
+        clip_path = QPainterPath()
+        clip_path.addRoundedRect(rect, 14.0, 14.0)
+        painter.save()
+        painter.setClipPath(clip_path)
+
+        if self.state == "loading":
+            bg_col = QColor(241, 245, 249) if is_light else QColor(13, 15, 18)
+            painter.fillRect(self.rect(), bg_col)
+
+            aura = QRadialGradient(w * 0.5, h * 0.5, max(w, h) * 0.7)
+            aura.setColorAt(0.0, QColor(emo.red(), emo.green(), emo.blue(), 55 if is_light else 42))
+            aura.setColorAt(0.65, QColor(emo.red(), emo.green(), emo.blue(), 18 if is_light else 12))
+            aura.setColorAt(1.0, QColor(emo.red(), emo.green(), emo.blue(), 0))
+            painter.fillRect(self.rect(), aura)
+
+            for p in self._particles:
+                px = p["x"] * w
+                py = p["y"] * h
+                pr = p["r"]
+                p_alpha = int(p["alpha"] * 255)
+                p_col = QColor(emo.red(), emo.green(), emo.blue(), min(255, p_alpha))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QBrush(p_col))
+                painter.drawEllipse(QPointF(px, py), pr, pr)
+
+            shim_w = w * 0.5
+            shim_x = -shim_w + self._shimmer_phase * (w + shim_w) / 2.0
+            shimmer = QLinearGradient(shim_x, 0, shim_x + shim_w, h)
+            shimmer.setColorAt(0.0, QColor(255, 255, 255, 0))
+            shimmer.setColorAt(0.5, QColor(255, 255, 255, 38 if is_light else 22))
+            shimmer.setColorAt(1.0, QColor(255, 255, 255, 0))
+            painter.fillRect(self.rect(), shimmer)
+
+            icon_size = 32
+            icon_col = emo.name()
+            icon_pix = _render_svg(SVG_MEDIA_IMAGE, icon_col, icon_size).pixmap(icon_size, icon_size)
+            painter.drawPixmap(int((w - icon_size) / 2), int(h * 0.35 - icon_size / 2), icon_pix)
+
+            painter.setPen(QColor("#1e293b" if is_light else "#ded7c4"))
+            painter.setFont(QFont(self.font_family, 11, QFont.Weight.Bold))
+            painter.drawText(QRectF(0, h * 0.48, w, 22), Qt.AlignmentFlag.AlignCenter, "Синтезирую кадр...")
+
+            painter.setPen(QColor("#64748b" if is_light else "#888270"))
+            painter.setFont(QFont(self.font_family, 9))
+            painter.drawText(QRectF(0, h * 0.58, w, 18), Qt.AlignmentFlag.AlignCenter, "Iro")
+
+        elif self.state == "revealing":
+            scale = 1.03 - 0.03 * self._scan_progress
+            scan_y = h * self._scan_progress
+
+            bg_col = QColor(241, 245, 249) if is_light else QColor(13, 15, 18)
+            painter.fillRect(self.rect(), bg_col)
+
+            if self._pixmap and not self._pixmap.isNull():
+                painter.save()
+                painter.translate(w / 2.0, h / 2.0)
+                painter.scale(scale, scale)
+                painter.translate(-w / 2.0, -h / 2.0)
+                painter.setClipRect(QRectF(0, 0, w, scan_y), Qt.ClipOperation.IntersectClip)
+                painter.drawPixmap(self.rect(), self._pixmap)
+                painter.restore()
+
+            scan_grad = QLinearGradient(0, scan_y, w, scan_y)
+            scan_grad.setColorAt(0.0, QColor(emo.red(), emo.green(), emo.blue(), 0))
+            scan_grad.setColorAt(0.5, QColor(255, 255, 255, 230))
+            scan_grad.setColorAt(1.0, QColor(emo.red(), emo.green(), emo.blue(), 0))
+            painter.setPen(QPen(QBrush(scan_grad), 2.5))
+            painter.drawLine(QPointF(0, scan_y), QPointF(w, scan_y))
+
+        elif self.state == "ready":
+            if self._pixmap and not self._pixmap.isNull():
+                painter.drawPixmap(self.rect(), self._pixmap)
+            else:
+                painter.fillRect(self.rect(), QColor(20, 22, 28))
+                painter.setPen(QColor("#ded7c4"))
+                painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Изображение недоступно")
+
+            badge_w, badge_h = 148, 20
+            badge_x, badge_y = 10, h - badge_h - 10
+            badge_rect = QRectF(badge_x, badge_y, badge_w, badge_h)
+            badge_path = QPainterPath()
+            badge_path.addRoundedRect(badge_rect, 6.0, 6.0)
+            painter.fillPath(badge_path, QColor(12, 14, 18, 180))
+            painter.setPen(QColor(222, 215, 196, 210))
+            painter.setFont(QFont(self.font_family, 8))
+            painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, "Iro")
+
+        elif self.state == "failed":
+            bg_col = QColor(254, 242, 242) if is_light else QColor(24, 14, 16)
+            painter.fillRect(self.rect(), bg_col)
+            painter.setPen(QColor("#ef4444"))
+            painter.setFont(QFont(self.font_family, 10, QFont.Weight.Bold))
+            painter.drawText(QRectF(14, 14, w - 28, 22), Qt.AlignmentFlag.AlignLeft, "⚠️ Ошибка синтеза изображения")
+            painter.setPen(QColor("#7f1d1d" if is_light else "#fca5a5"))
+            painter.setFont(QFont(self.font_family, 9))
+            painter.drawText(QRectF(14, 38, w - 28, h - 46), Qt.AlignmentFlag.AlignLeft | Qt.TextFlag.TextWordWrap, self.error_text or "Не удалось получить изображение от модели.")
+
+        painter.restore()
+
+        border_col = QColor(15, 23, 42, 35) if is_light else QColor(120, 115, 95, 75)
+        if self._hovered and self.state == "ready":
+            border_col = QColor(emo.red(), emo.green(), emo.blue(), 160)
+        painter.setPen(QPen(border_col, 1.2))
+        painter.drawPath(clip_path)
+        painter.end()
+
+
+class AudioMediaCard(QFrame):
+    """Карточка сгенерированной музыки:
+    - loading: компактный бар (64px) с живым эквалайзером (18 столбиков) и анимацией генерации
+    - ready: мини-плеер (72px) с кнопкой Play/Pause, интерактивным прогресс-баром/волной в цвет эмоции,
+      таймером 00:00 / 00:30 и кнопкой сохранения MP3 через PyQt6.QtMultimedia
+    """
+    def __init__(
+        self,
+        audio_path: str = "",
+        emotion_color: QColor = None,
+        font_family: str = "Segoe UI",
+        theme: str = "dark",
+        state: str = "ready",
+        parent=None
+    ):
+        super().__init__(parent)
+        self.raw_audio_path = audio_path
+        self.audio_path = resolve_media_path(audio_path)
+        self.emotion_color = QColor(emotion_color) if emotion_color else QColor("#38bdf8")
+        self.font_family = font_family
+        self.current_theme = theme
+        self.state = state  # "loading", "ready", "failed"
+        self.error_text = ""
+        self._hovered = False
+        self._is_playing = False
+        self._duration = 30000
+        self._position = 0
+        self._eq_phase = 0.0
+
+        self._player = None
+        self._audio_out = None
+
+        self.setMouseTracking(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+
+        self._setup_ui()
+
+        if self.state == "loading":
+            self._init_loading()
+        else:
+            self._init_ready()
+
+    def _setup_ui(self):
+        self.main_layout = QHBoxLayout(self)
+        self.main_layout.setContentsMargins(12, 8, 12, 8)
+        self.main_layout.setSpacing(12)
+
+        self.play_btn = QPushButton(self)
+        self.play_btn.setFixedSize(34, 34)
+        self.play_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.play_btn.clicked.connect(self._toggle_playback)
+        self.main_layout.addWidget(self.play_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
+
+        self.center_col = QVBoxLayout()
+        self.center_col.setContentsMargins(0, 0, 0, 0)
+        self.center_col.setSpacing(3)
+
+        self.info_row = QHBoxLayout()
+        self.info_row.setContentsMargins(0, 0, 0, 0)
+        self.title_lbl = QLabel("Hibiki", self)
+        self.title_lbl.setFont(QFont(self.font_family, 9, QFont.Weight.Bold))
+        self.info_row.addWidget(self.title_lbl)
+
+        self.info_row.addStretch()
+
+        self.time_lbl = QLabel("00:00 / 00:30", self)
+        self.time_lbl.setFont(QFont(self.font_family, 8))
+        self.info_row.addWidget(self.time_lbl)
+        self.center_col.addLayout(self.info_row)
+
+        self.track_widget = AudioTrackBar(self)
+        self.track_widget.setFixedHeight(18)
+        self.track_widget.seek_requested.connect(self._seek_to)
+        self.center_col.addWidget(self.track_widget)
+
+        self.main_layout.addLayout(self.center_col, 1)
+
+        self.download_btn = QPushButton(self)
+        self.download_btn.setFixedSize(28, 28)
+        self.download_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.download_btn.setToolTip("Сохранить MP3")
+        self.download_btn.clicked.connect(self._save_audio)
+        self.main_layout.addWidget(self.download_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
+
+        self._update_styles()
+
+    def _init_loading(self):
+        self.state = "loading"
+        self.setFixedSize(390, 58)
+        self.play_btn.hide()
+        self.download_btn.hide()
+        self.track_widget.hide()
+        self.title_lbl.hide()
+        self.time_lbl.hide()
+
+        self._anim_timer = QTimer(self)
+        self._anim_timer.setInterval(16)
+        self._anim_timer.timeout.connect(self._on_eq_tick)
+        self._anim_timer.start()
+
+    def _on_eq_tick(self):
+        self._eq_phase += 0.09
+        self.update()
+
+    def _init_ready(self):
+        if hasattr(self, "_anim_timer") and self._anim_timer and self._anim_timer.isActive():
+            self._anim_timer.stop()
+        self.state = "ready"
+        self.setFixedSize(410, 72)
+        self.play_btn.show()
+        self.download_btn.show()
+        self.track_widget.show()
+        self.title_lbl.show()
+        self.time_lbl.show()
+        self.title_lbl.setText("Hibiki")
+
+        self._setup_player()
+        self._update_styles()
+        self.update()
+
+    def set_ready(self, file_path: str):
+        self.raw_audio_path = file_path
+        self.audio_path = resolve_media_path(file_path)
+        self._init_ready()
+
+    def set_failed(self, error_msg: str):
+        if hasattr(self, "_anim_timer") and self._anim_timer and self._anim_timer.isActive():
+            self._anim_timer.stop()
+        self.state = "failed"
+        self.error_text = error_msg
+        self.setFixedSize(390, 64)
+        self.play_btn.hide()
+        self.download_btn.hide()
+        self.track_widget.hide()
+        self.title_lbl.setText("⚠️ Ошибка синтеза музыки")
+        self.time_lbl.setText("")
+        self.update()
+
+    def _setup_player(self):
+        if not self._player:
+            self._player = QMediaPlayer(self)
+            self._audio_out = QAudioOutput(self)
+            self._player.setAudioOutput(self._audio_out)
+            self._audio_out.setVolume(1.0)
+            self._player.positionChanged.connect(self._on_position_changed)
+            self._player.durationChanged.connect(self._on_duration_changed)
+            self._player.playbackStateChanged.connect(self._on_playback_state_changed)
+            self._player.mediaStatusChanged.connect(self._on_media_status_changed)
+
+        if self.audio_path and os.path.exists(self.audio_path):
+            self._player.setSource(QUrl.fromLocalFile(self.audio_path))
+
+    def _on_media_status_changed(self, status):
+        if status == QMediaPlayer.MediaStatus.EndOfMedia:
+            self._position = 0
+            self.track_widget.set_progress(0, self._duration)
+            self._update_time_label()
+
+    def _toggle_playback(self):
+        if not self._player:
+            self._setup_player()
+        if not self._player:
+            return
+
+        if self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+            self._player.pause()
+        else:
+            if self._player.playbackState() == QMediaPlayer.PlaybackState.StoppedState:
+                if self.audio_path and os.path.exists(self.audio_path):
+                    self._player.setSource(QUrl.fromLocalFile(self.audio_path))
+            self._player.play()
+
+    def _on_playback_state_changed(self, state):
+        self._is_playing = (state == QMediaPlayer.PlaybackState.PlayingState)
+        self._update_play_icon()
+
+    def _on_position_changed(self, pos_ms: int):
+        self._position = pos_ms
+        self.track_widget.set_progress(self._position, self._duration)
+        self._update_time_label()
+
+    def _on_duration_changed(self, dur_ms: int):
+        if dur_ms > 0:
+            self._duration = dur_ms
+            self.track_widget.set_progress(self._position, self._duration)
+            self._update_time_label()
+
+    def _seek_to(self, ratio: float):
+        if self._player and self._duration > 0:
+            new_pos = int(ratio * self._duration)
+            self._player.setPosition(new_pos)
+
+    def _update_time_label(self):
+        cur_s = int(self._position / 1000)
+        tot_s = int(self._duration / 1000)
+        cur_str = f"{cur_s // 60:02d}:{cur_s % 60:02d}"
+        tot_str = f"{tot_s // 60:02d}:{tot_s % 60:02d}"
+        self.time_lbl.setText(f"{cur_str} / {tot_str}")
+
+    def _save_audio(self):
+        if not self.audio_path or not os.path.exists(self.audio_path):
+            return
+        default_name = os.path.basename(self.audio_path) if self.audio_path else "akira_melody.mp3"
+        save_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Сохранить аудиозапись",
+            default_name,
+            "MP3 Audio (*.mp3);;All Files (*.*)"
+        )
+        if save_path:
+            import shutil
+            shutil.copy2(self.audio_path, save_path)
+
+    def _update_play_icon(self):
+        icon_col = "#ffffff" if self.current_theme == "dark" else "#111318"
+        svg = SVG_PAUSE if self._is_playing else SVG_PLAY
+        self.play_btn.setIcon(_render_svg(svg, icon_col, 16))
+
+    def _update_styles(self):
+        is_light = (self.current_theme == "light")
+        icon_col = "#1e293b" if is_light else "#ded7c4"
+        text_col = "#1e293b" if is_light else "#ded7c4"
+        sub_col = "#64748b" if is_light else "#888270"
+
+        self.title_lbl.setStyleSheet(f"color: {text_col};")
+        self.time_lbl.setStyleSheet(f"color: {sub_col};")
+
+        btn_bg = self.emotion_color.name()
+        self.play_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {btn_bg};
+                border: none;
+                border-radius: 17px;
+            }}
+            QPushButton:hover {{
+                background-color: {self.emotion_color.lighter(115).name()};
+            }}
+        """)
+        self._update_play_icon()
+
+        d_bg = "rgba(0, 0, 0, 0.06)" if is_light else "rgba(255, 255, 255, 0.08)"
+        d_hover = "rgba(0, 0, 0, 0.12)" if is_light else "rgba(255, 255, 255, 0.16)"
+        self.download_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {d_bg};
+                border: 1px solid rgba(120, 115, 95, 0.25);
+                border-radius: 6px;
+                padding: 2px;
+            }}
+            QPushButton:hover {{
+                background-color: {d_hover};
+                border: 1px solid {self.emotion_color.name()};
+            }}
+        """)
+        self.download_btn.setIcon(_render_svg(SVG_DOWNLOAD, icon_col, 14))
+
+        self.track_widget.set_theme(self.current_theme, self.emotion_color)
+
+    def set_theme(self, theme: str, emotion_color: QColor = None):
+        self.current_theme = theme
+        if emotion_color is not None:
+            self.emotion_color = QColor(emotion_color)
+        self._update_styles()
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        is_light = (self.current_theme == "light")
+        emo = self.emotion_color
+
+        rect = QRectF(0.5, 0.5, w - 1.0, h - 1.0)
+        clip_path = QPainterPath()
+        clip_path.addRoundedRect(rect, 12.0, 12.0)
+        painter.save()
+        painter.setClipPath(clip_path)
+
+        bg_col = QColor(245, 248, 252) if is_light else QColor(14, 16, 20)
+        painter.fillRect(self.rect(), bg_col)
+
+        if self.state == "loading":
+            num_bars = 32
+            bar_w = 4.0
+            bar_spacing = 4.0
+            total_bars_w = num_bars * bar_w + (num_bars - 1) * bar_spacing
+            start_x = (w - total_bars_w) / 2.0
+            mid_y = h / 2.0
+            max_h = max(10.0, h - 18.0)
+
+            painter.setPen(Qt.PenStyle.NoPen)
+            for i in range(num_bars):
+                phase = self._eq_phase + i * 0.35
+                sine_val = (math.sin(phase) + 1.0) * 0.5
+                sine_val2 = (math.cos(phase * 1.5) + 1.0) * 0.3
+                bar_h = max(5.0, (sine_val * 0.7 + sine_val2 * 0.3) * max_h)
+                bx = start_x + i * (bar_w + bar_spacing)
+                by = mid_y - bar_h / 2.0
+
+                bar_rect = QRectF(bx, by, bar_w, bar_h)
+                bar_path = QPainterPath()
+                bar_path.addRoundedRect(bar_rect, 2.0, 2.0)
+                b_grad = QLinearGradient(bx, by, bx, by + bar_h)
+                b_grad.setColorAt(0.0, emo.lighter(130))
+                b_grad.setColorAt(1.0, emo)
+                painter.fillPath(bar_path, b_grad)
+
+        painter.restore()
+
+        border_col = QColor(15, 23, 42, 28) if is_light else QColor(120, 115, 95, 75)
+        if self._hovered and self.state == "ready":
+            border_col = QColor(emo.red(), emo.green(), emo.blue(), 150)
+        painter.setPen(QPen(border_col, 1.2))
+        painter.drawPath(clip_path)
+        painter.end()
+
+    def closeEvent(self, event):
+        if self._player:
+            self._player.stop()
+        super().closeEvent(event)
+
+    def deleteLater(self):
+        if self._player:
+            self._player.stop()
+        super().deleteLater()
+
+
 class ShadowLabel(QLabel):
     """QLabel с нативным субпиксельным сглаживанием шрифта."""
     def __init__(self, text: str = "", theme: str = "dark", parent=None):
@@ -456,6 +1282,7 @@ class StudioAkiraStream(QWidget):
         self.current_theme = theme
         self.code_blocks = []
         self.text_labels = []
+        self.media_cards = []
         self._rendered_widgets = []
         self._on_stream_tick = on_stream_tick
 
@@ -492,6 +1319,28 @@ class StudioAkiraStream(QWidget):
                 theme=self.current_theme,
                 parent=self
             )
+        elif b_type == "image":
+            card = ImageMediaCard(
+                image_path=b_val,
+                emotion_color=self.emotion_color,
+                font_family=self.font_family,
+                theme=self.current_theme,
+                state="ready",
+                parent=self
+            )
+            self.media_cards.append(card)
+            return card
+        elif b_type == "audio":
+            card = AudioMediaCard(
+                audio_path=b_val,
+                emotion_color=self.emotion_color,
+                font_family=self.font_family,
+                theme=self.current_theme,
+                state="ready",
+                parent=self
+            )
+            self.media_cards.append(card)
+            return card
         lbl = ShadowLabel(theme=self.current_theme)
         lbl.setObjectName("StudioAkiraBody")
         lbl.setTextFormat(Qt.TextFormat.RichText)
@@ -503,6 +1352,31 @@ class StudioAkiraStream(QWidget):
         lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         return lbl
 
+    def add_loading_media_card(self, media_type: str):
+        """Создает и добавляет карточку генерации медиа в состоянии loading."""
+        if media_type == "image":
+            card = ImageMediaCard(
+                image_path="",
+                emotion_color=self.emotion_color,
+                font_family=self.font_family,
+                theme=self.current_theme,
+                state="loading",
+                parent=self
+            )
+        else:
+            card = AudioMediaCard(
+                audio_path="",
+                emotion_color=self.emotion_color,
+                font_family=self.font_family,
+                theme=self.current_theme,
+                state="loading",
+                parent=self
+            )
+        self.content_col.addWidget(card)
+        self._rendered_widgets.append((media_type, card))
+        self.media_cards.append(card)
+        return card
+
     def _render_blocks(self, blocks):
         for b_type, b_val in blocks:
             w = self._create_block_widget(b_type, b_val)
@@ -510,6 +1384,9 @@ class StudioAkiraStream(QWidget):
             self._rendered_widgets.append((b_type, w))
             if b_type == "code":
                 self.code_blocks.append(w)
+            elif b_type in ("image", "audio"):
+                if w not in self.media_cards:
+                    self.media_cards.append(w)
             else:
                 self.text_labels.append((w, b_val))
 
@@ -570,7 +1447,7 @@ class StudioAkiraStream(QWidget):
                         new_html = markdown_to_rich_html(b_val, theme=self.current_theme)
                         if widget.text() != new_html:
                             widget.setText(new_html)
-                    else:
+                    elif b_type == "code":
                         _, code_body = b_val
                         clean_code = code_body.strip("\n")
                         if widget.code != clean_code:
@@ -592,11 +1469,17 @@ class StudioAkiraStream(QWidget):
     def _sync_theme_refs(self, blocks):
         self.code_blocks.clear()
         self.text_labels.clear()
+        self.media_cards.clear()
         for (b_type, widget), (_, b_val) in zip(self._rendered_widgets, blocks):
             if b_type == "code":
                 self.code_blocks.append(widget)
-            else:
+            elif b_type in ("image", "audio"):
+                self.media_cards.append(widget)
+            elif b_type == "text":
                 self.text_labels.append((widget, b_val))
+            else:
+                if hasattr(widget, "setText"):
+                    self.text_labels.append((widget, b_val))
 
     def set_theme(self, theme: str, emotion_color: QColor = None):
         self.current_theme = theme
@@ -609,9 +1492,14 @@ class StudioAkiraStream(QWidget):
             self.header_lbl.set_theme(theme)
         for cb in self.code_blocks:
             cb.set_theme(theme)
+        for mc in getattr(self, "media_cards", []):
+            if hasattr(mc, "set_theme"):
+                mc.set_theme(theme, emotion_color or self.emotion_color)
         for lbl, raw_md in self.text_labels:
-            lbl.set_theme(theme)
-            lbl.setText(markdown_to_rich_html(raw_md, theme=theme))
+            if hasattr(lbl, "set_theme"):
+                lbl.set_theme(theme)
+            if hasattr(lbl, "setText"):
+                lbl.setText(markdown_to_rich_html(raw_md, theme=theme))
 
 
 class StudioThinkingLabel(QWidget):
@@ -1153,7 +2041,8 @@ class StudioModelSelector(QPushButton):
 
         self.popup = ModelSelectorPopup(self.font_family, self.studio_frame, models=self.models)
         self.popup.model_selected.connect(self.setCurrentIndex)
-        self.popup.emotion_triggered.connect(self.studio_frame.set_emotion)
+        if self.studio_frame and hasattr(self.studio_frame, "set_emotion"):
+            self.popup.emotion_triggered.connect(self.studio_frame.set_emotion)
         self.popup.closed.connect(self.update)
         self.popup.set_selected_index(0)
 
@@ -1166,6 +2055,9 @@ class StudioModelSelector(QPushButton):
 
     def refresh_models(self):
         """Синхронизирует список доступных слотов с актуальными ключами в config.json."""
+        if hasattr(self.parent(), "refresh_media_capability"):
+            self.parent().refresh_media_capability()
+
         new_models = _get_available_studio_models()
         if new_models == self.models:
             return
@@ -1280,6 +2172,324 @@ class StudioModelSelector(QPushButton):
         """)
 
 
+class MediaModeRow(QFrame):
+    """Строка выбора режима в MediaModePopup."""
+    clicked = pyqtSignal(str)
+
+    def __init__(self, mode: str, title: str, subtitle: str, svg_xml: str, font_family: str, parent=None):
+        super().__init__(parent)
+        self.mode = mode
+        self.title = title
+        self.subtitle = subtitle
+        self.svg_xml = svg_xml
+        self.font_family = font_family
+        self.current_theme = "dark"
+        self.is_active = False
+        self.is_hovered = False
+        self.hover_color = None
+
+        self.setFixedHeight(34)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        l = QHBoxLayout(self)
+        l.setContentsMargins(8, 2, 8, 2)
+        l.setSpacing(8)
+
+        self.icon_lbl = QLabel(self)
+        self.icon_lbl.setFixedSize(16, 16)
+        l.addWidget(self.icon_lbl)
+
+        text_col = QVBoxLayout()
+        text_col.setContentsMargins(0, 0, 0, 0)
+        text_col.setSpacing(0)
+
+        self.title_lbl = QLabel(title, self)
+        self.title_lbl.setFont(QFont(font_family, 9, QFont.Weight.Bold))
+        text_col.addWidget(self.title_lbl)
+
+        self.sub_lbl = QLabel(subtitle, self)
+        self.sub_lbl.setFont(QFont(font_family, 7))
+        text_col.addWidget(self.sub_lbl)
+
+        l.addLayout(text_col, 1)
+
+        self.check_lbl = QLabel("✓", self)
+        self.check_lbl.setFont(QFont(font_family, 10, QFont.Weight.Bold))
+        self.check_lbl.setFixedWidth(14)
+        l.addWidget(self.check_lbl)
+
+        self.update_style()
+
+    def set_active(self, active: bool):
+        self.is_active = active
+        self.update_style()
+
+    def set_theme(self, theme: str):
+        self.current_theme = theme
+        self.update_style()
+
+    def set_hover_color(self, color: QColor):
+        self.hover_color = color
+        self.update_style()
+
+    def enterEvent(self, event):
+        self.is_hovered = True
+        self.update_style()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.is_hovered = False
+        self.hover_color = None
+        self.update_style()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self.mode)
+        super().mousePressEvent(event)
+
+    def update_style(self):
+        is_light = (self.current_theme == "light")
+        icon_col = "#1e293b" if is_light else "#ded7c4"
+        text_col = "#111318" if is_light else "#ded7c4"
+        sub_col = "#64748b" if is_light else "#888270"
+
+        if self.is_hovered:
+            accent = self.hover_color.name() if self.hover_color else ("#0284c7" if is_light else "#38bdf8")
+            bg_col = f"rgba({QColor(accent).red()}, {QColor(accent).green()}, {QColor(accent).blue()}, 0.16)"
+            border_col = f"rgba({QColor(accent).red()}, {QColor(accent).green()}, {QColor(accent).blue()}, 0.35)"
+            icon_col = accent
+        elif self.is_active:
+            bg_col = "rgba(15, 23, 42, 0.08)" if is_light else "rgba(255, 255, 255, 0.10)"
+            border_col = "rgba(15, 23, 42, 0.14)" if is_light else "rgba(255, 255, 255, 0.18)"
+        else:
+            bg_col = "transparent"
+            border_col = "transparent"
+
+        self.setStyleSheet(f"""
+            QFrame {{
+                background-color: {bg_col};
+                border: 1px solid {border_col};
+                border-radius: 6px;
+            }}
+        """)
+        self.icon_lbl.setPixmap(_render_svg(self.svg_xml, icon_col, 16).pixmap(16, 16))
+        self.title_lbl.setStyleSheet(f"color: {text_col}; border: none; background: transparent;")
+        self.sub_lbl.setStyleSheet(f"color: {sub_col}; border: none; background: transparent;")
+
+        if self.is_active:
+            check_col = self.hover_color.name() if self.hover_color else ("#0284c7" if is_light else "#38bdf8")
+            self.check_lbl.setStyleSheet(f"color: {check_col}; border: none; background: transparent;")
+        else:
+            self.check_lbl.setStyleSheet("color: transparent; border: none; background: transparent;")
+
+
+class MediaModePopup(QFrame):
+    """Анимированное всплывающее меню переключения режимов генерации (Изображение / Музыка / Текст)."""
+    closed = pyqtSignal()
+    mode_selected = pyqtSignal(str)
+
+    def __init__(self, font_family: str, studio_frame, parent=None):
+        super().__init__(parent)
+        self.font_family = font_family
+        self.studio_frame = studio_frame
+        self.setObjectName("MediaModePopup")
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.hide()
+
+        self.current_theme = "dark"
+        self.active_mode = "text"
+        self.is_open = False
+        self.target_geom = QRect()
+        self.start_y = 0
+        self._anim_progress = 0.0
+
+        layout = QVBoxLayout(self)
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(4)
+
+        self.row_image = MediaModeRow(
+            "image",
+            "Изображение",
+            "Iro",
+            SVG_MEDIA_IMAGE,
+            self.font_family,
+            self
+        )
+        self.row_image.clicked.connect(self._on_row_clicked)
+        layout.addWidget(self.row_image)
+
+        self.row_music = MediaModeRow(
+            "music",
+            "Музыка",
+            "Hibiki",
+            SVG_MEDIA_MUSIC,
+            self.font_family,
+            self
+        )
+        self.row_music.clicked.connect(self._on_row_clicked)
+        layout.addWidget(self.row_music)
+
+        self.rows = [self.row_image, self.row_music]
+
+        self.anim = QVariantAnimation(self)
+        self.anim.setDuration(200)
+        self.anim.valueChanged.connect(self._on_anim_step)
+        self.anim.finished.connect(self._on_anim_finished)
+
+    def set_active_mode(self, mode: str):
+        self.active_mode = mode
+        self.row_image.set_active(mode == "image")
+        self.row_music.set_active(mode == "music")
+
+    def set_theme(self, theme: str):
+        self.current_theme = theme
+        for r in self.rows:
+            r.set_theme(theme)
+        self.update()
+
+    def _on_row_clicked(self, clicked_mode: str):
+        if self.active_mode == clicked_mode:
+            self.mode_selected.emit("text")
+        else:
+            self.mode_selected.emit(clicked_mode)
+        self.close_animated()
+
+    def open_animated(self, target_x: int, btn_y: int):
+        self.is_open = True
+        self.show()
+        self.raise_()
+
+        if self.studio_frame:
+            cur_h = getattr(self.studio_frame, "cur_h", 200.0)
+            cur_s = getattr(self.studio_frame, "cur_s", 180.0)
+            cur_v = getattr(self.studio_frame, "cur_v", 240.0)
+            emo_col = QColor.fromHsv(int(cur_h), int(cur_s), int(cur_v))
+            for r in self.rows:
+                r.set_hover_color(emo_col)
+
+        target_w = 168
+        target_h = 84
+        gap = 12
+        final_y = btn_y - target_h - gap
+
+        self.target_geom = QRect(target_x, final_y, target_w, target_h)
+        self.start_y = btn_y - gap
+
+        self.anim.stop()
+        self.anim.setDuration(200)
+        self.anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.anim.setStartValue(self._anim_progress)
+        self.anim.setEndValue(1.0)
+        self.anim.start()
+
+    def close_animated(self):
+        if not self.is_open:
+            return
+        self.is_open = False
+        self.anim.stop()
+        self.anim.setDuration(160)
+        self.anim.setEasingCurve(QEasingCurve.Type.InCubic)
+        self.anim.setStartValue(self._anim_progress)
+        self.anim.setEndValue(0.0)
+        self.anim.start()
+
+    def _on_anim_step(self, val):
+        self._anim_progress = float(val)
+        cur_h = max(2, int(self.target_geom.height() * self._anim_progress))
+        cur_y = int(self.start_y - cur_h)
+        self.setGeometry(self.target_geom.x(), cur_y, self.target_geom.width(), cur_h)
+
+    def _on_anim_finished(self):
+        if not self.is_open:
+            self.hide()
+            self.closed.emit()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        is_light = (self.current_theme == "light")
+
+        rect = QRectF(0.5, 0.5, self.width() - 1.0, self.height() - 1.0)
+        r = min(10.0, max(1.0, self.height() / 2.0))
+        path = QPainterPath()
+        path.addRoundedRect(rect, r, r)
+
+        bg_col = QColor(245, 248, 252, 248) if is_light else QColor(14, 15, 18, 248)
+        border_col = QColor(17, 19, 24, 55) if is_light else QColor(120, 115, 95, 85)
+
+        painter.fillPath(path, bg_col)
+        painter.setPen(QPen(border_col, 1.2))
+        painter.drawPath(path)
+        painter.end()
+
+
+class StudioMediaModeBtn(QPushButton):
+    """Кнопка переключателя режимов генерации (Текст / Изображения / Музыка)."""
+    def __init__(self, studio_frame, parent=None):
+        super().__init__(parent)
+        self.studio_frame = studio_frame
+        self.setObjectName("StudioMediaModeBtn")
+        self.setFixedSize(28, 28)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.media_mode = "text"
+        self.current_theme = "dark"
+        self.update_style()
+
+    def set_mode(self, mode: str):
+        self.media_mode = mode
+        self.update_style()
+
+    def set_theme(self, theme: str):
+        self.current_theme = theme
+        self.update_style()
+
+    def _get_emotion_color(self) -> QColor:
+        if self.studio_frame:
+            cur_h = getattr(self.studio_frame, "cur_h", 200.0)
+            cur_s = getattr(self.studio_frame, "cur_s", 180.0)
+            cur_v = getattr(self.studio_frame, "cur_v", 240.0)
+            return QColor.fromHsv(int(cur_h), int(cur_s), int(cur_v))
+        return QColor("#38bdf8")
+
+    def update_style(self):
+        is_light = (self.current_theme == "light")
+        icon_col = "#1e293b" if is_light else "#ded7c4"
+
+        if self.media_mode == "image":
+            emo_col = self._get_emotion_color()
+            border_col = emo_col.name()
+            bg_col = f"rgba({emo_col.red()}, {emo_col.green()}, {emo_col.blue()}, 0.22)"
+            self.setIcon(_render_svg(SVG_MEDIA_IMAGE, border_col, 16))
+            self.setToolTip("Режим: Изображение (Iro)\nКликните для выбора другого режима")
+        elif self.media_mode == "music":
+            emo_col = self._get_emotion_color()
+            border_col = emo_col.name()
+            bg_col = f"rgba({emo_col.red()}, {emo_col.green()}, {emo_col.blue()}, 0.22)"
+            self.setIcon(_render_svg(SVG_MEDIA_MUSIC, border_col, 16))
+            self.setToolTip("Режим: Музыка (Hibiki)\nКликните для выбора другого режима")
+        else:
+            border_col = "rgba(15, 23, 42, 0.12)" if is_light else "rgba(120, 115, 95, 0.35)"
+            bg_col = "rgba(15, 23, 42, 0.05)" if is_light else "rgba(255, 255, 255, 0.05)"
+            self.setIcon(_render_svg(SVG_SPARKLES, icon_col, 15))
+            self.setToolTip("Режим: Текст\nКликните для выбора Изображения или Музыки")
+
+        bg_hover = "rgba(15, 23, 42, 0.10)" if is_light else "rgba(255, 255, 255, 0.12)"
+        self.setStyleSheet(f"""
+            QPushButton#StudioMediaModeBtn {{
+                background-color: {bg_col};
+                border: 1px solid {border_col};
+                border-radius: 7px;
+            }}
+            QPushButton#StudioMediaModeBtn:hover {{
+                background-color: {bg_hover};
+                border: 1px solid {border_col};
+            }}
+        """)
+
+
 class StudioFloatingDock(QFrame):
     """Парящий остров ввода внизу студии."""
     submit_requested = pyqtSignal(str, str, str)
@@ -1290,8 +2500,10 @@ class StudioFloatingDock(QFrame):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.font_family = font_family
         self.chat_font_family = chat_font_family or font_family
+        self.studio_frame = parent
         self.attached_file = None
         self.current_theme = "dark"
+        self.media_mode = "text"
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 6, 10, 6)
@@ -1318,12 +2530,20 @@ class StudioFloatingDock(QFrame):
         self.file_chip.hide()
         layout.addWidget(self.file_chip)
 
+        self.media_popup = MediaModePopup(font_family=self.font_family, studio_frame=parent, parent=parent or self)
+        self.media_popup.mode_selected.connect(self.set_media_mode)
+        self.media_popup.closed.connect(self._on_media_popup_closed)
+
         dock_row = QHBoxLayout()
         dock_row.setContentsMargins(0, 0, 0, 0)
         dock_row.setSpacing(6)
 
         self.model_combo = StudioModelSelector(font_family=self.font_family, studio_frame=parent, parent=self)
         dock_row.addWidget(self.model_combo, alignment=Qt.AlignmentFlag.AlignVCenter)
+
+        self.media_mode_btn = StudioMediaModeBtn(studio_frame=parent, parent=self)
+        self.media_mode_btn.clicked.connect(self._toggle_media_popup)
+        dock_row.addWidget(self.media_mode_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         self.attach_btn = QPushButton()
         self.attach_btn.setObjectName("StudioDockBtn")
@@ -1346,6 +2566,70 @@ class StudioFloatingDock(QFrame):
         dock_row.addWidget(self.send_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         layout.addLayout(dock_row)
+
+        if self.studio_frame and hasattr(self.studio_frame, "installEventFilter"):
+            self.studio_frame.installEventFilter(self)
+
+        self.refresh_media_capability()
+
+    def refresh_media_capability(self):
+        """Проверяет подключение ключа RouterAI и показывает/скрывает кнопку и возможность работы с медиа."""
+        has_routerai = _has_routerai_key()
+        self.media_mode_btn.setVisible(has_routerai)
+        if not has_routerai:
+            if self.media_mode != "text":
+                self.set_media_mode("text")
+            if hasattr(self, "media_popup") and self.media_popup.is_open:
+                self.media_popup.close_animated()
+
+    def _toggle_media_popup(self):
+        if not _has_routerai_key():
+            self.refresh_media_capability()
+            return
+        if self.media_popup.is_open:
+            self.media_popup.close_animated()
+        else:
+            ref_w = self.studio_frame or self
+            pos = self.media_mode_btn.mapTo(ref_w, QPoint(0, 0))
+            popup_x = max(6, pos.x() - 40)
+            self.media_popup.open_animated(popup_x, pos.y())
+
+    def _on_media_popup_closed(self):
+        self.media_mode_btn.update_style()
+
+    def set_media_mode(self, mode: str):
+        self.media_mode = mode
+        self.media_popup.set_active_mode(mode)
+        self.media_mode_btn.set_mode(mode)
+
+        if mode == "image":
+            self.model_combo.setEnabled(False)
+            opacity = QGraphicsOpacityEffect(self.model_combo)
+            opacity.setOpacity(0.45)
+            self.model_combo.setGraphicsEffect(opacity)
+            self.input_edit.setPlaceholderText("Опиши желаемое изображение (стиль, детали, композицию)... 🥰🖼️")
+        elif mode == "music":
+            self.model_combo.setEnabled(False)
+            opacity = QGraphicsOpacityEffect(self.model_combo)
+            opacity.setOpacity(0.45)
+            self.model_combo.setGraphicsEffect(opacity)
+            self.input_edit.setPlaceholderText("Опиши стиль или тему трека (жанр, инструменты, настроение)... 🥰🎵")
+        else:
+            self.model_combo.setEnabled(True)
+            self.model_combo.setGraphicsEffect(None)
+            self.randomize_placeholder()
+
+    def eventFilter(self, obj, event):
+        if obj == self.studio_frame:
+            if event.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick):
+                if self.media_popup.isVisible() and self.media_popup.is_open:
+                    pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+                    if not self.media_popup.geometry().contains(pos):
+                        btn_pos = self.media_mode_btn.mapTo(self.studio_frame, QPoint(0, 0))
+                        btn_rect = QRect(btn_pos, self.media_mode_btn.size())
+                        if not btn_rect.contains(pos):
+                            self.media_popup.close_animated()
+        return super().eventFilter(obj, event)
 
     def randomize_placeholder(self):
         self.input_edit.setPlaceholderText(random.choice(STUDIO_PLACEHOLDERS))
@@ -1377,14 +2661,17 @@ class StudioFloatingDock(QFrame):
         self.input_edit.clear()
         self.input_edit.adjust_height()
         self.clear_attachment()
-        self.randomize_placeholder()
+        if self.media_mode == "text":
+            self.randomize_placeholder()
         self.submit_requested.emit(text, f_path, model)
 
     def set_active(self, enabled: bool):
         self.input_edit.setEnabled(enabled)
         self.send_btn.setEnabled(enabled)
         self.attach_btn.setEnabled(enabled)
-        self.model_combo.setEnabled(enabled)
+        if self.media_mode == "text":
+            self.model_combo.setEnabled(enabled)
+        self.media_mode_btn.setEnabled(enabled)
         if enabled:
             self.input_edit.setFocus()
 
@@ -1394,6 +2681,9 @@ class StudioFloatingDock(QFrame):
         self.attach_btn.setIcon(_render_svg(SVG_PAPERCLIP, icon_col, 15))
         self.send_btn.setIcon(_render_svg(SVG_SEND, icon_col, 15))
         self.model_combo.set_theme(theme)
+        self.media_mode_btn.set_theme(theme)
+        self.media_popup.set_theme(theme)
+        self.refresh_media_capability()
         self.update()
 
     def paintEvent(self, event):
@@ -2041,6 +3331,8 @@ class StudioFrame(QFrame):
         super().showEvent(event)
         if hasattr(self, 'dock') and hasattr(self.dock, 'model_combo'):
             self.dock.model_combo.refresh_models()
+        if hasattr(self, 'dock') and hasattr(self.dock, 'refresh_media_capability'):
+            self.dock.refresh_media_capability()
 
     def _init_session_from_db(self):
         sessions = studio_db.get_sessions()
@@ -2149,6 +3441,9 @@ class StudioFrame(QFrame):
             self.thinking_status.set_accent_color(
                 QColor.fromHsv(int(self.cur_h), int(self.cur_s), int(self.cur_v))
             )
+        if hasattr(self, "dock") and hasattr(self.dock, "media_mode_btn"):
+            if getattr(self.dock, "media_mode", "text") in ("image", "music"):
+                self.dock.media_mode_btn.update_style()
         self.update()
 
     def set_emotion(self, emotion: str):
@@ -2230,6 +3525,9 @@ class StudioFrame(QFrame):
         if hasattr(self, 'dock') and hasattr(self.dock, 'model_combo'):
             if self.dock.model_combo.popup.is_open:
                 self.dock.model_combo.popup.close_animated()
+        if hasattr(self, 'dock') and hasattr(self.dock, 'media_popup'):
+            if self.dock.media_popup.is_open:
+                self.dock.media_popup.close_animated()
 
     def _clear_feed(self):
         while self.feed_layout.count():
@@ -2268,6 +3566,45 @@ class StudioFrame(QFrame):
         )
         self.feed_layout.addWidget(u_msg)
 
+        media_mode = getattr(self.dock, "media_mode", "text")
+        if media_mode in ("image", "music"):
+            phrase = "Синтезирую кадр..." if media_mode == "image" else "Сочиняю мелодию..."
+            accent = QColor.fromHsv(int(self.cur_h), int(self.cur_s), int(self.cur_v))
+            self.thinking_status.show_phrase(phrase, accent)
+
+            akira_stream = StudioAkiraStream(
+                "",
+                accent,
+                font_family=self.font_family,
+                chat_font_family=self.chat_font_family,
+                theme=self.current_theme,
+                emotion="happy",
+                animate=False,
+                parent=self.feed_widget
+            )
+            loading_card = akira_stream.add_loading_media_card(media_mode)
+            self.feed_layout.addWidget(akira_stream)
+
+            self.dock.set_active(False)
+            self._scroll_bottom()
+
+            self.media_worker = StudioMediaWorker(
+                media_type=media_mode,
+                prompt=text,
+                attached_file=attached_file,
+                parent=self
+            )
+            self.media_worker.media_ready.connect(
+                lambda m_type, path, prompt, card=loading_card, stream=akira_stream:
+                    self._on_media_worker_ready(m_type, path, prompt, card, stream)
+            )
+            self.media_worker.media_failed.connect(
+                lambda m_type, err, card=loading_card, stream=akira_stream:
+                    self._on_media_worker_failed(m_type, err, card, stream)
+            )
+            self.media_worker.start()
+            return
+
         self._current_thinking_pool = THINKING_FILE_PHRASES if attached_file else THINKING_PHRASES
         self._last_phrase = random.choice(self._current_thinking_pool)
         accent = QColor.fromHsv(int(self.cur_h), int(self.cur_s), int(self.cur_v))
@@ -2286,6 +3623,68 @@ class StudioFrame(QFrame):
             self.thinking_cycle_timer.stop()
             self.thinking_status.stop_and_hide()
             self.dock.set_active(True)
+
+    def _on_media_worker_ready(self, media_type: str, file_path: str, prompt: str, card, stream):
+        self.thinking_cycle_timer.stop()
+        self.thinking_status.stop_and_hide()
+        self.dock.set_active(True)
+
+        rel_path = os.path.relpath(file_path, os.getcwd()).replace('\\', '/')
+        tag = f"[AKIRA_IMAGE:{rel_path}]" if media_type == "image" else f"[AKIRA_AUDIO:{rel_path}]"
+
+        studio_db.add_message(
+            self.current_session_id,
+            role="akira",
+            content=tag,
+            emotion="happy"
+        )
+
+        self.set_emotion("happy")
+        emo_col = QColor.fromHsv(int(self.target_h), int(self.target_s), int(self.target_v))
+        stream.rail.set_color(emo_col)
+
+        if media_type in ("image", "photo") and hasattr(card, "reveal_image"):
+            card.reveal_image(file_path)
+        elif media_type in ("audio", "music") and hasattr(card, "set_ready"):
+            card.set_ready(file_path)
+        elif hasattr(card, "set_ready"):
+            card.set_ready(file_path)
+        elif hasattr(card, "reveal_image"):
+            card.reveal_image(file_path)
+
+        self._scroll_bottom()
+
+        session_meta = studio_db.get_session(self.current_session_id)
+        if session_meta and session_meta.get("title") == "Новый диалог":
+            if studio_db.get_message_count(self.current_session_id) <= 2:
+                prefix = "Арт:" if media_type == "image" else "Трек:"
+                clean_p = (prompt or "").strip().splitlines()[0][:26]
+                media_title = f"{prefix} {clean_p}..." if clean_p else ("Генерация арта" if media_type == "image" else "Музыкальный трек")
+                self._on_title_generated(self.current_session_id, media_title)
+
+        voice_msg = "Готово! Сгенерировала изображение." if media_type == "image" else "Готово! Композиция создана."
+        if hasattr(self.main_window, 'speak_reply'):
+            self.main_window.speak_reply(voice_msg, is_whisper=False)
+
+    def _on_media_worker_failed(self, media_type: str, err_msg: str, card, stream):
+        self.thinking_cycle_timer.stop()
+        self.thinking_status.stop_and_hide()
+        self.dock.set_active(True)
+        self.set_emotion("sad")
+
+        if hasattr(card, "set_failed"):
+            card.set_failed(err_msg)
+
+        studio_db.add_message(
+            self.current_session_id,
+            role="akira",
+            content=f"⚠️ Ошибка генерации ({media_type}): {err_msg}",
+            emotion="sad"
+        )
+        self._scroll_bottom()
+
+        if hasattr(self.main_window, 'speak_reply'):
+            self.main_window.speak_reply("Не получилось создать медиа, проверь настройки ключа.", is_whisper=False)
 
     def _on_worker_finished(self, response, user_prompt: str):
         self.thinking_cycle_timer.stop()
