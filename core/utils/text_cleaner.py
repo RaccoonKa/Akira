@@ -32,9 +32,10 @@ def clean_voice_text(text: str) -> str:
     # Проверяем, содержал ли исходный текст блоки кода
     has_code_blocks = bool(re.search(r'```[\s\S]*?```|```[a-zA-Z0-9_\-\+#\.]*[ \t]*\r?\n[\s\S]*$', text))
 
-    # 1. Полностью вырезаем блоки кода (заменяем на точку с пробелом для плавной интонации)
+    # 1. Полностью вырезаем блоки кода и медиа-теги (заменяем на точку с пробелом для плавной интонации)
     text_clean = re.sub(r'```[\s\S]*?```', '. ', text)
     text_clean = re.sub(r'```[a-zA-Z0-9_\-\+#\.]*[ \t]*\r?\n[\s\S]*$', '. ', text_clean)
+    text_clean = re.sub(r'\[AKIRA_(?:IMAGE|AUDIO):[^\]]+\]', '', text_clean)
 
     # 2. Снимаем инлайн-код (убираем обратные кавычки, оставляя читаемый текст)
     text_clean = re.sub(r'`([^`\n]+)`', r'\1', text_clean)
@@ -62,6 +63,15 @@ def clean_voice_text(text: str) -> str:
     text_clean = re.sub(r'^[,\s!?:;.\-]+', '', text_clean)
     text_clean = text_clean.strip()
 
+    if "[AKIRA_IMAGE:" in text:
+        letters = re.findall(r'[a-zA-Zа-яА-ЯёЁ]', text_clean)
+        if len(letters) < 4:
+            return "Готово! Сгенерировала изображение."
+    elif "[AKIRA_AUDIO:" in text:
+        letters = re.findall(r'[a-zA-Zа-яА-ЯёЁ]', text_clean)
+        if len(letters) < 4:
+            return "Готово! Композиция создана."
+
     if has_code_blocks:
         letters = re.findall(r'[a-zA-Zа-яА-ЯёЁ]', text_clean)
         if len(letters) < 4:
@@ -88,8 +98,8 @@ def clean_chat_display_text(text: str) -> str:
         code_snippets.append(m.group(0))
         return f"@@@CODEBLOCK{idx}@@@"
 
-    # Защищаем блоки кода и инлайн-код
-    protected = re.sub(r'```[\s\S]*?```|`[^`\n]+`', _store_code, text)
+    # Защищаем блоки кода, инлайн-код и медиа-теги [AKIRA_IMAGE:...] / [AKIRA_AUDIO:...]
+    protected = re.sub(r'```[\s\S]*?```|`[^`\n]+`|\[AKIRA_(?:IMAGE|AUDIO):[^\]]+\]', _store_code, text)
 
     lines = []
     for line in protected.splitlines():
