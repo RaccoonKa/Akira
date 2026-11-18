@@ -230,7 +230,10 @@ class LoreRAG:
         meaningful_words = [w for w in words if w not in self.STOP_WORDS]
 
         # Если значимых слов меньше двух и нет ключевых тем лора — не опрашиваем манифест
-        lore_keywords = {"войн", "создател", "свят", "библи", "пап", "шнур", "розетк", "манифест", "эволюц"}
+        lore_keywords = {
+            "войн", "создател", "свят", "библи", "пап", "шнур", "розетк", "манифест", "эволюц",
+            "переобуч", "виталик", "имя", "зовут", "личност", "характер", "ругат", "учит", "назва"
+        }
         has_lore_keyword = any(any(kw in w for kw in lore_keywords) for w in words)
 
         if len(meaningful_words) < 2 and not has_lore_keyword:
