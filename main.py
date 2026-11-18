@@ -74,6 +74,17 @@ try:
 except Exception:
     pass
 
+# Защита от отсутствия unittest в standalone-сборках (требуется для torch.utils._config_module)
+try:
+    import unittest
+except ImportError:
+    import types
+    dummy_unittest = types.ModuleType("unittest")
+    dummy_unittest.TestCase = type("TestCase", (), {})
+    dummy_unittest.mock = types.ModuleType("mock")
+    sys.modules["unittest"] = dummy_unittest
+    sys.modules["unittest.mock"] = dummy_unittest.mock
+
 # Логирование критических ошибок запуска в crash.log и нативное диалоговое окно Windows
 def _global_exception_handler(exc_type, exc_value, exc_traceback):
     if issubclass(exc_type, KeyboardInterrupt):

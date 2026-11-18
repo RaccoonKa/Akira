@@ -103,7 +103,6 @@ def run_nuitka():
         
         # Исключение тестовых и интерактивных пакетов
         "--noinclude-pytest-mode=nofollow",
-        "--noinclude-unittest-mode=nofollow",
         "--noinclude-IPython-mode=nofollow",
         "--noinclude-setuptools-mode=nofollow",
         "--nofollow-import-to=tkinter",
@@ -167,6 +166,13 @@ def copy_runtime_assets():
             if not os.path.exists(dst):
                 shutil.copy2(src, dst)
     print(f"[Libraries]: Синхронизировано {copied_count} внешних компонентов.")
+
+    # Копирование стандартной библиотеки unittest (требуется для torch.utils._config_module)
+    src_unittest = os.path.join(sys.base_prefix, "Lib", "unittest")
+    dst_unittest = os.path.join(OUTPUT_APP_DIR, "unittest")
+    if os.path.exists(src_unittest) and not os.path.exists(dst_unittest):
+        print(f"Копирование unittest -> {dst_unittest}")
+        shutil.copytree(src_unittest, dst_unittest)
 
     # Копирование ресурсов проекта в dist/Akira и dist/Akira/_internal (для обратной совместимости)
     target_locations = [OUTPUT_APP_DIR, os.path.join(OUTPUT_APP_DIR, "_internal")]
