@@ -285,6 +285,8 @@ def clean_distribution():
 
 def apply_runtime_patches():
     step("3.2. Применение патчей стабильности рантайма (PyTorch / Transformers)")
+    
+    # 1. Защита от сбоя GradBucket в torch.distributed
     target_torch_dist = os.path.join(OUTPUT_APP_DIR, "torch", "distributed", "__init__.py")
     if os.path.exists(target_torch_dist):
         try:
@@ -301,6 +303,22 @@ def apply_runtime_patches():
                 print("[Patch]: torch.distributed уже пропатчен или не требует изменений.")
         except Exception as e:
             print(f"[Patch Warning]: Не удалось пропатчить torch.distributed: {e}")
+
+    # 2. Защита от циклического импорта в torch.nested (AttributeError: autograd)
+    target_nested = os.path.join(OUTPUT_APP_DIR, "torch", "nested", "_internal", "nested_tensor.py")
+    if os.path.exists(target_nested):
+        try:
+            with open(target_nested, "r", encoding="utf-8") as f:
+                content = f.read()
+            if "import torch\n" in content and "import torch.autograd\n" not in content:
+                content = content.replace("import torch\n", "import torch\nimport torch.autograd\n", 1)
+                with open(target_nested, "w", encoding="utf-8") as f:
+                    f.write(content)
+                print("[Patch]: Успешно пропатчен torch.nested для предотвращения circular import.")
+            else:
+                print("[Patch]: torch.nested уже пропатчен или не требует изменений.")
+        except Exception as e:
+            print(f"[Patch Warning]: Не удалось пропатчить torch.nested: {e}")
 
 def build_msi():
     step("4. Сборка установщика .msi через WiX Toolset")

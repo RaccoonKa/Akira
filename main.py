@@ -61,16 +61,9 @@ try:
 except Exception:
     pass
 
-# Предотвращение падения PyTorch C++ (GradBucket already defined) при повторной инициализации c10d
+# Предварительная инициализация PyTorch для исключения циклических импортов в подмодулях
 try:
-    import torch._C
-    if hasattr(torch._C, "_c10d_init"):
-        _orig_c10d = torch._C._c10d_init
-        def _safe_c10d_init(*args, **kwargs):
-            if hasattr(getattr(torch._C, "_distributed_c10d", None), "GradBucket"):
-                return True
-            return _orig_c10d(*args, **kwargs)
-        torch._C._c10d_init = _safe_c10d_init
+    import torch
 except Exception:
     pass
 
