@@ -86,6 +86,7 @@ personal_data/owner_face/*
 personal_data/cache/
 personal_data/sql/
 personal_data/embeddings/
+personal_data/generated/
 personal_data/sounds/
 personal_data/custom_alarm.wav
 personal_data/*.db

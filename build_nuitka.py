@@ -88,6 +88,9 @@ def run_nuitka():
         "--nofollow-import-to=onnxruntime",
         "--nofollow-import-to=piper",
         "--nofollow-import-to=vosk",
+        "--nofollow-import-to=fastembed",
+        "--nofollow-import-to=sklearn",
+        "--nofollow-import-to=librosa",
         
         # Исключение тестовых и интерактивных пакетов
         "--noinclude-pytest-mode=nofollow",
@@ -141,7 +144,8 @@ def copy_runtime_assets():
         "face_recognition_models", "sounddevice", "soundfile", "_soundfile_data",
         "pycaw", "comtypes", "websockets", "fastapi", "uvicorn", "pydantic", "pydantic_core",
         "certifi", "charset_normalizer", "idna", "urllib3", "requests", "yaml", "qrcode",
-        "numpy", "scipy", "PIL", "psutil", "pyautogui", "pydub", "yandex_music", "spotipy"
+        "numpy", "scipy", "PIL", "psutil", "pyautogui", "pydub", "yandex_music", "spotipy",
+        "fastembed", "sklearn", "librosa", "optimum", "openai", "gigachat"
     ]
 
     print("Копирование готовых внешних библиотек (без избыточной перекомпиляции)...")

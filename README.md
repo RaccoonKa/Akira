@@ -41,10 +41,12 @@ Unlike traditional cloud assistants, Akira utilizes a **hybrid privacy-first arc
 * **Game/Discord Anti-False-Trigger Filter:** Incorporates prefix gating and speech-continuity filters to prevent false wake-ups during Discord calls and gaming sessions.
 * **Voiceprint & Speaker Verification:** Biometric acoustic identification verifying the owner's voice and filtering out background voices from teammates or speakers.
 
-### 🎨 Akira Studio & Dynamic Model Switching
+### 🎨 Akira Studio, Media Generation & Dynamic Model Switching
 * **Interactive Desktop Studio:** Modern PyQt6 workspace with dynamic chat history drawer, real-time title generation, and inline message management.
+* **AI Image & Art Synthesis:** Text-to-Image and Image-to-Image generation powered by RouterAI with a custom 60 FPS "digital ether" loading shimmer, progressive scan-line revelation, and inline media viewer with copy/save actions.
+* **Neural Music Generation:** High-fidelity stereo music and song synthesis with an animated real-time soundwave visualizer, built-in mini-player with interactive waveform seek bar, timestamp display, and one-click MP3 export.
 * **Floating Emotional Shimmer Wave:** Seamless thinking status with a moving dynamic gradient that synchronizes with Akira's active emotional state.
-* **Multi-LLM Integration:** Fluid switching between models (Sber GigaChat, DeepSeek, OpenAI GPT-4o, Google Gemini) for dialogs and creative coding assistance.
+* **Multi-LLM Integration:** Fluid switching between models (Sber GigaChat, DeepSeek, OpenAI GPT-4o, Google Gemini, RouterAI) for dialogs and creative coding assistance.
 
 ### 🎬 Torrent Streaming Cinema & Media Hub
 * **Direct Torrent Streaming:** Instant playback of movies and TV series via TorrServer without waiting for the full file to download.
@@ -108,7 +110,7 @@ flowchart TD
 
 | Category | Services and Modules |
 | --- | --- |
-| **Neural Intelligence** | Sber GigaChat API, DeepSeek API, OpenAI API, Gemini API, JointNLU (ONNX), Text Emotion Classifier, RapidOCR |
+| **Neural Intelligence** | Sber GigaChat API, DeepSeek API, OpenAI API, Gemini API, RouterAI (Image & Music Models: Gemini Nano Banana 2.1, Lyria 3 Pro Preview), JointNLU (ONNX), Text Emotion Classifier, RapidOCR |
 | **Voice & Audio** | Vosk STT, Piper Neural TTS (INT8 ONNX), DirectML Provider, Volume Ducker, Orthoepic Normalizer |
 | **Video & Streaming** | TorrServer Engine, VLC Player Controller, YouTube Data API |
 | **Network Clients & VPN** | Browsec, Happ GUI, Sota Connect, WireGuard, V2Ray / Xray, Zapret (WinWS) |
@@ -147,10 +149,12 @@ This project is licensed under the **[CC BY-NC-ND 4.0](https://creativecommons.o
 * **Фильтр разговоров в играх и Discord:** Архитектура Prefix Gate и анализ связности речи отсекают реплики, сказанные в войс-чат тиммейтам, предотвращая случайные вмешательства ассистента.
 * **Биометрия голоса (Speaker Verification):** Идентификация тембра владельца, отсекающая посторонние голоса и звуки из колонок.
 
-### 🎨 Студия Акиры и динамический выбор нейросетей
+### 🎨 Студия Акиры, генерация медиа и выбор нейросетей
 * **Интерактивное рабочее пространство:** Современный интерфейс на PyQt6 с боковой шторкой истории диалогов, нейросетевой генерацией названий чатов и быстрым управлением сессиями.
+* **Генерация артов и иллюстраций:** Создание изображений по текстовому промпту (Text-to-Image) и на основе прикреплённого кадра (Image-to-Image) через RouterAI с 60 FPS эффектом «цифрового эфира», сканирующей анимацией проявления и карточкой просмотра с функциями копирования и сохранения.
+* **Нейросетевая генерация музыки:** Создание 48 kHz стереокомпозиций с живым волновым эквалайзером в цвет текущей эмоции Акиры, встроенным интерактивным мини-плеером с перемоткой по аудиоволне и экспортом в MP3.
 * **Парящий статус размышлений с бегущей волной:** Анимированный статус размышлений без рамочек, меняющий цвет градиента в тон текущей эмоции Акиры.
-* **Мульти-LLM ядро:** Возможность переключения между GigaChat, DeepSeek, OpenAI и Gemini для решения аналитических, кодерских и творческих задач.
+* **Мульти-LLM ядро:** Возможность переключения между GigaChat, DeepSeek, OpenAI, Gemini и RouterAI для решения аналитических, кодерских и творческих задач.
 
 ### 🎬 Торрент-кинотеатр и мультимедиа
 * **Потоковый просмотр торрентов:** Воспроизведение фильмов и сериалов через TorrServer без необходимости предварительного скачивания файлов на диск.
@@ -214,7 +218,7 @@ flowchart TD
 
 | Категория | Сервисы и модули |
 | --- | --- |
-| **Нейросетевой интеллект** | Sber GigaChat API, DeepSeek API, OpenAI API, Gemini API, JointNLU (ONNX), Text Emotion Classifier, RapidOCR |
+| **Нейросетевой интеллект** | Sber GigaChat API, DeepSeek API, OpenAI API, Gemini API, RouterAI (Генерация изображений и музыки: Gemini Nano Banana 2.1, Lyria 3 Pro Preview), JointNLU (ONNX), Text Emotion Classifier, RapidOCR |
 | **Голос и синтез** | Vosk STT, Piper Neural TTS (INT8 ONNX), DirectML Provider, Volume Ducker, Orthoepic Normalizer |
 | **Видео и стриминг** | Движок TorrServer, контроллер плеера VLC, YouTube Data API |
 | **Сетевые клиенты и VPN** | Browsec, Happ GUI, Sota Connect, WireGuard, V2Ray / Xray, Zapret (WinWS) |
