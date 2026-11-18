@@ -1,24 +1,24 @@
 import inspect
 
-_orig_findsource = inspect.findsource
+if not getattr(inspect.findsource, "_is_safe", False):
+    _orig_findsource = inspect.findsource
+    def _safe_findsource(obj):
+        try:
+            return _orig_findsource(obj)
+        except Exception:
+            return (["def stub():\n", "    pass\n"], 0)
+    _safe_findsource._is_safe = True
+    inspect.findsource = _safe_findsource
 
-def _safe_findsource(obj):
-    try:
-        return _orig_findsource(obj)
-    except Exception:
-        return (["def stub():\n", "    pass\n"], 0)
-
-inspect.findsource = _safe_findsource
-
-_orig_getsource = inspect.getsource
-
-def _safe_getsource(obj):
-    try:
-        return _orig_getsource(obj)
-    except Exception:
-        return "def stub():\n    pass\n"
-
-inspect.getsource = _safe_getsource
+if not getattr(inspect.getsource, "_is_safe", False):
+    _orig_getsource = inspect.getsource
+    def _safe_getsource(obj):
+        try:
+            return _orig_getsource(obj)
+        except Exception:
+            return "def stub():\n    pass\n"
+    _safe_getsource._is_safe = True
+    inspect.getsource = _safe_getsource
 
 import os
 import sys
@@ -28,19 +28,6 @@ app_dir = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, 'frozen
 for p in (app_dir, os.path.join(app_dir, "_internal")):
     if os.path.exists(p) and p not in sys.path:
         sys.path.insert(0, p)
-
-# Защита от сбоев проверки версий зависимостей в скомпилированном/standalone виде
-try:
-    import importlib.metadata
-    _orig_metadata_version = importlib.metadata.version
-    def _safe_metadata_version(pkg_name: str) -> str:
-        try:
-            return _orig_metadata_version(pkg_name)
-        except Exception:
-            return "999.999.999"
-    importlib.metadata.version = _safe_metadata_version
-except Exception:
-    pass
 
 # Логирование критических ошибок запуска в crash.log и нативное диалоговое окно Windows
 def _global_exception_handler(exc_type, exc_value, exc_traceback):
