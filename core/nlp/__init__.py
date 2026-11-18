@@ -3,7 +3,6 @@ import sys
 # 1. Прямые импорты из новых вложенных пакетов
 from core.nlp.parser import command_parser
 from core.nlp.parser import nlu
-from core.nlp.parser import slot_filler
 from core.nlp.parser import title_normalizer
 
 from core.nlp.generative import llm_provider
@@ -19,7 +18,6 @@ from core.nlp.emotion import text_emotion_classifier
 # 2. Мост в sys.modules для поддержки старых путей (from core.nlp.command_parser import ...)
 sys.modules['core.nlp.command_parser'] = command_parser
 sys.modules['core.nlp.nlu'] = nlu
-sys.modules['core.nlp.slot_filler'] = slot_filler
 sys.modules['core.nlp.title_normalizer'] = title_normalizer
 
 sys.modules['core.nlp.llm_provider'] = llm_provider
@@ -31,6 +29,13 @@ sys.modules['core.nlp.asr_corrector'] = asr_corrector
 sys.modules['core.nlp.speaker_verifier'] = speaker_verifier
 
 sys.modules['core.nlp.text_emotion_classifier'] = text_emotion_classifier
+
+def __getattr__(name):
+    if name == "slot_filler":
+        from core.nlp.parser import slot_filler
+        sys.modules['core.nlp.slot_filler'] = slot_filler
+        return slot_filler
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
 # 3. Прямой экспорт ключевых классов для импорта из core.nlp
 from core.nlp.parser.command_parser import CommandParser

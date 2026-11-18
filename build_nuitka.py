@@ -277,6 +277,25 @@ def clean_distribution():
     print(f"[Cleanup]: Удалено {deleted_dirs} каталогов и {deleted_files} dev-файлов.")
     print(f"[Cleanup]: Итоговое число компонентов для WiX: {total_files} (лимит MSI: 65536).")
 
+def apply_runtime_patches():
+    step("3.2. Применение патчей стабильности рантайма (PyTorch / Transformers)")
+    target_torch_dist = os.path.join(OUTPUT_APP_DIR, "torch", "distributed", "__init__.py")
+    if os.path.exists(target_torch_dist):
+        try:
+            with open(target_torch_dist, "r", encoding="utf-8") as f:
+                content = f.read()
+            old_str = 'if is_available() and not torch._C._c10d_init():\n    raise RuntimeError("Failed to initialize torch.distributed")'
+            new_str = 'if is_available() and not hasattr(getattr(torch._C, "_distributed_c10d", None), "GradBucket"):\n    if not torch._C._c10d_init():\n        raise RuntimeError("Failed to initialize torch.distributed")'
+            if old_str in content:
+                content = content.replace(old_str, new_str)
+                with open(target_torch_dist, "w", encoding="utf-8") as f:
+                    f.write(content)
+                print("[Patch]: Успешно пропатчен torch.distributed для предотвращения GradBucket crash.")
+            else:
+                print("[Patch]: torch.distributed уже пропатчен или не требует изменений.")
+        except Exception as e:
+            print(f"[Patch Warning]: Не удалось пропатчить torch.distributed: {e}")
+
 def build_msi():
     step("4. Сборка установщика .msi через WiX Toolset")
     wxs_file = os.path.join(BASE_DIR, "Package.wxs")
@@ -305,6 +324,7 @@ def main():
     run_nuitka()
     copy_runtime_assets()
     clean_distribution()
+    apply_runtime_patches()
     build_msi()
 
 if __name__ == "__main__":

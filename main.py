@@ -23,11 +23,56 @@ if not getattr(inspect.getsource, "_is_safe", False):
 import os
 import sys
 
+# Настройка переменных окружения до импорта тяжелых ML-библиотек
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "1"
+
 # Гарантируем, что папка приложения и _internal находятся в sys.path
 app_dir = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, 'frozen', False) else __file__))
 for p in (app_dir, os.path.join(app_dir, "_internal")):
     if os.path.exists(p) and p not in sys.path:
         sys.path.insert(0, p)
+
+# Подключение DLL PyTorch в standalone-режиме
+torch_lib = os.path.join(app_dir, "torch", "lib")
+if os.path.isdir(torch_lib):
+    try:
+        os.add_dll_directory(torch_lib)
+    except Exception:
+        pass
+    os.environ["PATH"] = torch_lib + os.pathsep + os.environ.get("PATH", "")
+
+# Безопасный fallback для проверки версий зависимостей (transformers dependency_versions_check)
+try:
+    import importlib.metadata
+    if not getattr(importlib.metadata.version, "_is_safe", False):
+        _orig_metadata_version = importlib.metadata.version
+        def _safe_metadata_version(pkg_name: str) -> str:
+            try:
+                return _orig_metadata_version(pkg_name)
+            except Exception:
+                return "999.999.999"
+        _safe_metadata_version._is_safe = True
+        importlib.metadata.version = _safe_metadata_version
+except Exception:
+    pass
+
+# Предотвращение падения PyTorch C++ (GradBucket already defined) при повторной инициализации c10d
+try:
+    import torch._C
+    if hasattr(torch._C, "_c10d_init"):
+        _orig_c10d = torch._C._c10d_init
+        def _safe_c10d_init(*args, **kwargs):
+            if hasattr(getattr(torch._C, "_distributed_c10d", None), "GradBucket"):
+                return True
+            return _orig_c10d(*args, **kwargs)
+        torch._C._c10d_init = _safe_c10d_init
+except Exception:
+    pass
 
 # Логирование критических ошибок запуска в crash.log и нативное диалоговое окно Windows
 def _global_exception_handler(exc_type, exc_value, exc_traceback):
