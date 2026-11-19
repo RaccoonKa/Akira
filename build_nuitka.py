@@ -310,8 +310,10 @@ def apply_runtime_patches():
         try:
             with open(target_nested, "r", encoding="utf-8") as f:
                 content = f.read()
-            if "import torch\n" in content and "import torch.autograd\n" not in content:
-                content = content.replace("import torch\n", "import torch\nimport torch.autograd\n", 1)
+            if "_AutogradFunction" not in content:
+                content = content.replace("import torch\n", "import torch\nfrom torch.autograd import Function as _AutogradFunction\n", 1)
+                content = content.replace("class ViewBufferFromNested(torch.autograd.Function):", "class ViewBufferFromNested(_AutogradFunction):")
+                content = content.replace("class ViewNestedFromBuffer(torch.autograd.Function):", "class ViewNestedFromBuffer(_AutogradFunction):")
                 with open(target_nested, "w", encoding="utf-8") as f:
                     f.write(content)
                 print("[Patch]: Успешно пропатчен torch.nested для предотвращения circular import.")
@@ -319,6 +321,24 @@ def apply_runtime_patches():
                 print("[Patch]: torch.nested уже пропатчен или не требует изменений.")
         except Exception as e:
             print(f"[Patch Warning]: Не удалось пропатчить torch.nested: {e}")
+
+    # 3. Предварительная привязка autograd в torch.__init__ до импорта подпакетов
+    target_torch_init = os.path.join(OUTPUT_APP_DIR, "torch", "__init__.py")
+    if os.path.exists(target_torch_init):
+        try:
+            with open(target_torch_init, "r", encoding="utf-8") as f:
+                content = f.read()
+            old_torch_init = "set_grad_enabled as set_grad_enabled,\n)\n\nfrom torch import ("
+            new_torch_init = "set_grad_enabled as set_grad_enabled,\n)\n\nimport torch.autograd as _explicit_autograd\nif __name__ in sys.modules:\n    sys.modules[__name__].autograd = _explicit_autograd\n\nfrom torch import ("
+            if old_torch_init in content:
+                content = content.replace(old_torch_init, new_torch_init, 1)
+                with open(target_torch_init, "w", encoding="utf-8") as f:
+                    f.write(content)
+                print("[Patch]: Успешно пропатчен torch.__init__ для предварительной привязки autograd.")
+            else:
+                print("[Patch]: torch.__init__ уже пропатчен или не требует изменений.")
+        except Exception as e:
+            print(f"[Patch Warning]: Не удалось пропатчить torch.__init__: {e}")
 
 def build_msi():
     step("4. Сборка установщика .msi через WiX Toolset")
