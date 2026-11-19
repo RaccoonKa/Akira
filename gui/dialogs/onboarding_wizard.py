@@ -1065,7 +1065,7 @@ class OnboardingWizard(QDialog):
         row_hint.addWidget(badge_info, 0, Qt.AlignmentFlag.AlignTop)
 
         self.step2_hint = QLabel(
-            "Этот шаг можно пропустить — подключить GigaChat или модели RouterAI (DeepSeek, Claude, Gemini) "
+            "Этот шаг можно пропустить — подключить GigaChat или модели RouterAI (DeepSeek, Gemini Neon, Gemini Carbon) "
             "можно в любой момент в параметрах системы."
         )
         self.step2_hint.setObjectName("WizardSubDesc")

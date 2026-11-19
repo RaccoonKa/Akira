@@ -293,7 +293,7 @@ class RouterAiAuthDialog(QDialog):
             f'<div style="line-height: 145%;">'
             f'Войди через {_hl("Яндекс ID")}, {_hl("VK ID")} или почту — '
             f'Акира сама получит ключ и откроет в Студии модели '
-            f'{_hl("DeepSeek")}, {_hl("Claude Opus")} и {_hl("Gemini Carbon")}.'
+            f'{_hl("DeepSeek")}, {_hl("Gemini Neon")} и {_hl("Gemini Carbon")}.'
             f'</div>'
         )
         desc_lbl.setWordWrap(True)

@@ -108,7 +108,7 @@ class LLMProvider:
     Универсальный гибридный провайдер Акиры:
     - hikari (gigachat): GigaChat Сбера (бесплатно, базовый режим)
     - kasumi (deepseek): DeepSeek V4.1 Flash через RouterAI (дёшево, быстро, умно)
-    - ginga (opus): Claude Opus 5.5 через RouterAI (мощный инженер и живой стиль)
+    - ginga (neon): Gemini 4 Neon через RouterAI (высокая скорость, код и живой стиль)
     - uchuu (carbon): Gemini 4 Carbon через RouterAI (тяжёлая артиллерия для сложных задач)
     """
 
@@ -116,7 +116,7 @@ class LLMProvider:
 
     ROUTERAI_MODELS = {
         "kasumi": "deepseek/deepseek-v4.1-flash",
-        "ginga": "anthropic/claude-opus-5.5",
+        "ginga": "google/gemini-4-neon",
         "uchuu": "google/gemini-4-carbon",
     }
 
@@ -125,6 +125,8 @@ class LLMProvider:
         "hikari": "hikari",
         "deepseek": "kasumi",
         "kasumi": "kasumi",
+        "neon": "ginga",
+        "gemini-neon": "ginga",
         "opus": "ginga",
         "claude": "ginga",
         "ginga": "ginga",
