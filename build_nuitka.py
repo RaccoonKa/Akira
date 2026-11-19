@@ -100,6 +100,7 @@ def run_nuitka():
         "--nofollow-import-to=librosa",
         "--nofollow-import-to=rapidocr_onnxruntime",
         "--nofollow-import-to=optimum",
+        "--nofollow-import-to=websockets",
         
         # Исключение тестовых и интерактивных пакетов
         "--noinclude-pytest-mode=nofollow",
@@ -329,7 +330,7 @@ def apply_runtime_patches():
             with open(target_torch_init, "r", encoding="utf-8") as f:
                 content = f.read()
             old_torch_init = "set_grad_enabled as set_grad_enabled,\n)\n\nfrom torch import ("
-            new_torch_init = 'set_grad_enabled as set_grad_enabled,\n)\n\nfor _mod in ("autograd", "nn", "optim", "nested"):\n    try:\n        _m = importlib.import_module(f"torch.{_mod}")\n        if __name__ in sys.modules:\n            setattr(sys.modules[__name__], _mod, _m)\n    except Exception:\n        pass\n\nfrom torch import ('
+            new_torch_init = 'set_grad_enabled as set_grad_enabled,\n)\n\ntry:\n    for _i, _h in enumerate(sys.path_hooks):\n        if "FileFinder" in str(_h):\n            sys.path_hooks.insert(0, sys.path_hooks.pop(_i))\n            break\n    sys.path_importer_cache.clear()\nexcept Exception:\n    pass\n\nfor _mod in ("autograd", "nn", "optim", "nested"):\n    try:\n        _m = importlib.import_module(f"torch.{_mod}")\n        if __name__ in sys.modules:\n            setattr(sys.modules[__name__], _mod, _m)\n    except Exception:\n        pass\n\nfrom torch import ('
             if old_torch_init in content:
                 content = content.replace(old_torch_init, new_torch_init, 1)
                 with open(target_torch_init, "w", encoding="utf-8") as f:

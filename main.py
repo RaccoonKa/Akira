@@ -37,6 +37,17 @@ for p in (app_dir, os.path.join(app_dir, "_internal")):
     if os.path.exists(p) and p not in sys.path:
         sys.path.insert(0, p)
 
+# Приоритет стандартного файлового загрузчика (FileFinder) перед хуками Nuitka
+# Это необходимо для правильной загрузки распакованных подмодулей внешних библиотек (websockets, torch и др.)
+try:
+    for _i, _h in enumerate(sys.path_hooks):
+        if "FileFinder" in str(_h):
+            sys.path_hooks.insert(0, sys.path_hooks.pop(_i))
+            break
+    sys.path_importer_cache.clear()
+except Exception:
+    pass
+
 # Подключение DLL PyTorch в standalone-режиме
 torch_lib = os.path.join(app_dir, "torch", "lib")
 if os.path.isdir(torch_lib):
