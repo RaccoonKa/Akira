@@ -13,7 +13,30 @@ DIST_DIR = os.path.join(BASE_DIR, "dist")
 OUTPUT_APP_DIR = os.path.join(DIST_DIR, "Akira")
 MAIN_SCRIPT = os.path.join(BASE_DIR, "main.py")
 ICON_PATH = os.path.join(BASE_DIR, "assets", "icon", "ico", "akira_icon.ico")
-PYTHON_EXE = sys.executable
+
+def _resolve_python():
+    # 1. Если в текущем интерпретаторе есть модуль nuitka, используем его
+    try:
+        import nuitka
+        return sys.executable
+    except ImportError:
+        pass
+
+    # 2. Проверяем виртуальное окружение .venv проекта
+    project_venv = os.path.join(BASE_DIR, ".venv", "Scripts", "python.exe")
+    if os.path.isfile(project_venv):
+        try:
+            res = subprocess.run([project_venv, "-c", "import nuitka"], capture_output=True)
+            if res.returncode == 0:
+                print(f"[Nuitka Env]: Используется Python с Nuitka из .venv проекта:\n             {project_venv}")
+                return project_venv
+        except Exception:
+            pass
+
+    # 3. Fallback на sys.executable
+    return sys.executable
+
+PYTHON_EXE = _resolve_python()
 
 def step(title: str):
     print("\n" + "=" * 67)
