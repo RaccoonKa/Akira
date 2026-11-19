@@ -322,23 +322,39 @@ def apply_runtime_patches():
         except Exception as e:
             print(f"[Patch Warning]: Не удалось пропатчить torch.nested: {e}")
 
-    # 3. Предварительная привязка autograd в torch.__init__ до импорта подпакетов
+    # 3. Предварительная привязка core-модулей в torch.__init__ до импорта подпакетов
     target_torch_init = os.path.join(OUTPUT_APP_DIR, "torch", "__init__.py")
     if os.path.exists(target_torch_init):
         try:
             with open(target_torch_init, "r", encoding="utf-8") as f:
                 content = f.read()
             old_torch_init = "set_grad_enabled as set_grad_enabled,\n)\n\nfrom torch import ("
-            new_torch_init = "set_grad_enabled as set_grad_enabled,\n)\n\nimport torch.autograd as _explicit_autograd\nif __name__ in sys.modules:\n    sys.modules[__name__].autograd = _explicit_autograd\n\nfrom torch import ("
+            new_torch_init = 'set_grad_enabled as set_grad_enabled,\n)\n\nfor _mod in ("autograd", "nn", "optim", "nested"):\n    try:\n        _m = importlib.import_module(f"torch.{_mod}")\n        if __name__ in sys.modules:\n            setattr(sys.modules[__name__], _mod, _m)\n    except Exception:\n        pass\n\nfrom torch import ('
             if old_torch_init in content:
                 content = content.replace(old_torch_init, new_torch_init, 1)
                 with open(target_torch_init, "w", encoding="utf-8") as f:
                     f.write(content)
-                print("[Patch]: Успешно пропатчен torch.__init__ для предварительной привязки autograd.")
+                print("[Patch]: Успешно пропатчен torch.__init__ для предварительной привязки autograd/nn/optim.")
             else:
                 print("[Patch]: torch.__init__ уже пропатчен или не требует изменений.")
         except Exception as e:
             print(f"[Patch Warning]: Не удалось пропатчить torch.__init__: {e}")
+
+    # 4. Защита от циклического импорта в torch.optim (AttributeError: nn)
+    target_optim = os.path.join(OUTPUT_APP_DIR, "torch", "optim", "optimizer.py")
+    if os.path.exists(target_optim):
+        try:
+            with open(target_optim, "r", encoding="utf-8") as f:
+                content = f.read()
+            if "import torch.nn.parameter" not in content:
+                content = content.replace("import torch\n", "import torch\nimport torch.nn.parameter\n", 1)
+                with open(target_optim, "w", encoding="utf-8") as f:
+                    f.write(content)
+                print("[Patch]: Успешно пропатчен torch.optim для предварительного импорта nn.parameter.")
+            else:
+                print("[Patch]: torch.optim уже пропатчен или не требует изменений.")
+        except Exception as e:
+            print(f"[Patch Warning]: Не удалось пропатчить torch.optim: {e}")
 
 def build_msi():
     step("4. Сборка установщика .msi через WiX Toolset")
