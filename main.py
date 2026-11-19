@@ -61,22 +61,87 @@ try:
 except Exception:
     pass
 
+# Защита unittest и unittest.mock в standalone-сборках (требуется для PyTorch)
+try:
+    import unittest
+    u_dir = os.path.join(app_dir, "unittest")
+    if os.path.isdir(u_dir):
+        if not hasattr(unittest, "__path__"):
+            unittest.__path__ = [u_dir]
+        elif u_dir not in unittest.__path__:
+            unittest.__path__.append(u_dir)
+    import unittest.mock
+except Exception:
+    pass
+
+import types as _types_mod
+if "unittest" not in sys.modules:
+    sys.modules["unittest"] = _types_mod.ModuleType("unittest")
+if not hasattr(sys.modules["unittest"], "TestCase"):
+    sys.modules["unittest"].TestCase = type("TestCase", (), {})
+
+if "unittest.mock" not in sys.modules:
+    _mock_loaded = False
+    _mock_file = os.path.join(app_dir, "unittest", "mock.py")
+    if os.path.isfile(_mock_file):
+        try:
+            import importlib.util
+            _spec = importlib.util.spec_from_file_location("unittest.mock", _mock_file)
+            if _spec and _spec.loader:
+                _mock_mod = importlib.util.module_from_spec(_spec)
+                sys.modules["unittest.mock"] = _mock_mod
+                sys.modules["unittest"].mock = _mock_mod
+                _spec.loader.exec_module(_mock_mod)
+                _mock_loaded = True
+        except Exception:
+            _mock_loaded = False
+    if not _mock_loaded:
+        _dummy_mock = _types_mod.ModuleType("unittest.mock")
+        _dummy_mock.patch = lambda *args, **kwargs: (lambda f: f)
+        class _DummyMockObj:
+            def __init__(self, *args, **kwargs): pass
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def __getattr__(self, name): return self
+        _dummy_mock.patch.object = lambda *args, **kwargs: _DummyMockObj()
+        _dummy_mock.Mock = _DummyMockObj
+        _dummy_mock.MagicMock = _DummyMockObj
+        _dummy_mock.AsyncMock = _DummyMockObj
+        _dummy_mock.NonCallableMock = _DummyMockObj
+        sys.modules["unittest.mock"] = _dummy_mock
+        sys.modules["unittest"].mock = _dummy_mock
+else:
+    if not hasattr(sys.modules["unittest"], "mock"):
+        sys.modules["unittest"].mock = sys.modules["unittest.mock"]
+
 # Предварительная инициализация PyTorch для исключения циклических импортов в подмодулях
 try:
     import torch
 except Exception:
     pass
 
-# Защита от отсутствия unittest в standalone-сборках (требуется для torch.utils._config_module)
-try:
-    import unittest
-except ImportError:
-    import types
-    dummy_unittest = types.ModuleType("unittest")
-    dummy_unittest.TestCase = type("TestCase", (), {})
-    dummy_unittest.mock = types.ModuleType("mock")
-    sys.modules["unittest"] = dummy_unittest
-    sys.modules["unittest.mock"] = dummy_unittest.mock
+# Мост для устаревших путей импорта модулей (core.nlp.asr_corrector)
+if "core.nlp.asr_corrector" not in sys.modules:
+    class _LazyASRCorrector:
+        def __init__(self, *args, **kwargs):
+            self._inst = None
+        def __getattr__(self, name):
+            if self._inst is None:
+                from core.nlp.speech.asr_corrector import ASRCorrector
+                self._inst = ASRCorrector()
+            return getattr(self._inst, name)
+        def correct(self, text):
+            try:
+                from core.nlp.speech.asr_corrector import ASRCorrector
+                if self._inst is None:
+                    self._inst = ASRCorrector()
+                return self._inst.correct(text)
+            except Exception:
+                return text
+
+    _dummy_asr_mod = _types_mod.ModuleType("core.nlp.asr_corrector")
+    _dummy_asr_mod.ASRCorrector = _LazyASRCorrector
+    sys.modules['core.nlp.asr_corrector'] = _dummy_asr_mod
 
 # Логирование критических ошибок запуска в crash.log и нативное диалоговое окно Windows
 def _global_exception_handler(exc_type, exc_value, exc_traceback):

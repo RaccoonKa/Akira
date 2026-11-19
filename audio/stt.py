@@ -8,7 +8,7 @@ import numpy as np
 import sounddevice as sd
 import vosk
 from PyQt6.QtCore import QThread, pyqtSignal
-from core.nlp.asr_corrector import ASRCorrector
+from core.nlp.speech.asr_corrector import ASRCorrector
 from core.utils.config import load_config, get_resource_path
 from core.system.actions import ym_manager
 

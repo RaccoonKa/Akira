@@ -356,6 +356,59 @@ def apply_runtime_patches():
         except Exception as e:
             print(f"[Patch Warning]: Не удалось пропатчить torch.optim: {e}")
 
+    # 5. Защита torch._guards от отсутствия unittest.mock
+    target_guards = os.path.join(OUTPUT_APP_DIR, "torch", "_guards.py")
+    if os.path.exists(target_guards):
+        try:
+            with open(target_guards, "r", encoding="utf-8") as f:
+                content = f.read()
+            old_mock = "import unittest.mock"
+            new_mock = (
+                "try:\n"
+                "    import unittest.mock\n"
+                "except ImportError:\n"
+                "    import types\n"
+                "    _dummy_mock = types.ModuleType('unittest.mock')\n"
+                "    _dummy_mock.patch = lambda *a, **kw: (lambda f: f)\n"
+                "    class _DummyMockObj:\n"
+                "        def __init__(self, *a, **kw): pass\n"
+                "        def __enter__(self): return self\n"
+                "        def __exit__(self, *a): pass\n"
+                "        def __getattr__(self, name): return self\n"
+                "    _dummy_mock.patch.object = lambda *a, **kw: _DummyMockObj()\n"
+                "    _dummy_mock.Mock = _DummyMockObj\n"
+                "    _dummy_mock.MagicMock = _DummyMockObj\n"
+                "    sys.modules['unittest.mock'] = _dummy_mock\n"
+                "    if 'unittest' in sys.modules:\n"
+                "        sys.modules['unittest'].mock = _dummy_mock\n"
+                "    import unittest.mock"
+            )
+            if old_mock in content and "class _DummyMockObj:" not in content:
+                content = content.replace(old_mock, new_mock, 1)
+                with open(target_guards, "w", encoding="utf-8") as f:
+                    f.write(content)
+                print("[Patch]: Успешно пропатчен torch._guards для безопасного импорта unittest.mock.")
+            else:
+                print("[Patch]: torch._guards уже пропатчен или не требует изменений.")
+        except Exception as e:
+            print(f"[Patch Warning]: Не удалось пропатчить torch._guards: {e}")
+
+    # 6. Патч unittest/__init__.py для автоматического экспорта mock
+    target_unittest_init = os.path.join(OUTPUT_APP_DIR, "unittest", "__init__.py")
+    if os.path.exists(target_unittest_init):
+        try:
+            with open(target_unittest_init, "r", encoding="utf-8") as f:
+                content = f.read()
+            if "from . import mock" not in content:
+                content += "\ntry:\n    from . import mock\nexcept Exception:\n    pass\n"
+                with open(target_unittest_init, "w", encoding="utf-8") as f:
+                    f.write(content)
+                print("[Patch]: Успешно пропатчен unittest.__init__ для автоэкспорта mock.")
+            else:
+                print("[Patch]: unittest.__init__ уже пропатчен или не требует изменений.")
+        except Exception as e:
+            print(f"[Patch Warning]: Не удалось пропатчить unittest.__init__: {e}")
+
 def build_msi():
     step("4. Сборка установщика .msi через WiX Toolset")
     wxs_file = os.path.join(BASE_DIR, "Package.wxs")

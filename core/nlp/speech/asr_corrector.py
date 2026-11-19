@@ -1,7 +1,4 @@
-import torch
 import onnxruntime as ort
-from transformers import AutoTokenizer
-from optimum.onnxruntime import ORTModelForSeq2SeqLM
 from core.utils.config import get_resource_path
 
 
@@ -9,6 +6,9 @@ class ASRCorrector:
     def __init__(self, model_dir: str = None):
         if model_dir is None:
             model_dir = get_resource_path("optimized_models", "corrector")
+
+        from transformers import AutoTokenizer
+        from optimum.onnxruntime import ORTModelForSeq2SeqLM
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_dir, local_files_only=True)
 
@@ -38,6 +38,7 @@ class ASRCorrector:
         max_tokens = min(20, max(5, word_count * 2))
 
         try:
+            import torch
             inputs = self.tokenizer(clean_text, return_tensors="pt")
             with torch.inference_mode():
                 outputs = self.model.generate(

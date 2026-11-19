@@ -4,7 +4,7 @@ import json
 import sounddevice as sd
 import vosk
 from core.utils.config import load_config
-from core.nlp.asr_corrector import ASRCorrector
+from core.nlp.speech.asr_corrector import ASRCorrector
 
 
 class SpeechListener:
