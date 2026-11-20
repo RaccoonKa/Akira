@@ -33,7 +33,12 @@ def get_hand_model_path():
             return p
 
     target_dir = os.path.join(candidate_dirs[0], "optimized_models", "hand_landmarker")
-    os.makedirs(target_dir, exist_ok=True)
+    try:
+        os.makedirs(target_dir, exist_ok=True)
+    except (PermissionError, OSError):
+        from core.utils.config import get_user_data_path
+        target_dir = get_user_data_path("models", "hand_landmarker")
+        os.makedirs(target_dir, exist_ok=True)
     model_path = os.path.join(target_dir, "hand_landmarker.task")
 
     url = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"

@@ -6,6 +6,12 @@ import hashlib
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.normpath(os.path.join(BASE_DIR, "..", ".."))
 
+# Автоматическая детекция автономного / скомпилированного режима (Nuitka, PyInstaller и др.)
+if getattr(sys, "frozen", False) or "__compiled__" in globals() or (
+    sys.executable and not os.path.basename(sys.executable).lower().startswith("python")
+):
+    sys.frozen = True
+
 if getattr(sys, 'frozen', False):
     APP_DIR = os.path.dirname(sys.executable)
     USER_DATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Akira")
@@ -33,6 +39,8 @@ def is_creator_key_valid() -> bool:
         os.path.join(USER_DATA_DIR, "creator.key"),
         os.path.join(CONFIG_DIR, "developer.key"),
         os.path.join(USER_DATA_DIR, "developer.key"),
+        os.path.join(APP_DIR, "creator.key"),
+        os.path.join(APP_DIR, "personal_data", "configs", "creator.key"),
         os.path.join(ROOT_DIR, "personal_data", "configs", "creator.key"),
         os.path.join(ROOT_DIR, "personal_data", "creator.key"),
     ]
@@ -119,8 +127,20 @@ def get_resource_path(*subpaths) -> str:
 
 
 def get_user_data_path(*subpaths) -> str:
+    global USER_DATA_DIR, CONFIG_DIR, CONFIG_FILE, CREATOR_KEY_FILE
     path = os.path.join(USER_DATA_DIR, *subpaths)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+    except (PermissionError, OSError):
+        USER_DATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Akira")
+        CONFIG_DIR = os.path.join(USER_DATA_DIR, "configs")
+        CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
+        CREATOR_KEY_FILE = os.path.join(CONFIG_DIR, "creator.key")
+        path = os.path.join(USER_DATA_DIR, *subpaths)
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+        except Exception:
+            pass
     return path
 
 
@@ -135,7 +155,10 @@ def _deep_merge(default: dict, custom: dict) -> dict:
 
 
 def load_config() -> dict:
-    os.makedirs(CONFIG_DIR, exist_ok=True)
+    try:
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+    except (PermissionError, OSError):
+        get_user_data_path("configs")
     cfg = None
 
     if os.path.exists(CONFIG_FILE):
@@ -166,6 +189,16 @@ def load_config() -> dict:
 
 
 def save_config(config_data: dict):
-    os.makedirs(CONFIG_DIR, exist_ok=True)
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(config_data, f, ensure_ascii=False, indent=4)
+    try:
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(config_data, f, ensure_ascii=False, indent=4)
+    except (PermissionError, OSError):
+        fallback_cfg_dir = get_user_data_path("configs")
+        fallback_cfg_file = os.path.join(fallback_cfg_dir, "config.json")
+        try:
+            os.makedirs(fallback_cfg_dir, exist_ok=True)
+            with open(fallback_cfg_file, "w", encoding="utf-8") as f:
+                json.dump(config_data, f, ensure_ascii=False, indent=4)
+        except Exception as e:
+            print(f"[Config Save Error]: {e}", flush=True)

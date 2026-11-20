@@ -113,7 +113,8 @@ class ZapretManager:
 
             cleaned.append(line_strip)
 
-        silent_bat_path = os.path.join(zapret_dir, "_akira_run.bat")
+        import tempfile
+        silent_bat_path = os.path.join(tempfile.gettempdir(), "_akira_zapret_run.bat")
         try:
             with open(silent_bat_path, "w", encoding="cp1251", errors="ignore") as f:
                 f.write("\n".join(cleaned))

@@ -3,17 +3,20 @@ import shutil
 import sqlite3
 import threading
 from datetime import datetime
+from core.utils.config import get_user_data_path
 
 
 def get_db_path() -> str:
-    """Возвращает фиксированный путь к БД внутри папки personal_data/sql проекта."""
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    data_dir = os.path.join(base_dir, "personal_data")
-    sql_dir = os.path.join(data_dir, "sql")
-    os.makedirs(sql_dir, exist_ok=True)
+    """Возвращает путь к БД внутри sql папки пользовательских данных."""
+    sql_dir = get_user_data_path("sql")
+    try:
+        os.makedirs(sql_dir, exist_ok=True)
+    except (PermissionError, OSError):
+        sql_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Akira", "sql")
+        os.makedirs(sql_dir, exist_ok=True)
 
     new_path = os.path.join(sql_dir, "studio_chats.db")
-    old_path = os.path.join(data_dir, "studio_chats.db")
+    old_path = get_user_data_path("studio_chats.db")
 
     if os.path.exists(old_path) and not os.path.exists(new_path):
         try:

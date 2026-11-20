@@ -33,7 +33,14 @@ class LoreRAG:
 
         # Папка под саму модель внутри optimized_models
         self.models_dir = get_resource_path("optimized_models", "lore_rag")
-        os.makedirs(self.models_dir, exist_ok=True)
+        try:
+            os.makedirs(self.models_dir, exist_ok=True)
+        except (PermissionError, OSError):
+            self.models_dir = get_user_data_path("models", "lore_rag")
+            try:
+                os.makedirs(self.models_dir, exist_ok=True)
+            except Exception:
+                pass
 
         embeddings_dir = get_user_data_path("embeddings")
         os.makedirs(embeddings_dir, exist_ok=True)

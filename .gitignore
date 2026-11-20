@@ -88,6 +88,7 @@ personal_data/sql/
 personal_data/embeddings/
 personal_data/generated/
 personal_data/sounds/
+personal_data/torrserver/
 personal_data/custom_alarm.wav
 personal_data/*.db
 personal_data/*.db-wal

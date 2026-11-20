@@ -23,6 +23,12 @@ if not getattr(inspect.getsource, "_is_safe", False):
 import os
 import sys
 
+# Гарантируем корректное определение автономного / скомпилированного режима (Nuitka, PyInstaller и др.)
+if getattr(sys, "frozen", False) or "__compiled__" in globals() or (
+    sys.executable and not os.path.basename(sys.executable).lower().startswith("python")
+):
+    sys.frozen = True
+
 # Настройка переменных окружения до импорта тяжелых ML-библиотек
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 os.environ["HF_HUB_OFFLINE"] = "1"

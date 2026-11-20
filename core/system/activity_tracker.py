@@ -43,8 +43,12 @@ class ActivityTracker:
             return
         self._initialized = True
 
-        self.activity_dir = get_user_data_path("activity")
-        os.makedirs(self.activity_dir, exist_ok=True)
+        try:
+            self.activity_dir = get_user_data_path("activity")
+            os.makedirs(self.activity_dir, exist_ok=True)
+        except (PermissionError, OSError):
+            self.activity_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Akira", "activity")
+            os.makedirs(self.activity_dir, exist_ok=True)
         self.file_path = os.path.join(self.activity_dir, "daily_activity.json")
 
         self.data_lock = threading.Lock()
