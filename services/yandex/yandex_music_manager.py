@@ -20,6 +20,9 @@ for p in vlc_paths:
         except Exception:
             pass
         os.environ["PATH"] = p + os.pathsep + os.environ.get("PATH", "")
+        plugins_dir = os.path.join(p, "plugins")
+        if os.path.exists(plugins_dir):
+            os.environ["VLC_PLUGIN_PATH"] = plugins_dir
 
 try:
     import vlc
@@ -34,9 +37,25 @@ from yandex_music import Client
 class YandexMusicManager:
     def __init__(self):
         self.client = None
+        self.normal_volume = 100
+        self.is_ducked = False
         if HAS_VLC:
-            self.vlc_instance = vlc.Instance('--no-video', '--quiet')
-            self.player = self.vlc_instance.media_player_new()
+            try:
+                self.vlc_instance = vlc.Instance(
+                    '--no-video',
+                    '--quiet',
+                    '--network-caching=3000',
+                    '--no-qt-privacy-ask',
+                    '--no-qt-updates-notif',
+                    '--no-qt-error-dialogs'
+                )
+                self.player = self.vlc_instance.media_player_new()
+                if self.player:
+                    self.player.audio_set_volume(self.normal_volume)
+            except Exception as e:
+                print(f"[YandexMusic Init VLC Warning]: {e}")
+                self.vlc_instance = None
+                self.player = None
         else:
             self.vlc_instance = None
             self.player = None
@@ -47,8 +66,6 @@ class YandexMusicManager:
         self.watcher_thread = None
         self.stop_watcher = False
         self.is_transitioning = False
-        self.normal_volume = 100
-        self.is_ducked = False
 
     def _extract_pure_token(self, raw_token):
         if not raw_token:
@@ -82,8 +99,13 @@ class YandexMusicManager:
 
     def _get_direct_stream_url(self, track):
         try:
-            if not hasattr(track, 'get_download_info') and hasattr(track, 'fetch_track'):
+            if hasattr(track, 'track') and track.track:
+                track = track.track
+            if hasattr(track, 'fetch_track') and not hasattr(track, 'get_download_info'):
                 track = track.fetch_track()
+
+            if not hasattr(track, 'get_download_info'):
+                return None
 
             info_list = track.get_download_info()
             if not info_list:
@@ -91,15 +113,19 @@ class YandexMusicManager:
             info_sorted = sorted(info_list, key=lambda x: getattr(x, 'bitrate_in_kbps', 0), reverse=True)
             best_info = info_sorted[0]
 
-            if hasattr(best_info, 'get_direct_url') and callable(getattr(best_info, 'get_direct_url')):
+            # 1. Официальный метод yandex_music с валидной криптоподписью
+            if hasattr(best_info, 'get_direct_link') and callable(getattr(best_info, 'get_direct_link')):
                 try:
-                    return best_info.get_direct_url()
-                except Exception:
-                    pass
+                    direct = best_info.get_direct_link()
+                    if direct:
+                        return direct
+                except Exception as e:
+                    print(f"[YandexMusic get_direct_link Warning]: {e}")
 
-            if hasattr(best_info, 'direct_url') and best_info.direct_url:
-                return best_info.direct_url
+            if hasattr(best_info, 'direct_link') and best_info.direct_link:
+                return best_info.direct_link
 
+            # 2. Ручной расчет по протоколу Yandex с валидным SIGN_SALT
             download_url = getattr(best_info, 'download_info_url', None)
             if download_url:
                 resp = requests.get(download_url, timeout=5)
@@ -111,7 +137,8 @@ class YandexMusicManager:
                     s = xml_root.findtext('s')
 
                     if host and path and ts and s:
-                        secret = f"XGR{path[1:]}{s}"
+                        sign_salt = "XGRlBW9FXlekgbPrRHuSiA"
+                        secret = f"{sign_salt}{path[1:]}{s}"
                         md5_hash = hashlib.md5(secret.encode('utf-8')).hexdigest()
                         return f"https://{host}/get-mp3/{md5_hash}/{ts}{path}"
         except Exception as e:
@@ -124,7 +151,9 @@ class YandexMusicManager:
             return False
 
         try:
-            if not hasattr(track, 'get_download_info') and hasattr(track, 'fetch_track'):
+            if hasattr(track, 'track') and track.track:
+                track = track.track
+            if hasattr(track, 'fetch_track') and not hasattr(track, 'get_download_info'):
                 track = track.fetch_track()
 
             stream_url = self._get_direct_stream_url(track)
@@ -139,8 +168,10 @@ class YandexMusicManager:
             self.player.stop()
             media = self.vlc_instance.media_new(stream_url)
             self.player.set_media(media)
+            self.player.audio_set_volume(self.normal_volume)
             self.player.play()
-            time.sleep(0.5)
+            time.sleep(0.4)
+            self.player.audio_set_volume(self.normal_volume)
             self.is_transitioning = False
             return True
         except Exception as e:
@@ -148,41 +179,72 @@ class YandexMusicManager:
             self.is_transitioning = False
             return False
 
-    def _ensure_vlc(self) -> bool:
+    def _ensure_vlc(self):
+        """
+        Гарантирует доступность VLC:
+        - Если VLC не установлен, запускает тихую установку и открывает плеер для первичной настройки пользователем.
+        - Если VLC установлен, но ещё ни разу не настраивался (нет vlcrc), открывает плеер для галочек сети.
+        Возвращает: True (готов), 'SETUP_NEEDED' (открыт для настройки пользователем) или 'DOWNLOAD_NEEDED' (сбой).
+        """
         global HAS_VLC, vlc
-        if HAS_VLC and self.player:
-            return True
-
         from services.torrent.vlc_player import vlc_player
 
-        if not HAS_VLC:
-            if vlc_player.is_available() or vlc_player.install_silent():
-                vlc_exe = vlc_player.vlc_path or vlc_player._find_vlc()
-                if vlc_exe:
-                    vlc_dir = os.path.dirname(vlc_exe)
-                    try:
-                        os.add_dll_directory(vlc_dir)
-                    except Exception:
-                        pass
-                    os.environ["PATH"] = vlc_dir + os.pathsep + os.environ.get("PATH", "")
-                try:
-                    import vlc as _vlc
-                    vlc = _vlc
-                    HAS_VLC = True
-                    self.vlc_instance = vlc.Instance('--no-video', '--quiet')
-                    self.player = self.vlc_instance.media_player_new()
-                except Exception as e:
-                    print(f"[VLC Load Error]: {e}")
+        if not vlc_player.is_available():
+            installed = vlc_player.install_silent()
+            if installed:
+                vlc_player.open_for_setup()
+                return "SETUP_NEEDED"
+            return "DOWNLOAD_NEEDED"
 
-        return HAS_VLC and self.player is not None
+        if vlc_player.needs_initial_setup():
+            vlc_player.open_for_setup()
+            return "SETUP_NEEDED"
+
+        if not HAS_VLC or not self.player:
+            vlc_exe = vlc_player.vlc_path or vlc_player._find_vlc()
+            if vlc_exe:
+                vlc_dir = os.path.dirname(vlc_exe)
+                try:
+                    os.add_dll_directory(vlc_dir)
+                except Exception:
+                    pass
+                os.environ["PATH"] = vlc_dir + os.pathsep + os.environ.get("PATH", "")
+                plugins_dir = os.path.join(vlc_dir, "plugins")
+                if os.path.exists(plugins_dir):
+                    os.environ["VLC_PLUGIN_PATH"] = plugins_dir
+            try:
+                import vlc as _vlc
+                vlc = _vlc
+                HAS_VLC = True
+                self.vlc_instance = vlc.Instance(
+                    '--no-video',
+                    '--quiet',
+                    '--network-caching=3000',
+                    '--no-qt-privacy-ask',
+                    '--no-qt-updates-notif',
+                    '--no-qt-error-dialogs'
+                )
+                self.player = self.vlc_instance.media_player_new()
+                if self.player:
+                    self.player.audio_set_volume(self.normal_volume)
+            except Exception as e:
+                print(f"[VLC Load Error]: {e}")
+
+        return True if (HAS_VLC and self.player is not None) else "DOWNLOAD_NEEDED"
 
     def play_query(self, query):
-        if not self._ensure_vlc():
+        vlc_status = self._ensure_vlc()
+        if vlc_status == "SETUP_NEEDED":
+            return (
+                "Я установила VLC плеер и открыла его! Пожалуйста, подтверди начальную настройку в окне плеера "
+                "(выбери нужные галочки и нажми «Продолжить»), а затем скажи мне снова включить музыку."
+            )
+        elif vlc_status != True:
             webbrowser.open("https://www.videolan.org/vlc/")
             return "Для работы Яндекс Музыки нужен плеер. Открываю официальный сайт для скачивания."
 
         if not self._init_client():
-            return "Укажи токен Яндекс Музыки в настройках"
+            return "Чтобы я могла включить трек, пожалуйста, авторизуйся в Яндекс Музыке в настройках Акиры!"
 
         self.is_transitioning = True
 
@@ -238,23 +300,60 @@ class YandexMusicManager:
             self.is_ducked = False
 
     def play_my_wave(self):
-        if not self._ensure_vlc():
+        vlc_status = self._ensure_vlc()
+        if vlc_status == "SETUP_NEEDED":
+            return (
+                "Я установила VLC плеер и открыла его! Пожалуйста, подтверди начальную настройку в окне плеера "
+                "(выбери нужные галочки и нажми «Продолжить»), а затем скажи мне снова включить музыку."
+            )
+        elif vlc_status != True:
             webbrowser.open("https://www.videolan.org/vlc/")
             return "Для работы Яндекс Музыки нужен плеер. Открываю официальный сайт для скачивания."
 
         if not self._init_client():
-            return False
+            return "Чтобы я могла запустить Мою волну, пожалуйста, укажи токен Яндекс Музыки в настройках Акиры!"
 
         self.is_transitioning = True
 
         def _async_wave():
             try:
-                likes = self.client.users_likes_tracks()
-                if not likes:
-                    self.is_transitioning = False
-                    return
+                track_items = []
+                # 1. Официальная станция «Моя волна» Яндекс Музыки
+                try:
+                    rotor = self.client.rotor_station_tracks('user:onyourwave')
+                    if rotor and hasattr(rotor, 'sequence'):
+                        for item in rotor.sequence:
+                            tr = getattr(item, 'track', None) or item
+                            if tr:
+                                track_items.append(tr)
+                except Exception as e:
+                    print(f"[YandexMusic Rotor Station Warning]: {e}")
 
-                track_items = list(likes.tracks) if hasattr(likes, 'tracks') else list(likes)
+                # 2. Fallback на плейлист «Понравилось мне» (любимые треки)
+                if not track_items:
+                    try:
+                        likes = self.client.users_likes_tracks()
+                        if likes:
+                            raw_likes = list(likes.tracks) if hasattr(likes, 'tracks') else list(likes)
+                            for it in raw_likes:
+                                tr = getattr(it, 'track', None) or it
+                                if tr:
+                                    track_items.append(tr)
+                    except Exception as e:
+                        print(f"[YandexMusic Likes Warning]: {e}")
+
+                # 3. Fallback на популярные треки чарта
+                if not track_items:
+                    try:
+                        chart = self.client.chart('world')
+                        if chart and hasattr(chart, 'chart') and hasattr(chart.chart, 'tracks'):
+                            for ct in chart.chart.tracks:
+                                tr = getattr(ct, 'track', None) or ct
+                                if tr:
+                                    track_items.append(tr)
+                    except Exception as e:
+                        print(f"[YandexMusic Chart Warning]: {e}")
+
                 if not track_items:
                     self.is_transitioning = False
                     return

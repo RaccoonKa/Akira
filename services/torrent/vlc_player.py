@@ -7,7 +7,7 @@ import subprocess
 import webbrowser
 import psutil
 import pyautogui
-from core.utils.config import get_resource_path
+from core.utils.config import get_resource_path, load_config, save_config
 
 VLC_DOWNLOAD_URL = "https://www.videolan.org/vlc/"
 
@@ -16,6 +16,68 @@ class VLCPlayer:
     def __init__(self):
         self.vlc_path = self._find_vlc()
         self.process = None
+
+    def setup_vlc_privacy_config(self):
+        """Создает/обновляет конфигурацию vlcrc, отключая блокирующий диалог первого запуска."""
+        try:
+            appdata = os.environ.get("APPDATA", "")
+            if not appdata:
+                return
+            vlc_config_dir = os.path.join(appdata, "vlc")
+            os.makedirs(vlc_config_dir, exist_ok=True)
+            vlcrc_path = os.path.join(vlc_config_dir, "vlcrc")
+            if not os.path.exists(vlcrc_path):
+                with open(vlcrc_path, "w", encoding="utf-8") as f:
+                    f.write("[qt]\nqt-privacy-ask=0\nqt-updates-notif=0\n")
+            else:
+                with open(vlcrc_path, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+                if "qt-privacy-ask=0" not in content:
+                    content = re.sub(r'#?\s*qt-privacy-ask=\d+', 'qt-privacy-ask=0', content)
+                    if "qt-privacy-ask=0" not in content:
+                        content += "\n[qt]\nqt-privacy-ask=0\n"
+                    with open(vlcrc_path, "w", encoding="utf-8") as f:
+                        f.write(content)
+        except Exception:
+            pass
+
+    def mark_setup_done(self):
+        """Фиксирует завершение первичной настройки в конфигурации."""
+        try:
+            cfg = load_config()
+            cfg["vlc_setup_completed"] = True
+            save_config(cfg)
+        except Exception:
+            pass
+
+    def needs_initial_setup(self) -> bool:
+        """Проверяет, требуется ли первичная настройка VLC пользователем (галочки политики сети)."""
+        try:
+            cfg = load_config()
+            if cfg.get("vlc_setup_completed", False):
+                return False
+
+            appdata = os.environ.get("APPDATA", "")
+            if appdata:
+                vlcrc = os.path.join(appdata, "vlc", "vlcrc")
+                # Если vlcrc уже существует и создан самим VLC (>500 байт), настройка уже была
+                if os.path.exists(vlcrc) and os.path.getsize(vlcrc) > 500:
+                    self.mark_setup_done()
+                    return False
+        except Exception:
+            pass
+        return True
+
+    def open_for_setup(self) -> bool:
+        """Открывает VLC Player для ручной первичной настройки пользователем (галочки сети/обновлений)."""
+        if not self.is_available():
+            return False
+        try:
+            self.mark_setup_done()
+            subprocess.Popen([self.vlc_path])
+            return True
+        except Exception:
+            return False
 
     def _find_vlc(self) -> str | None:
         # 1. Проверяем реестр Windows
@@ -150,11 +212,15 @@ class VLCPlayer:
         if not self.is_available():
             return False
         try:
+            self.setup_vlc_privacy_config()
             cmd = [
                 self.vlc_path,
                 stream_url,
                 "--fullscreen",
-                "--network-caching=3000"
+                "--network-caching=2000",
+                "--no-qt-privacy-ask",
+                "--no-qt-updates-notif",
+                "--no-qt-error-dialogs"
             ]
             if title and not stream_url.lower().endswith(".m3u"):
                 clean_title = re.sub(r'[\/\\"]', ' ', title).strip()
