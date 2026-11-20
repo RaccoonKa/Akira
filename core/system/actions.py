@@ -287,6 +287,7 @@ def to_prepositional(name):
         return name
 
     name = clean_city_display_name(name)
+    name = re.sub(r'^(?:в|во|на)\s+', '', name, flags=re.IGNORECASE).strip()
 
     unchangeable = ["сочи", "токио", "осло", "хельсинки", "перу", "чили", "конго", "баку", "тбилиси"]
     if name.lower() in unchangeable:
@@ -379,15 +380,24 @@ def get_current_user_city():
     system_fallback = get_city_from_system_timezone()
 
     try:
-        res = requests.get("http://ip-api.com/json/?lang=ru&fields=status,query,city", timeout=1.5)
+        res = weather_session.get("http://ip-api.com/json/?lang=ru&fields=status,country,query,city", timeout=3.0)
         if res.status_code == 200:
             data = res.json()
             if data.get("status") == "success":
                 current_ip = data.get("query")
                 ip_city = data.get("city")
+                ip_country = data.get("country", "")
 
                 cached_ip = cfg.get("last_network_ip")
                 cached_city = cfg.get("auto_detected_city")
+
+                # Если IP изменился на зарубежный, а таймзона российская — активен VPN.
+                # Сохраняем домашний город пользователя, чтобы не заменять его на город VPN-сервера.
+                is_foreign = ip_country and ip_country not in ("Россия", "Russia", "Беларусь", "Belarus", "Казахстан", "Kazakhstan")
+                if is_foreign and cached_city:
+                    return cached_city
+                if is_foreign and system_fallback:
+                    return system_fallback
 
                 if current_ip == cached_ip and cached_city:
                     return cached_city
@@ -1121,6 +1131,130 @@ class SystemActions:
         return random.choice(tips), "happy"
 
     @staticmethod
+    def _fetch_weather_data(city: str) -> dict | None:
+        import urllib.parse
+
+        wmo_descs = {
+            0: "ясно", 1: "преимущественно ясно", 2: "переменная облачность", 3: "пасмурно",
+            45: "туман", 48: "изморозь", 51: "легкая морось", 53: "моросящий дождь",
+            55: "плотная морось", 56: "ледяная морось", 57: "плотная ледяная морось",
+            61: "небольшой дождь", 63: "умеренный дождь", 65: "сильный дождь",
+            66: "ледяной дождь", 67: "сильный ледяной дождь", 71: "небольшой снег",
+            73: "снегопад", 75: "сильный снегопад", 77: "снежные зерна",
+            80: "кратковременный дождь", 81: "умеренный ливень", 82: "сильный ливень",
+            85: "небольшой снегопад", 86: "сильный снегопад", 95: "гроза",
+            96: "гроза с небольшим градом", 99: "гроза с сильным градом"
+        }
+
+        encoded_city = urllib.parse.quote(city)
+
+        # 1. Попытка через основной сервис (порт 8000)
+        try:
+            res = weather_session.get(
+                f"http://185.79.139.120:8000/api/weather?city={encoded_city}",
+                timeout=3.5
+            )
+            if res.status_code == 200:
+                resp_json = res.json()
+                if resp_json.get("status") == "ok" and resp_json.get("daily"):
+                    return resp_json
+        except Exception as e:
+            print(f"[Weather Primary Warning]: {e}")
+
+        # 2. Надёжный fallback через Open-Meteo HTTPS (порт 443 — работает через любые VPN)
+        try:
+            geo_url = f"https://geocoding-api.open-meteo.com/v1/search?name={encoded_city}&count=1&language=ru"
+            geo_resp = weather_session.get(geo_url, timeout=4.0)
+            if geo_resp.status_code == 200:
+                geo_data = geo_resp.json()
+                results = geo_data.get("results")
+                if results:
+                    best = results[0]
+                    lat = best.get("latitude")
+                    lon = best.get("longitude")
+                    city_name = best.get("name") or city
+
+                    forecast_url = (
+                        f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
+                        f"&current=temperature_2m,weather_code"
+                        f"&daily=weather_code,temperature_2m_max,temperature_2m_min"
+                        f"&timezone=auto"
+                    )
+                    f_resp = weather_session.get(forecast_url, timeout=4.5)
+                    if f_resp.status_code == 200:
+                        f_data = f_resp.json()
+                        curr = f_data.get("current", {})
+                        temp = round(curr.get("temperature_2m", 0))
+                        code = int(curr.get("weather_code", 0))
+                        desc = wmo_descs.get(code, "ясно")
+
+                        daily_raw = f_data.get("daily", {})
+                        dates = daily_raw.get("time", [])
+                        maxs = daily_raw.get("temperature_2m_max", [])
+                        mins = daily_raw.get("temperature_2m_min", [])
+                        codes = daily_raw.get("weather_code", [])
+
+                        daily = []
+                        for i in range(len(dates)):
+                            d_code = int(codes[i]) if i < len(codes) else 0
+                            daily.append({
+                                "date": dates[i],
+                                "temp_max": round(maxs[i]) if i < len(maxs) else temp,
+                                "temp_min": round(mins[i]) if i < len(mins) else temp,
+                                "code": d_code,
+                                "desc": wmo_descs.get(d_code, "ясно")
+                            })
+
+                        return {
+                            "status": "ok",
+                            "city": city_name,
+                            "temp": temp,
+                            "code": code,
+                            "desc": desc,
+                            "daily": daily
+                        }
+        except Exception as e:
+            print(f"[Weather Open-Meteo Fallback Warning]: {e}")
+
+        # 3. Дополнительный fallback через wttr.in HTTPS
+        try:
+            wttr_url = f"https://wttr.in/{encoded_city}?format=j1"
+            w_resp = weather_session.get(wttr_url, timeout=4.5)
+            if w_resp.status_code == 200:
+                w_json = w_resp.json()
+                curr = w_json.get("current_condition", [{}])[0]
+                temp = int(curr.get("temp_C", 0))
+                desc_val = "ясно"
+                if curr.get("lang_ru"):
+                    desc_val = curr["lang_ru"][0].get("value", desc_val).lower()
+                elif curr.get("weatherDesc"):
+                    desc_val = curr["weatherDesc"][0].get("value", desc_val).lower()
+
+                weather_list = w_json.get("weather", [])
+                daily = []
+                for item in weather_list:
+                    daily.append({
+                        "date": item.get("date", ""),
+                        "temp_max": int(item.get("maxtempC", temp)),
+                        "temp_min": int(item.get("mintempC", temp)),
+                        "code": 0,
+                        "desc": desc_val
+                    })
+
+                return {
+                    "status": "ok",
+                    "city": city.title(),
+                    "temp": temp,
+                    "code": 0,
+                    "desc": desc_val,
+                    "daily": daily
+                }
+        except Exception as e:
+            print(f"[Weather wttr.in Fallback Warning]: {e}")
+
+        return None
+
+    @staticmethod
     def get_weather(text="", slots=None):
         import urllib.parse
         from datetime import datetime, timedelta
@@ -1129,10 +1263,18 @@ class SystemActions:
         default_city = cfg.get("city") or get_current_user_city()
 
         city_aliases = {
-            "мск": "Москва", "спб": "Санкт-Петербург", "питер": "Санкт-Петербург",
-            "екб": "Екатеринбург", "якоб": "Екатеринбург", "клгд": "Калининград",
-            "ннов": "Нижний Новгород", "нн": "Нижний Новгород", "сиб": "Новосибирск",
-            "челяба": "Челябинск", "ростов": "Ростов-на-Дону"
+            "мск": "Москва", "москве": "Москва", "москву": "Москва", "москва": "Москва",
+            "спб": "Санкт-Петербург", "питер": "Санкт-Петербург", "питере": "Санкт-Петербург",
+            "петербург": "Санкт-Петербург", "петербурге": "Санкт-Петербург", "санкт-петербурге": "Санкт-Петербург",
+            "екб": "Екатеринбург", "екатеринбурге": "Екатеринбург", "екатеринбург": "Екатеринбург", "якоб": "Екатеринбург",
+            "клгд": "Калининград", "калининграде": "Калининград", "калининград": "Калининград",
+            "ннов": "Нижний Новгород", "нн": "Нижний Новгород", "нижнем новгороде": "Нижний Новгород", "нижний новгород": "Нижний Новгород",
+            "сиб": "Новосибирск", "новосибирске": "Новосибирск", "новосибирск": "Новосибирск",
+            "челяба": "Челябинск", "челябинске": "Челябинск", "челябинск": "Челябинск",
+            "ростов": "Ростов-на-Дону", "ростове": "Ростов-на-Дону", "ростове-на-дону": "Ростов-на-Дону",
+            "казани": "Казань", "казань": "Казань", "самаре": "Самара", "самара": "Самара",
+            "уфе": "Уфа", "уфа": "Уфа", "краснодаре": "Краснодар", "краснодар": "Краснодар",
+            "сочи": "Сочи", "владивостоке": "Владивосток", "владивосток": "Владивосток"
         }
 
         weather_junk = {
@@ -1169,6 +1311,8 @@ class SystemActions:
                 for j in junk_patterns:
                     possible_city = re.sub(r'\b' + j + r'\b', '', possible_city).strip()
 
+                possible_city = re.sub(r'^(?:в|во|на|по)\s+', '', possible_city).strip()
+
                 if possible_city and possible_city not in weather_junk:
                     city_raw = possible_city
             else:
@@ -1193,19 +1337,7 @@ class SystemActions:
         if city_key in city_aliases:
             city_raw = city_aliases[city_key]
 
-        data = None
-        try:
-            encoded_city = urllib.parse.quote(city_raw)
-            res = requests.get(
-                f"http://185.79.139.120:8000/api/weather?city={encoded_city}",
-                timeout=3.0
-            )
-            if res.status_code == 200:
-                resp_json = res.json()
-                if resp_json.get("status") == "ok":
-                    data = resp_json
-        except Exception:
-            pass
+        data = SystemActions._fetch_weather_data(city_raw)
 
         if not data:
             return f"Не удалось узнать погоду для города {city_raw.title()}"
@@ -1314,7 +1446,7 @@ class SystemActions:
         tip, emotion = SystemActions._get_caring_tip_and_emotion(temp, code)
 
         voice_text = f"Сейчас {location_phrase} {temp_spoken}, {desc}. {tip}"
-        chat_text = f"Сейчас {location_phrase} {temp:+}° ({temp_spoken}), {desc}. {tip}"
+        chat_text = f"Сейчас {location_phrase} {temp:+}°, {desc}. {tip}"
         return {"chat": chat_text, "voice": voice_text, "emotion": emotion}
 
     @staticmethod

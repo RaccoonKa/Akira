@@ -29,6 +29,14 @@ if getattr(sys, "frozen", False) or "__compiled__" in globals() or (
 ):
     sys.frozen = True
 
+# Автоматический запуск через .venv проекта, если скрипт запущен через глобальный Python в IDE
+if not getattr(sys, "frozen", False) and "__compiled__" not in globals():
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    venv_python = os.path.join(base_dir, ".venv", "Scripts", "python.exe")
+    if os.path.isfile(venv_python) and os.path.normcase(sys.executable) != os.path.normcase(venv_python):
+        import subprocess
+        sys.exit(subprocess.call([venv_python] + sys.argv))
+
 # Настройка переменных окружения до импорта тяжелых ML-библиотек
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 os.environ["HF_HUB_OFFLINE"] = "1"
@@ -190,11 +198,14 @@ if sys.stderr is None:
     sys.stderr = open(os.devnull, "w", encoding="utf-8")
 
 import ctypes
-import certifi
+try:
+    import certifi
+    os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+    os.environ.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
+except ImportError:
+    pass
 
 os.environ["QT_LOGGING_RULES"] = "qt.qpa.window=false"
-os.environ["SSL_CERT_FILE"] = certifi.where()
-os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 
 from PyQt6.QtCore import qInstallMessageHandler, QtMsgType
 
