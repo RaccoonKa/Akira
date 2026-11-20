@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import re
+import json
 import urllib.parse
 import subprocess
 import requests
@@ -52,8 +53,57 @@ class TorrServerManager:
         except Exception:
             return False
 
+    def _ensure_optimal_config(self, torr_data_dir: str):
+        settings_file = os.path.join(torr_data_dir, "settings.json")
+        try:
+            data = {}
+            if os.path.exists(settings_file):
+                try:
+                    with open(settings_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                except Exception:
+                    data = {}
+
+            bittorr = data.get("BitTorr", {})
+            # Оптимальные параметры для моментального старта видео в VLC:
+            # 1. Снижаем порог предзагрузки с 50% до 15% (поток стартует за секунды)
+            # 2. Увеличиваем лимит соединений с 25 до 80 (быстрый поиск пиров и DHT)
+            # 3. Кеш в оперативной памяти 64MB
+            bittorr["ConnectionsLimit"] = 80
+            bittorr["PreloadCache"] = 15
+            bittorr["CacheSize"] = 67108864
+            bittorr["ReaderReadAHead"] = 95
+            bittorr["ResponsiveMode"] = True
+            bittorr["StoreSettingsInJson"] = True
+            data["BitTorr"] = bittorr
+
+            with open(settings_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"[TorrServer Config Warning]: {e}")
+
+    def _apply_runtime_settings(self):
+        try:
+            requests.post(
+                f"{TORRSERVER_URL}/settings",
+                json={
+                    "action": "set",
+                    "sets": {
+                        "ConnectionsLimit": 80,
+                        "PreloadCache": 15,
+                        "CacheSize": 67108864,
+                        "ReaderReadAHead": 95,
+                        "ResponsiveMode": True
+                    }
+                },
+                timeout=2.0
+            )
+        except Exception as e:
+            print(f"[TorrServer Settings Warning]: {e}")
+
     def start_server(self) -> bool:
         if self.is_running():
+            self._apply_runtime_settings()
             return True
 
         bin_path = get_torrserver_bin_path()
@@ -63,6 +113,7 @@ class TorrServerManager:
 
         torr_data_dir = get_user_data_path("torrserver")
         os.makedirs(torr_data_dir, exist_ok=True)
+        self._ensure_optimal_config(torr_data_dir)
 
         try:
             startupinfo = subprocess.STARTUPINFO()
@@ -84,6 +135,7 @@ class TorrServerManager:
                 time.sleep(0.2)
                 if self.is_running():
                     print(f"[TorrServer]: Локальный сервер запущен на порту {TORRSERVER_PORT}")
+                    self._apply_runtime_settings()
                     return True
         except Exception as e:
             print(f"[TorrServer Start Error]: {e}")
@@ -142,7 +194,21 @@ class TorrServerManager:
                 timeout=2.0
             )
             print(f"[TorrServer]: Предзагрузка буфера для файла ID={first_file_id}...")
-            time.sleep(2.0)
+            # Опрашиваем статус предзагрузки до готовности первых блоков (до 5 сек)
+            for _ in range(10):
+                time.sleep(0.4)
+                try:
+                    st_resp = requests.post(f"{TORRSERVER_URL}/torrent/stat", json={"hash": final_hash}, timeout=1.5)
+                    if st_resp.status_code == 200:
+                        st = st_resp.json()
+                        preload = st.get("preload_size", 0)
+                        down_speed = st.get("download_speed", 0)
+                        peers = st.get("active_peers", 0) or st.get("connected_seeders", 0)
+                        if preload > 1024 * 1024 or (down_speed > 200 * 1024 and preload > 512 * 1024):
+                            print(f"[TorrServer]: Буфер готов ({preload // 1024} КБ, пиров: {peers}). Запускаем плеер!")
+                            break
+                except Exception:
+                    pass
         except Exception as e:
             print(f"[TorrServer Preload Warning]: {e}")
 

@@ -1249,6 +1249,21 @@ class CommandParser:
                             "is_whisper": is_whisper
                         }
 
+                if vlc_player.needs_initial_setup():
+                    vlc_player.open_for_setup()
+                    ans = (
+                        "Я установила VLC плеер и открыла его! Пожалуйста, подтверди начальную настройку в окне плеера "
+                        "(выбери нужные галочки и нажми «Продолжить»), а затем назови вариант фильма снова."
+                    )
+                    return {
+                        "user_display": f"Вариант {selected_idx}",
+                        "chat": ans,
+                        "voice": "Подтверди начальную настройку в окне плеера и назови вариант снова.",
+                        "emotion": "neutral",
+                        "is_whisper": is_whisper,
+                        "followup": True
+                    }
+
                 stream_url = torr_manager.get_stream_url(movie["magnet"], is_series=movie.get("is_series", False))
                 if not stream_url:
                     ans = f"В раздаче «{movie['title']}» не нашлось видеофайлов. Попробуй выбрать другой вариант!"
@@ -1263,8 +1278,8 @@ class CommandParser:
 
                 vlc_player.play(stream_url, movie["title"])
 
-                ans = f"Включаю «{movie['title']}» через TorrServer в VLC 🍿"
-                voice_ans = "Запускаю воспроизведение в плеере"
+                ans = f"Подключаюсь к раздаче «{movie['title']}» и буферизирую поток... Открываю VLC 🍿"
+                voice_ans = "Подключаюсь к раздаче. Буферизирую поток, фильм сейчас начнется!"
 
                 return {
                     "user_display": f"Вариант {selected_idx}",
@@ -1336,6 +1351,14 @@ class CommandParser:
                         return {"user_display": user_display, "chat": ans, "voice": ans, "emotion": "neutral",
                                 "is_whisper": is_whisper}
 
+                if vlc_player.needs_initial_setup():
+                    vlc_player.open_for_setup()
+                    ans = (
+                        "Я установила VLC плеер и открыла его! Пожалуйста, подтверди начальную настройку в окне плеера "
+                        "(выбери нужные галочки и нажми «Продолжить»), а затем повтори команду."
+                    )
+                    return {"user_display": user_display, "chat": ans, "voice": "Подтверди начальную настройку в окне плеера и скажи снова.", "emotion": "neutral", "is_whisper": is_whisper}
+
                 stream_url = torr_manager.get_stream_url(movie["magnet"], is_series=movie.get("is_series", False))
                 if not stream_url:
                     ans = f"В раздаче «{movie['title']}» не нашлось видеофайлов."
@@ -1343,8 +1366,8 @@ class CommandParser:
 
                 vlc_player.play(stream_url, movie["title"])
 
-                ans = f"Включаю «{movie['title']}» через TorrServer в VLC 🍿"
-                voice_ans = "Запускаю воспроизведение в плеере"
+                ans = f"Подключаюсь к раздаче «{movie['title']}» и буферизирую поток... Открываю VLC 🍿"
+                voice_ans = "Подключаюсь к раздаче. Буферизирую поток, фильм сейчас начнется!"
                 return {"user_display": user_display, "chat": ans, "voice": voice_ans, "emotion": "happy",
                         "is_whisper": is_whisper}
 
