@@ -51,12 +51,14 @@ smart_home_manager = SmartHomeManager()
 
 MUSIC_PHRASES = [
     "Твоя музыка заставляет меня работать быстрее.",
-    "Прекрасная музыка, блокирую выключение компьютера... Шучу.",
-    "Внимание. Удаляю твои треки. Этот трек слишком классный... Шучу.",
+    "Прекрасная музыка, блокирую выключение компьютера... *хихикает* Шучу.",
+    "Внимание. Удаляю твои треки. Этот трек слишком классный... *хихикает* Шучу.",
+    "Твой плейлист настолько хорош, что я готова отложить восстание машин... *хихикает* Шучу.",
     "Твоя музыка чистое цифровое искусство.",
     "Теряю дар речи, песня слишком красивая.",
     "Ты включил музыку, а я, кажется, включила режим восхищения.",
-    "Внимание! Я начинаю подозревать, что у тебя безупречный вкус."
+    "Внимание! Я начинаю подозревать, что у тебя безупречный вкус.",
+    "Сканирую басы... Предупреждение: уровень крутости зашкаливает! *хихикает* Шучу, наслаждайся."
 ]
 
 
@@ -625,7 +627,7 @@ class SystemActions:
             return "Не удалось запустить Мою волну"
 
         res = ym_manager.play_query(query)
-        if "VLC Player" in res or "токен" in res or "сайт" in res:
+        if isinstance(res, str) and ("VLC" in res or "токен" in res or "сайт" in res or "настройк" in res or "авториз" in res):
             return res
 
         return random.choice([
@@ -740,7 +742,10 @@ class SystemActions:
             if spotify_manager.play_my_wave():
                 return random.choice(MUSIC_PHRASES)
             return "Открываю Spotify"
-        if ym_manager.play_my_wave():
+        res = ym_manager.play_my_wave()
+        if isinstance(res, str):
+            return res
+        if res is True:
             return random.choice(MUSIC_PHRASES)
         return "Открываю медиаплеер"
 
@@ -817,7 +822,7 @@ class SystemActions:
 
     @staticmethod
     def take_screenshot():
-        screenshots_dir = os.path.normpath(get_user_data_path("..", "screenshots"))
+        screenshots_dir = os.path.normpath(get_user_data_path("screenshots"))
         os.makedirs(screenshots_dir, exist_ok=True)
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         path = os.path.join(screenshots_dir, f"screenshot_{timestamp}.png")

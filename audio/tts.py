@@ -358,20 +358,25 @@ class TTSThread(QThread):
         if not raw_text:
             return []
 
-        # 0. Очищаем текст от блоков кода, бэктиков и лишнего форматирования для чистого голоса
-        raw_text = clean_voice_text(raw_text)
-        if not raw_text:
-            return []
-
-        # 1. Заменяем маркеры смеха на уникальный токен
+        # 1. Заменяем явные маркеры смеха (*хихикает*, *смеется* и т.д.) на токен смеха ДО clean_voice_text,
+        # так как clean_voice_text иначе вырежет их как сценические ремарки в звездочках.
         marked = LAUGH_REGEX.sub(" @@@AKIRALAUGH@@@ ", raw_text)
-        # 2. Вырезаем любые оставшиеся действия/ремарки, чтобы Piper не читал их вслух
+
+        # 2. Автоматически добавляем смех перед шутливыми фразами («Шучу», «Пошутила» и т.п.)
+        joke_pattern = re.compile(r'(?:(?<=[.!?…—–\n])\s*|\b|^)([Шш]учу\b|[Пп]ошутила\b|[Шш]утка\b)')
+        marked = joke_pattern.sub(r' @@@AKIRALAUGH@@@ \1', marked)
+
+        # 3. Схлопываем идущие подряд токены смеха в один
+        marked = re.sub(r'(?:\s*@@@AKIRALAUGH@@@\s*)+', ' @@@AKIRALAUGH@@@ ', marked).strip()
+
+        # 4. Вырезаем любые оставшиеся действия/ремарки (*улыбается*, [вздыхает]), не связанные со смехом
         marked = NON_LAUGH_ACTION_REGEX.sub(" ", marked)
 
         tokens = marked.split("@@@AKIRALAUGH@@@")
         raw_items = []
         for idx, token in enumerate(tokens):
-            clean_tok = re.sub(r'^[,\s!?:;.\-]+', '', token).strip()
+            clean_tok = clean_voice_text(token).strip()
+            clean_tok = re.sub(r'^[,\s!?:;.\-]+', '', clean_tok).strip()
             if clean_tok:
                 # Разбиваем текст на фразы и предложения с естественными границами
                 phrases = self._split_into_speech_phrases(clean_tok)
