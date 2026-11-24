@@ -2,11 +2,11 @@ import os
 import sys
 import time
 import json
-import ctypes
 import threading
 import datetime
 import psutil
 from core.utils.config import get_user_data_path
+from core.utils.platform_utils import get_default_user_data_dir, is_wayland
 
 
 class ActivityTracker:
@@ -47,7 +47,7 @@ class ActivityTracker:
             self.activity_dir = get_user_data_path("activity")
             os.makedirs(self.activity_dir, exist_ok=True)
         except (PermissionError, OSError):
-            self.activity_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Akira", "activity")
+            self.activity_dir = get_default_user_data_dir("activity")
             os.makedirs(self.activity_dir, exist_ok=True)
         self.file_path = os.path.join(self.activity_dir, "daily_activity.json")
 
@@ -119,9 +119,12 @@ class ActivityTracker:
             return "coding", "Visual Studio"
         if any(x in exe_low for x in ["clion", "rider", "webstorm", "goland", "rustrover"]):
             return "coding", "JetBrains IDE"
-        if any(x in exe_low for x in ["sublime_text", "notepad++", "kate"]):
+        if any(x in exe_low for x in ["sublime_text", "notepad++", "kate", "xed", "gedit", "mousepad", "pluma", "nvim", "vim"]):
             return "coding", "Текстовый редактор"
-        if any(x in exe_low for x in ["windowsterminal", "cmd", "powershell", "bash", "mintty", "conemu"]):
+        if any(x in exe_low for x in [
+            "windowsterminal", "cmd", "powershell", "bash", "mintty", "conemu",
+            "gnome-terminal", "x-terminal-emulator", "konsole", "kitty", "alacritty", "xfce4-terminal", "tilix", "terminator", "wezterm"
+        ]):
             return "coding", "Терминал"
         if any(x in exe_low for x in ["githubdesktop", "sourcetree", "gitkraken"]):
             return "coding", "Git клиент"
@@ -133,9 +136,9 @@ class ActivityTracker:
             return "music", "Spotify"
         if "yandexmusic" in exe_low or "яндекс музыка" in title_low or "yandex music" in title_low:
             return "music", "Яндекс Музыка"
-        if any(x in exe_low for x in ["aimp", "foobar2000", "winamp", "musicbee"]):
+        if any(x in exe_low for x in ["aimp", "foobar2000", "winamp", "musicbee", "rhythmbox", "audacious", "clementine", "strawberry"]):
             return "music", "Музыкальный плеер"
-        if any(x in exe_low for x in ["fl64", "fl", "ableton", "reaper", "cubase", "studio one"]):
+        if any(x in exe_low for x in ["fl64", "fl", "ableton", "reaper", "cubase", "studio one", "ardour", "lmms"]):
             return "music", "Музыкальная студия (DAW)"
 
         # 3. Видео, фильмы и стримы
@@ -143,14 +146,14 @@ class ActivityTracker:
             return "video", "YouTube"
         if any(x in title_low for x in ["twitch", "твич", "кинопоиск", "kinopoisk", "netflix", "anime", "аниме", "сериал", "фильм"]):
             return "video", "Кино и стримы"
-        if any(x in exe_low for x in ["vlc", "mpc-hc", "potplayer", "kmplayer"]):
+        if any(x in exe_low for x in ["vlc", "mpc-hc", "potplayer", "kmplayer", "mpv", "celluloid", "totem"]):
             return "video", "Видеоплеер"
 
         # 4. Видеоигры
         if "steam" in exe_low:
             return "gaming", "Steam"
-        if "epicgameslauncher" in exe_low:
-            return "gaming", "Epic Games"
+        if any(x in exe_low for x in ["epicgameslauncher", "lutris", "heroic", "prismlauncher"]):
+            return "gaming", "Игровой лаунчер"
         game_patterns = [
             ("cyberpunk2077", "Cyberpunk 2077"),
             ("dota2", "Dota 2"),
@@ -183,32 +186,37 @@ class ActivityTracker:
         # 5. Творчество и дизайн
         if "photoshop" in exe_low:
             return "creative", "Photoshop"
+        if any(x in exe_low for x in ["gimp", "krita", "inkscape"]):
+            return "creative", "Графический редактор"
         if "figma" in exe_low or "figma" in title_low:
             return "creative", "Figma"
         if "blender" in exe_low:
             return "creative", "Blender 3D"
-        if any(x in exe_low for x in ["premiere", "afterfx", "davinci"]):
+        if any(x in exe_low for x in ["premiere", "afterfx", "davinci", "kdenlive", "obs"]):
             return "creative", "Видеомонтаж"
 
         # 6. Общение и мессенджеры
         if "telegram" in exe_low or "telegram" in title_low:
             return "chat", "Telegram"
-        if "discord" in exe_low or "discord" in title_low:
+        if any(x in exe_low for x in ["discord", "vesktop"]) or "discord" in title_low:
             return "chat", "Discord"
         if any(x in exe_low for x in ["slack", "vk", "element", "skype"]):
             return "chat", "Мессенджер"
 
         # 7. Браузеры
-        if any(x in exe_low for x in ["chrome", "firefox", "msedge", "opera", "brave", "yandex", "zen"]):
+        if any(x in exe_low for x in ["chrome", "chromium", "firefox", "msedge", "opera", "brave", "yandex", "zen", "vivaldi", "librewolf"]):
             if any(x in title_low for x in ["github", "gitlab", "stackoverflow", "habr", "хабр", "docs."]):
                 return "coding", "Хабр / Документация"
             return "browser", "Браузер"
 
         # Игнорируемые системные процессы и экран блокировки
-        if any(x in exe_low for x in ["explorer", "taskmgr", "lockapp", "shellexperiencehost", "searchhost"]):
+        if any(x in exe_low for x in [
+            "explorer", "taskmgr", "lockapp", "shellexperiencehost", "searchhost",
+            "nemo", "nautilus", "thunar", "dolphin", "caja", "cinnamon", "gnome-system-monitor"
+        ]):
             return "quiet", "Рабочий стол"
 
-        clean_name = exe_name.replace(".exe", "").capitalize() if exe_name else "Система"
+        clean_name = exe_name.removesuffix(".exe").capitalize() if exe_name else "Система"
         return "other", clean_name
 
     def record_sample(self, exe_name: str, title: str, seconds: float = 5.0):
@@ -318,30 +326,112 @@ class ActivityTracker:
             f"Доминирующая категория активности: {dom_name}."
         )
 
+    def _get_active_window_win(self) -> tuple[str, str]:
+        import ctypes
+
+        hwnd = ctypes.windll.user32.GetForegroundWindow()
+        title = ""
+        exe_name = ""
+
+        if hwnd:
+            length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
+            if length > 0:
+                buf = ctypes.create_unicode_buffer(length + 1)
+                ctypes.windll.user32.GetWindowTextW(hwnd, buf, length + 1)
+                title = buf.value
+
+            pid = ctypes.c_ulong(0)
+            ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value > 0:
+                try:
+                    proc = psutil.Process(pid.value)
+                    exe_name = proc.name().lower()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    exe_name = ""
+
+        return exe_name, title
+
+    def _get_active_window_linux(self) -> tuple[str, str]:
+        if is_wayland() or not os.environ.get("DISPLAY"):
+            return "", ""
+
+        try:
+            from Xlib import X
+            from Xlib.display import Display
+            from Xlib.error import ConnectionClosedError
+        except ImportError:
+            return "", ""
+
+        try:
+            disp = getattr(self, "_x_display", None)
+            if disp is None:
+                disp = Display()
+                self._x_display = disp
+                self._x_atoms = (
+                    disp.intern_atom("_NET_ACTIVE_WINDOW"),
+                    disp.intern_atom("_NET_WM_NAME"),
+                    disp.intern_atom("UTF8_STRING"),
+                    disp.intern_atom("_NET_WM_PID"),
+                )
+
+            atom_active, atom_net_name, atom_utf8, atom_pid = self._x_atoms
+            root = disp.screen().root
+            active_prop = root.get_full_property(atom_active, X.AnyPropertyType)
+            if not active_prop or not active_prop.value:
+                return "", ""
+
+            win_id = int(active_prop.value[0])
+            if win_id <= 0:
+                return "", ""
+
+            win = disp.create_resource_object("window", win_id)
+            title = ""
+            name_prop = win.get_full_property(atom_net_name, atom_utf8)
+            if not name_prop:
+                name_prop = win.get_full_property(atom_net_name, X.AnyPropertyType)
+            if name_prop and name_prop.value:
+                val = name_prop.value
+                if isinstance(val, bytes):
+                    title = val.decode("utf-8", errors="ignore")
+                elif isinstance(val, str):
+                    title = val
+            if not title:
+                wm_name = win.get_wm_name()
+                if wm_name:
+                    title = wm_name.decode("utf-8", errors="ignore") if isinstance(wm_name, bytes) else str(wm_name)
+
+            exe_name = ""
+            pid_prop = win.get_full_property(atom_pid, X.AnyPropertyType)
+            if pid_prop and pid_prop.value:
+                pid_val = int(pid_prop.value[0])
+                if pid_val > 0:
+                    try:
+                        exe_name = psutil.Process(pid_val).name().lower()
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        exe_name = ""
+
+            if not exe_name:
+                wm_class = win.get_wm_class()
+                if wm_class:
+                    exe_name = str(wm_class[-1]).lower()
+
+            return exe_name, title
+        except Exception as e:
+            err_name = type(e).__name__
+            if err_name in ("ConnectionClosedError", "DisplayConnectionError", "BrokenPipeError", "OSError"):
+                self._x_display = None
+            return "", ""
+
+    def _get_active_window_info(self) -> tuple[str, str]:
+        if sys.platform == "win32":
+            return self._get_active_window_win()
+        return self._get_active_window_linux()
+
     def _track_loop(self):
-        """Фоновый цикл опроса активного окна Windows."""
+        """Фоновый цикл опроса активного окна (Windows WinAPI / Linux X11)."""
         while self.running:
             try:
-                hwnd = ctypes.windll.user32.GetForegroundWindow()
-                title = ""
-                exe_name = ""
-
-                if hwnd:
-                    length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
-                    if length > 0:
-                        buf = ctypes.create_unicode_buffer(length + 1)
-                        ctypes.windll.user32.GetWindowTextW(hwnd, buf, length + 1)
-                        title = buf.value
-
-                    pid = ctypes.c_ulong(0)
-                    ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-                    if pid.value > 0:
-                        try:
-                            proc = psutil.Process(pid.value)
-                            exe_name = proc.name().lower()
-                        except (psutil.NoSuchProcess, psutil.AccessDenied):
-                            exe_name = ""
-
+                exe_name, title = self._get_active_window_info()
                 self.record_sample(exe_name, title, seconds=self.sample_interval)
             except Exception:
                 pass

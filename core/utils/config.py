@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import hashlib
+from core.utils.platform_utils import get_default_user_data_dir
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.normpath(os.path.join(BASE_DIR, "..", ".."))
@@ -13,8 +14,8 @@ if getattr(sys, "frozen", False) or "__compiled__" in globals() or (
     sys.frozen = True
 
 if getattr(sys, 'frozen', False):
-    APP_DIR = os.path.dirname(sys.executable)
-    USER_DATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Akira")
+    APP_DIR = os.path.dirname(os.path.realpath(sys.executable))
+    USER_DATA_DIR = get_default_user_data_dir()
 else:
     APP_DIR = ROOT_DIR
     USER_DATA_DIR = os.path.join(ROOT_DIR, "personal_data")
@@ -110,7 +111,7 @@ DEFAULT_CONFIG = {
 
 def get_resource_path(*subpaths) -> str:
     if getattr(sys, 'frozen', False):
-        exe_dir = os.path.dirname(sys.executable)
+        exe_dir = os.path.dirname(os.path.realpath(sys.executable))
         candidates = [
             os.path.join(exe_dir, "_internal", *subpaths),
             os.path.join(exe_dir, *subpaths),
@@ -132,7 +133,7 @@ def get_user_data_path(*subpaths) -> str:
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
     except (PermissionError, OSError):
-        USER_DATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Akira")
+        USER_DATA_DIR = get_default_user_data_dir()
         CONFIG_DIR = os.path.join(USER_DATA_DIR, "configs")
         CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
         CREATOR_KEY_FILE = os.path.join(CONFIG_DIR, "creator.key")
