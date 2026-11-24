@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 
 os.environ["HF_HUB_OFFLINE"] = "1"
@@ -746,6 +747,123 @@ class CommandParser:
 
         return None
 
+    def _start_movie_playback(self, movie: dict, user_display: str, is_whisper: bool, is_choice: bool = False) -> dict:
+        if not vlc_player.is_available():
+            if sys.platform != "win32":
+                warn_msg = (
+                    "Для воспроизведения видео на Linux мне нужно скачать и установить плеер VLC. "
+                    "Сейчас загружу его (может появиться запрос пароля системы) и сразу продолжу!"
+                )
+                return {
+                    "user_display": user_display,
+                    "chat": warn_msg,
+                    "voice": warn_msg,
+                    "emotion": "neutral",
+                    "is_whisper": is_whisper,
+                    "action": "install_vlc_and_play",
+                    "movie_payload": {
+                        "magnet": movie["magnet"],
+                        "title": movie["title"],
+                        "is_series": movie.get("is_series", False),
+                    },
+                }
+
+            installed = vlc_player.install_silent()
+            if not installed:
+                vlc_player.open_download_page()
+                ans = "Не удалось установить VLC плеер автоматически. Открываю сайт."
+                return {
+                    "user_display": user_display,
+                    "chat": ans,
+                    "voice": ans,
+                    "emotion": "neutral",
+                    "is_whisper": is_whisper,
+                }
+
+        if vlc_player.needs_initial_setup():
+            vlc_player.open_for_setup()
+            if is_choice:
+                ans = (
+                    "Я установила VLC плеер и открыла его! Пожалуйста, подтверди начальную настройку в окне плеера "
+                    "(выбери нужные галочки и нажми «Продолжить»), а затем назови вариант фильма снова."
+                )
+                voice_ans = "Подтверди начальную настройку в окне плеера и назови вариант снова."
+                res = {
+                    "user_display": user_display,
+                    "chat": ans,
+                    "voice": voice_ans,
+                    "emotion": "neutral",
+                    "is_whisper": is_whisper,
+                    "followup": True,
+                }
+            else:
+                ans = (
+                    "Я установила VLC плеер и открыла его! Пожалуйста, подтверди начальную настройку в окне плеера "
+                    "(выбери нужные галочки и нажми «Продолжить»), а затем повтори команду."
+                )
+                res = {
+                    "user_display": user_display,
+                    "chat": ans,
+                    "voice": "Подтверди начальную настройку в окне плеера и скажи снова.",
+                    "emotion": "neutral",
+                    "is_whisper": is_whisper,
+                }
+            return res
+
+        if sys.platform != "win32" and not torr_manager.is_binary_installed():
+            warn_msg = (
+                "Для потокового просмотра фильмов на Linux мне нужно скачать движок TorrServer. "
+                "Сейчас загружу его и сразу включу кино!"
+            )
+            return {
+                "user_display": user_display,
+                "chat": warn_msg,
+                "voice": warn_msg,
+                "emotion": "neutral",
+                "is_whisper": is_whisper,
+                "action": "download_torrserver_and_play",
+                "movie_payload": {
+                    "magnet": movie["magnet"],
+                    "title": movie["title"],
+                    "is_series": movie.get("is_series", False),
+                },
+            }
+
+        stream_url = torr_manager.get_stream_url(movie["magnet"], is_series=movie.get("is_series", False))
+        if not stream_url:
+            if is_choice:
+                ans = f"В раздаче «{movie['title']}» не нашлось видеофайлов. Попробуй выбрать другой вариант!"
+                voice_ans = "Там нет видеофайлов. Выбери другой вариант."
+                res = {
+                    "user_display": user_display,
+                    "chat": ans,
+                    "voice": voice_ans,
+                    "emotion": "sad",
+                    "is_whisper": is_whisper,
+                    "followup": True,
+                }
+            else:
+                ans = f"В раздаче «{movie['title']}» не нашлось видеофайлов."
+                res = {
+                    "user_display": user_display,
+                    "chat": ans,
+                    "voice": "В раздаче не нашлось видеофайлов.",
+                    "emotion": "sad",
+                    "is_whisper": is_whisper,
+                }
+            return res
+
+        vlc_player.play(stream_url, movie["title"])
+        ans = f"Подключаюсь к раздаче «{movie['title']}» и буферизирую поток... Открываю VLC 🍿"
+        voice_ans = "Подключаюсь к раздаче. Буферизирую поток, фильм сейчас начнется!"
+        return {
+            "user_display": user_display,
+            "chat": ans,
+            "voice": voice_ans,
+            "emotion": "happy",
+            "is_whisper": is_whisper,
+        }
+
     def process_command(self, text, audio_data=None, is_voice=False, attached_file=None):
         if not text and not attached_file:
             return ""
@@ -1235,59 +1353,7 @@ class CommandParser:
                 movie = self.movie_results[selected_idx - 1]
                 self.waiting_for_movie_choice = False
                 self.movie_results = []
-
-                if not vlc_player.is_available():
-                    installed = vlc_player.install_silent()
-                    if not installed:
-                        vlc_player.open_download_page()
-                        ans = "Не удалось установить VLC плеер автоматически. Открываю сайт."
-                        return {
-                            "user_display": f"Вариант {selected_idx}",
-                            "chat": ans,
-                            "voice": ans,
-                            "emotion": "neutral",
-                            "is_whisper": is_whisper
-                        }
-
-                if vlc_player.needs_initial_setup():
-                    vlc_player.open_for_setup()
-                    ans = (
-                        "Я установила VLC плеер и открыла его! Пожалуйста, подтверди начальную настройку в окне плеера "
-                        "(выбери нужные галочки и нажми «Продолжить»), а затем назови вариант фильма снова."
-                    )
-                    return {
-                        "user_display": f"Вариант {selected_idx}",
-                        "chat": ans,
-                        "voice": "Подтверди начальную настройку в окне плеера и назови вариант снова.",
-                        "emotion": "neutral",
-                        "is_whisper": is_whisper,
-                        "followup": True
-                    }
-
-                stream_url = torr_manager.get_stream_url(movie["magnet"], is_series=movie.get("is_series", False))
-                if not stream_url:
-                    ans = f"В раздаче «{movie['title']}» не нашлось видеофайлов. Попробуй выбрать другой вариант!"
-                    return {
-                        "user_display": f"Вариант {selected_idx}",
-                        "chat": ans,
-                        "voice": "Там нет видеофайлов. Выбери другой вариант.",
-                        "emotion": "sad",
-                        "is_whisper": is_whisper,
-                        "followup": True
-                    }
-
-                vlc_player.play(stream_url, movie["title"])
-
-                ans = f"Подключаюсь к раздаче «{movie['title']}» и буферизирую поток... Открываю VLC 🍿"
-                voice_ans = "Подключаюсь к раздаче. Буферизирую поток, фильм сейчас начнется!"
-
-                return {
-                    "user_display": f"Вариант {selected_idx}",
-                    "chat": ans,
-                    "voice": voice_ans,
-                    "emotion": "happy",
-                    "is_whisper": is_whisper
-                }
+                return self._start_movie_playback(movie, f"Вариант {selected_idx}", is_whisper, is_choice=True)
 
             ans = f"Назови номер от 1 до {len(self.movie_results)} или скажи «отмена»."
             return {"user_display": user_display, "chat": ans, "voice": ans, "emotion": "neutral",
@@ -1342,34 +1408,7 @@ class CommandParser:
                         "is_whisper": is_whisper}
 
             if len(results) == 1:
-                movie = results[0]
-                if not vlc_player.is_available():
-                    installed = vlc_player.install_silent()
-                    if not installed:
-                        vlc_player.open_download_page()
-                        ans = "Не удалось установить VLC плеер автоматически. Открываю сайт."
-                        return {"user_display": user_display, "chat": ans, "voice": ans, "emotion": "neutral",
-                                "is_whisper": is_whisper}
-
-                if vlc_player.needs_initial_setup():
-                    vlc_player.open_for_setup()
-                    ans = (
-                        "Я установила VLC плеер и открыла его! Пожалуйста, подтверди начальную настройку в окне плеера "
-                        "(выбери нужные галочки и нажми «Продолжить»), а затем повтори команду."
-                    )
-                    return {"user_display": user_display, "chat": ans, "voice": "Подтверди начальную настройку в окне плеера и скажи снова.", "emotion": "neutral", "is_whisper": is_whisper}
-
-                stream_url = torr_manager.get_stream_url(movie["magnet"], is_series=movie.get("is_series", False))
-                if not stream_url:
-                    ans = f"В раздаче «{movie['title']}» не нашлось видеофайлов."
-                    return {"user_display": user_display, "chat": ans, "voice": "В раздаче не нашлось видеофайлов.", "emotion": "sad", "is_whisper": is_whisper}
-
-                vlc_player.play(stream_url, movie["title"])
-
-                ans = f"Подключаюсь к раздаче «{movie['title']}» и буферизирую поток... Открываю VLC 🍿"
-                voice_ans = "Подключаюсь к раздаче. Буферизирую поток, фильм сейчас начнется!"
-                return {"user_display": user_display, "chat": ans, "voice": voice_ans, "emotion": "happy",
-                        "is_whisper": is_whisper}
+                return self._start_movie_playback(results[0], user_display, is_whisper, is_choice=False)
 
             self.movie_results = results
             self.waiting_for_movie_choice = True
@@ -1526,10 +1565,11 @@ class CommandParser:
                     "emotion": emotion,
                     "is_whisper": is_whisper
                 }
+            max_z = len(getattr(zapret_manager, "STRATEGIES", [])) or 20
             return {
                 "user_display": user_display,
-                "chat": "Пожалуйста, назови или введи номер от 1 до 20 (или напиши 'отмена').",
-                "voice": "Скажи или введи число от одного до двадцати.",
+                "chat": f"Пожалуйста, назови или введи номер от 1 до {max_z} (или напиши 'отмена').",
+                "voice": f"Скажи или введи число от 1 до {max_z}.",
                 "emotion": emotion,
                 "is_whisper": is_whisper
             }
@@ -1583,7 +1623,8 @@ class CommandParser:
                         "is_whisper": is_whisper
                     }
 
-            names = [vpn_manager.VPN_DISPLAY_NAMES.get(k, k.title()) for k in options] if options else ["Browsec", "Sota", "Happ", "V2Ray", "WireGuard"]
+            fallback_keys = vpn_manager.SUPPORTED_VPNS
+            names = [vpn_manager.VPN_DISPLAY_NAMES.get(k, k.title()) for k in (options or fallback_keys)]
             return {
                 "user_display": user_display,
                 "chat": f"Не распознала вариант. Назови номер (1..{len(names)}) или имя VPN: {', '.join(names)} (или скажи 'отмена').",
@@ -1688,13 +1729,14 @@ class CommandParser:
         rule_intent = self._check_rules(text)
 
         if rule_intent == "start_zapret":
-            self.waiting_for_zapret = True
             res = SystemActions.start_zapret(text)
             if isinstance(res, dict):
+                self.waiting_for_zapret = True
                 res["user_display"] = "Включи обход блокировок"
                 res["emotion"] = emotion
                 res["is_whisper"] = is_whisper
                 return res
+            self.waiting_for_zapret = False
             return {"user_display": "Включи обход блокировок", "chat": str(res), "voice": str(res), "emotion": emotion, "is_whisper": is_whisper}
 
         if rule_intent == "stop_zapret":
@@ -1711,13 +1753,15 @@ class CommandParser:
             if explicit_vpn != "none":
                 disp = f"Включи {vpn_manager.VPN_DISPLAY_NAMES.get(explicit_vpn, explicit_vpn.title())}"
                 res = vpn_manager.connect(explicit_vpn)
-                return {"user_display": disp, "chat": "" if is_voice else res, "voice": res, "emotion": emotion, "is_whisper": is_whisper}
+                show_chat = res if (not is_voice or explicit_vpn not in vpn_manager.SUPPORTED_VPNS) else ""
+                return {"user_display": disp, "chat": show_chat, "voice": res, "emotion": emotion, "is_whisper": is_whisper}
 
             disp = "Включи VPN"
             installed = vpn_manager.detect_installed_vpns()
 
             if not installed:
-                msg = "У тебя не установлено ни одного поддерживаемого VPN-клиента (Browsec, Sota, Happ, V2Ray или WireGuard)."
+                supported_names = ", ".join(vpn_manager.VPN_DISPLAY_NAMES[k] for k in vpn_manager.SUPPORTED_VPNS)
+                msg = f"У тебя не установлено ни одного поддерживаемого VPN-клиента ({supported_names})."
                 return {"user_display": disp, "chat": msg, "voice": msg, "emotion": "surprise", "is_whisper": is_whisper}
 
             if len(installed) == 1:

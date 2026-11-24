@@ -1,4 +1,5 @@
 import os
+import sys
 import re
 import shutil
 import psutil
@@ -8,6 +9,11 @@ from services.vpn.adapters.gui_adapter import GuiAdapter
 
 
 class VpnManager:
+    SUPPORTED_VPNS = (
+        ("browsec", "sota", "happ", "v2ray", "wireguard")
+        if sys.platform == "win32"
+        else ("browsec", "sota", "happ")
+    )
     VPN_ALIASES = {
         "browsec": [
             "browsec", "броусек", "браусек", "бросек", "браусик", "броусик",
@@ -80,61 +86,75 @@ class VpnManager:
     def detect_installed_vpns(self) -> list[str]:
         """Определяет, какие VPN-клиенты установлены в системе у пользователя."""
         installed = []
+        is_win = sys.platform == "win32"
+
+        browsec_procs = ["browsec.exe", "browbox.exe", "browray.exe"] if is_win else ["browsec", "browsec-desktop", "browbox", "browray"]
+        sota_procs = ["sota connect.exe", "sotaconnect.exe", "sota.exe", "sotaconnectclient.exe"] if is_win else ["sota connect", "sotaconnect", "sota-connect", "sota", "sotaconnectclient"]
+        happ_procs = ["happ.exe"] if is_win else ["happ", "happ-desktop"]
 
         # 1. Browsec
         try:
-            if self.gui._find_browsec_target() or self.is_process_running(["browsec.exe", "browbox.exe", "browray.exe"]):
+            if self.gui._find_browsec_target() or self.is_process_running(browsec_procs):
                 installed.append("browsec")
         except Exception:
             pass
 
         # 2. Sota
         try:
-            if self.gui._find_sota_target() or self.is_process_running(["sota connect.exe", "sotaconnect.exe", "sota.exe", "sotaconnectclient.exe"]):
+            if self.gui._find_sota_target() or self.is_process_running(sota_procs):
                 installed.append("sota")
         except Exception:
             pass
 
         # 3. Happ
         try:
-            if self.gui._find_happ_target() or self.is_process_running(["happ.exe"]):
+            if self.gui._find_happ_target() or self.is_process_running(happ_procs):
                 installed.append("happ")
         except Exception:
             pass
 
-        # 4. V2Ray / Xray
-        try:
-            if (os.path.exists(r"C:\v2ray\v2ray.exe")
-                    or shutil.which("v2ray.exe")
-                    or shutil.which("xray.exe")
-                    or self.is_process_running(["v2ray.exe", "xray.exe"])):
-                installed.append("v2ray")
-        except Exception:
-            pass
+        if is_win:
+            # 4. V2Ray / Xray (только Windows)
+            try:
+                if (os.path.exists(r"C:\v2ray\v2ray.exe")
+                        or shutil.which("v2ray.exe")
+                        or shutil.which("xray.exe")
+                        or self.is_process_running(["v2ray.exe", "xray.exe"])):
+                    installed.append("v2ray")
+            except Exception:
+                pass
 
-        # 5. WireGuard
-        try:
-            prog_files = os.environ.get("PROGRAMFILES", r"C:\Program Files")
-            wg_path = os.path.join(prog_files, "WireGuard", "wireguard.exe")
-            if (os.path.exists(wg_path)
-                    or shutil.which("wireguard.exe")
-                    or self.is_process_running(["wireguard.exe"])):
-                installed.append("wireguard")
-        except Exception:
-            pass
+            # 5. WireGuard (только Windows)
+            try:
+                prog_files = os.environ.get("PROGRAMFILES", r"C:\Program Files")
+                wg_path = os.path.join(prog_files, "WireGuard", "wireguard.exe")
+                if (os.path.exists(wg_path)
+                        or shutil.which("wireguard.exe")
+                        or self.is_process_running(["wireguard.exe"])):
+                    installed.append("wireguard")
+            except Exception:
+                pass
 
         return installed
 
     def get_running_vpns(self) -> list[str]:
         """Возвращает список VPN-клиентов, которые запущены прямо сейчас."""
         running = []
-        checks = [
-            ("browsec", ["browsec.exe", "browbox.exe", "browray.exe"]),
-            ("sota", ["sota connect.exe", "sotaconnect.exe", "sota.exe", "sotaconnectclient.exe"]),
-            ("happ", ["happ.exe"]),
-            ("v2ray", ["v2ray.exe", "xray.exe"]),
-            ("wireguard", ["wireguard.exe"])
-        ]
+        if sys.platform == "win32":
+            checks = [
+                ("browsec", ["browsec.exe", "browbox.exe", "browray.exe"]),
+                ("sota", ["sota connect.exe", "sotaconnect.exe", "sota.exe", "sotaconnectclient.exe"]),
+                ("happ", ["happ.exe"]),
+                ("v2ray", ["v2ray.exe", "xray.exe"]),
+                ("wireguard", ["wireguard.exe"]),
+            ]
+        else:
+            checks = [
+                ("browsec", ["browsec", "browsec-desktop", "browbox", "browray"]),
+                ("sota", ["sota connect", "sotaconnect", "sota-connect", "sota", "sotaconnectclient"]),
+                ("happ", ["happ", "happ-desktop"]),
+            ]
+
         for key, procs in checks:
             if key == "browsec" and self.gui.is_browsec_tunnel_active():
                 running.append(key)
@@ -144,7 +164,10 @@ class VpnManager:
 
     def get_configured_vpn(self) -> str:
         cfg = load_config()
-        return cfg.get("vpn_service", "none").lower()
+        val = cfg.get("vpn_service", "none").lower()
+        if sys.platform != "win32" and val in ("v2ray", "wireguard"):
+            return "none"
+        return val
 
     def set_configured_vpn(self, vpn_type: str):
         cfg = load_config()
@@ -175,6 +198,10 @@ class VpnManager:
                 target = installed[0]
             else:
                 target = self.get_configured_vpn()
+
+        if sys.platform != "win32" and target in ("v2ray", "wireguard"):
+            disp = self.VPN_DISPLAY_NAMES.get(target, target)
+            return f"Клиент {disp} поддерживается только в Windows-версии. На Linux используй Sota Connect, Browsec или Happ."
 
         if target == "browsec":
             res = self.gui.connect_browsec()
@@ -211,6 +238,10 @@ class VpnManager:
                     target = installed[0]
                 else:
                     target = self.get_configured_vpn()
+
+        if sys.platform != "win32" and target in ("v2ray", "wireguard"):
+            disp = self.VPN_DISPLAY_NAMES.get(target, target)
+            return f"Клиент {disp} поддерживается только в Windows-версии. На Linux используй Sota Connect, Browsec или Happ."
 
         if target == "browsec":
             res = self.gui.disconnect_browsec()

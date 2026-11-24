@@ -3,6 +3,8 @@ import cv2
 import numpy as np
 import time
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer
+from core.utils.config import get_user_data_path
+from core.utils.platform_utils import IS_WINDOWS, get_default_user_data_dir, ensure_pkg_resources_shim
 
 
 class PresenceManager(QObject):
@@ -33,8 +35,14 @@ class PresenceManager(QObject):
         self.timer.stop()
 
     def load_owner_faces(self):
-        appdata_dir = os.environ.get("APPDATA", os.path.expanduser("~"))
-        owner_folder = os.path.join(appdata_dir, "Akira", "owner_face")
+        owner_folder = os.path.normpath(get_user_data_path("owner_face"))
+        if IS_WINDOWS:
+            legacy_folder = get_default_user_data_dir("owner_face")
+            has_primary_imgs = os.path.exists(owner_folder) and any(
+                f.lower().endswith((".jpg", ".jpeg", ".png")) for f in os.listdir(owner_folder)
+            )
+            if not has_primary_imgs and os.path.exists(legacy_folder):
+                owner_folder = legacy_folder
 
         cache_file = os.path.join(owner_folder, "encodings_cache.npy")
         self.owner_encodings = []
@@ -66,6 +74,7 @@ class PresenceManager(QObject):
                 pass
 
         try:
+            ensure_pkg_resources_shim()
             import face_recognition
             import cv2
             for file_path in image_files:
@@ -90,6 +99,7 @@ class PresenceManager(QObject):
 
     def verify_faces(self, frame_rgb):
         try:
+            ensure_pkg_resources_shim()
             import face_recognition
 
             small_frame = cv2.resize(frame_rgb, (0, 0), fx=0.5, fy=0.5)

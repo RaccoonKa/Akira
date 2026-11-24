@@ -19,6 +19,73 @@ except ImportError:
     _HAS_GIGACHAT = False
 
 
+def _get_linux_physical_adapter_info():
+    """
+    Определяет физический сетевой адаптер и его IPv4 на Linux через /proc/net/route + psutil,
+    исключая виртуальные интерфейсы VPN и контейнеров (tun*, wg*, sing*, browbox*, docker*, lo).
+    Возвращает (None, local_ip) или (None, None).
+    """
+    virtual_prefixes = (
+        "lo", "tun", "tap", "wg", "sing", "browbox", "browray",
+        "nekoray", "xray", "happ", "docker", "br-", "veth", "virbr", "ppp", "utun",
+    )
+    try:
+        import psutil
+
+        if_addrs = psutil.net_if_addrs()
+        if_stats = psutil.net_if_stats()
+        candidates = []
+
+        if os.path.isfile("/proc/net/route"):
+            with open("/proc/net/route", "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.read().splitlines()
+            for line in lines[1:]:
+                cols = line.split()
+                if len(cols) < 8:
+                    continue
+                iface, dest, _gw, _flags, _ref, _use, metric, mask = cols[:8]
+                iface_low = iface.lower()
+                if iface_low.startswith(virtual_prefixes):
+                    continue
+                if dest != "00000000" or mask != "00000000":
+                    continue
+                stat = if_stats.get(iface)
+                if stat is not None and not getattr(stat, "isup", True):
+                    continue
+                for addr in if_addrs.get(iface, []):
+                    if getattr(addr, "family", None) == socket.AF_INET:
+                        ip = addr.address
+                        if ip and not ip.startswith(("127.", "169.254.")):
+                            try:
+                                m_val = int(metric)
+                            except ValueError:
+                                m_val = 9999
+                            candidates.append((m_val, ip))
+                            break
+
+        if candidates:
+            candidates.sort(key=lambda x: x[0])
+            return None, candidates[0][1]
+
+        # Запасной поиск: поднятый физический Ethernet/Wi-Fi интерфейс с IPv4
+        for iface, addrs in if_addrs.items():
+            iface_low = iface.lower()
+            if iface_low.startswith(virtual_prefixes):
+                continue
+            stat = if_stats.get(iface)
+            if stat is not None and not getattr(stat, "isup", False):
+                continue
+            for addr in addrs:
+                if getattr(addr, "family", None) == socket.AF_INET:
+                    ip = addr.address
+                    if ip and not ip.startswith(("127.", "169.254.")):
+                        return None, ip
+    except Exception as e:
+        print(f"[Linux Network Info Error]: {e}")
+
+    return None, None
+
+
 def _get_physical_adapter_info():
     """
     Определяет реальный физический сетевой адаптер (Wi-Fi / Ethernet) в обход виртуальных
@@ -26,7 +93,7 @@ def _get_physical_adapter_info():
     Возвращает (ifIndex, local_ip) или (None, None).
     """
     if sys.platform != "win32":
-        return None, None
+        return _get_linux_physical_adapter_info()
 
     try:
         class MIB_IPFORWARDROW(ctypes.Structure):

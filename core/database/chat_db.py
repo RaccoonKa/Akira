@@ -4,6 +4,7 @@ import sqlite3
 import threading
 from datetime import datetime
 from core.utils.config import get_user_data_path
+from core.utils.platform_utils import get_default_user_data_dir
 
 
 def get_db_path() -> str:
@@ -12,7 +13,7 @@ def get_db_path() -> str:
     try:
         os.makedirs(sql_dir, exist_ok=True)
     except (PermissionError, OSError):
-        sql_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Akira", "sql")
+        sql_dir = get_default_user_data_dir("sql")
         os.makedirs(sql_dir, exist_ok=True)
 
     new_path = os.path.join(sql_dir, "studio_chats.db")

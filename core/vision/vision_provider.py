@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal
 from core.utils.config import load_config
+from core.utils.platform_utils import open_video_capture
 
 
 class VisionThread(QThread):
@@ -109,7 +110,7 @@ class VisionThread(QThread):
                 self.gesture_detector = None
 
             if cap is None or not cap.isOpened():
-                cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
+                cap = open_video_capture(self.camera_index)
                 if cap.isOpened():
                     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
                     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
