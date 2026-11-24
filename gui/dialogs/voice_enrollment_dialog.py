@@ -549,19 +549,16 @@ class VoiceEnrollmentDialog(QDialog):
             self.action_btn.setText("Повторить фразу")
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-            event.accept()
+        from gui.ui_helpers import handle_drag_press
+        handle_drag_press(self, event)
 
     def mouseMoveEvent(self, event):
-        if event.buttons() == Qt.MouseButton.LeftButton and not self.drag_position.isNull():
-            self.move(event.globalPosition().toPoint() - self.drag_position)
-            event.accept()
+        from gui.ui_helpers import handle_drag_move
+        handle_drag_move(self, event)
 
     def mouseReleaseEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.drag_position = QPoint()
-            event.accept()
+        from gui.ui_helpers import handle_drag_release
+        handle_drag_release(self, event)
 
     def paintEvent(self, event):
         painter = QPainter(self)

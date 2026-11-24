@@ -554,8 +554,9 @@ class ModeConfigDialog(QDialog):
             t_lbl.setStyleSheet(f"color: {t_color}; background: transparent; border: none;")
             text_container.addWidget(t_lbl)
 
+            from gui.ui_helpers import get_monospace_font
             sub_lbl = QLabel(subtitle)
-            sub_lbl.setFont(QFont("Consolas", 8))
+            sub_lbl.setFont(get_monospace_font(8))
             sub_color = "#555e6d" if is_light else "rgba(255, 253, 231, 0.48)"
             sub_lbl.setStyleSheet(f"color: {sub_color}; background: transparent; border: none;")
             text_container.addWidget(sub_lbl)
@@ -614,11 +615,16 @@ class ModeConfigDialog(QDialog):
         self.site_input.clear()
 
     def _choose_app_file(self):
+        import sys
+        if sys.platform == "win32":
+            file_filter = "Исполняемые файлы (*.exe *.lnk *.bat *.cmd);;Все файлы (*.*)"
+        else:
+            file_filter = "Программы и ярлыки (*.desktop *.sh *.AppImage);;Все файлы (*)"
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Выбор программы",
             "",
-            "Исполняемые файлы (*.exe *.lnk *.bat *.cmd);;Все файлы (*.*)"
+            file_filter
         )
         if file_path and file_path not in self.items:
             self.items.append(file_path)
@@ -646,14 +652,16 @@ class ModeConfigDialog(QDialog):
         event.accept()
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-            event.accept()
+        from gui.ui_helpers import handle_drag_press
+        handle_drag_press(self, event)
 
     def mouseMoveEvent(self, event):
-        if event.buttons() == Qt.MouseButton.LeftButton and not self.drag_position.isNull():
-            self.move(event.globalPosition().toPoint() - self.drag_position)
-            event.accept()
+        from gui.ui_helpers import handle_drag_move
+        handle_drag_move(self, event)
+
+    def mouseReleaseEvent(self, event):
+        from gui.ui_helpers import handle_drag_release
+        handle_drag_release(self, event)
 
     def paintEvent(self, event):
         painter = QPainter(self)

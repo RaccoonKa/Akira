@@ -3,7 +3,6 @@ import sys
 import re
 import html
 import math
-import winreg
 import shutil
 import wave
 from PyQt6.QtWidgets import (
@@ -33,6 +32,7 @@ from gui.dialogs.routerai_auth_dialog import RouterAiAuthDialog
 from services.spotify.spotify_manager import SpotifyManager
 from gui.dialogs.mode_config_dialog import ModeConfigDialog
 from gui.dialogs.face_manager_dialog import FaceManagerDialog
+from gui.ui_helpers import MONO_CSS_FAMILY
 
 
 def is_valid_wav(path: str) -> bool:
@@ -519,7 +519,7 @@ class ApiGuideDialog(QDialog):
         # 1. Подсветка URL и доменов
         url_pattern = re.compile(r'(https?://[^\s)]+|(?:oauth|developers|developer)\.[a-z0-9.-]+(?:/[^\s)]*)?)')
         escaped = url_pattern.sub(
-            rf'<span style="font-family: Consolas, monospace; background-color: {url_bg}; color: {url_fg};">\1</span>',
+            rf'<span style="font-family: {MONO_CSS_FAMILY}; background-color: {url_bg}; color: {url_fg};">\1</span>',
             escaped
         )
 
@@ -980,12 +980,14 @@ class SettingsFrame(QFrame):
         self.yandex_iot_token = ""
         self._is_loading = True
 
+        from gui.ui_helpers import get_ui_fallback_font
         font_path = get_resource_path("assets", "fonts", "Arian_normal.otf")
         font_id = QFontDatabase.addApplicationFont(font_path)
         if font_id != -1:
-            self.font_family = QFontDatabase.applicationFontFamilies(font_id)[0]
+            families = QFontDatabase.applicationFontFamilies(font_id)
+            self.font_family = families[0] if families else get_ui_fallback_font()
         else:
-            self.font_family = "Arial"
+            self.font_family = get_ui_fallback_font()
 
         self.custom_font = QFont(self.font_family, 11)
         self.setFont(self.custom_font)
@@ -1656,29 +1658,95 @@ class SettingsFrame(QFrame):
             self.auto_save()
             QTimer.singleShot(2000, lambda: self.status_label.setText(""))
 
-    def _apply_windows_autostart(self, enabled: bool):
-        app_name = "AkiraAssistant"
+    def _apply_autostart(self, enabled: bool):
+        if sys.platform == "win32":
+            import winreg
+            app_name = "AkiraAssistant"
+            if getattr(sys, "frozen", False):
+                exec_cmd = f'"{sys.executable}"'
+            else:
+                script_path = os.path.abspath(sys.argv[0])
+                python_exe = sys.executable
+                pythonw = os.path.join(os.path.dirname(python_exe), "pythonw.exe")
+                exec_cmd = f'"{pythonw}" "{script_path}"' if os.path.exists(pythonw) else f'"{python_exe}" "{script_path}"'
+
+            key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+            try:
+                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_ALL_ACCESS)
+                if enabled:
+                    winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, exec_cmd)
+                else:
+                    try:
+                        winreg.DeleteValue(key, app_name)
+                    except FileNotFoundError:
+                        pass
+                winreg.CloseKey(key)
+            except Exception as e:
+                print(f"[Autostart Reg Error]: {e}")
+            return
+
+        # Linux (Linux Mint Cinnamon / FreeDesktop ~/.config/autostart/akira.desktop)
+        config_home = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+        autostart_dir = os.path.join(config_home, "autostart")
+        desktop_file = os.path.join(autostart_dir, "akira.desktop")
+
+        if not enabled:
+            try:
+                if os.path.exists(desktop_file):
+                    os.remove(desktop_file)
+            except Exception as e:
+                print(f"[Autostart Desktop Remove Error]: {e}")
+            return
+
+        def _desktop_quote(arg: str) -> str:
+            if any(c in arg for c in (' ', '\t', '"', '\\', "'", '$', '`')):
+                return '"' + arg.replace('\\', '\\\\').replace('"', '\\"') + '"'
+            return arg
+
         if getattr(sys, "frozen", False):
-            exec_cmd = f'"{sys.executable}"'
+            appimage_path = os.environ.get("APPIMAGE")
+            launch_bin = (
+                os.path.abspath(appimage_path)
+                if appimage_path and os.path.exists(appimage_path)
+                else os.path.realpath(sys.executable)
+            )
+            exec_line = _desktop_quote(launch_bin)
+            work_dir = os.path.dirname(launch_bin)
         else:
             script_path = os.path.abspath(sys.argv[0])
-            python_exe = sys.executable
-            pythonw = os.path.join(os.path.dirname(python_exe), "pythonw.exe")
-            exec_cmd = f'"{pythonw}" "{script_path}"' if os.path.exists(pythonw) else f'"{python_exe}" "{script_path}"'
+            exec_line = f"{_desktop_quote(sys.executable)} {_desktop_quote(script_path)}"
+            work_dir = os.path.dirname(script_path)
 
-        key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+        icon_val = "akira"
+        for cand in (
+            get_resource_path("assets", "icon", "png", "akira_icon.png"),
+            get_resource_path("assets", "icons", "tray_icon.png"),
+        ):
+            if cand and os.path.exists(cand):
+                icon_val = cand
+                break
+
+        lines = [
+            "[Desktop Entry]",
+            "Type=Application",
+            "Version=1.0",
+            "Name=Akira",
+            "Comment=Голосовой ассистент Акира",
+            f"Exec={exec_line}",
+            f"Icon={icon_val}",
+            "Terminal=false",
+            "Categories=Utility;",
+            "X-GNOME-Autostart-enabled=true",
+        ]
+        if work_dir and os.path.isdir(work_dir):
+            lines.insert(6, f"Path={work_dir}")
+
         try:
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_ALL_ACCESS)
-            if enabled:
-                winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, exec_cmd)
-            else:
-                try:
-                    winreg.DeleteValue(key, app_name)
-                except FileNotFoundError:
-                    pass
-            winreg.CloseKey(key)
+            os.makedirs(autostart_dir, exist_ok=True)
+            with open(desktop_file, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
         except Exception as e:
-            print(f"[Autostart Reg Error]: {e}")
+            print(f"[Autostart Desktop Write Error]: {e}")
 
     def _on_preview_playing_changed(self):
         if self.preview_sound.isPlaying():
@@ -2206,7 +2274,7 @@ class SettingsFrame(QFrame):
 
         autostart_val = self.autostart_toggle.isChecked()
         config_data["autostart"] = autostart_val
-        self._apply_windows_autostart(autostart_val)
+        self._apply_autostart(autostart_val)
 
         theme_val = self.theme_combo.currentData()
         config_data["theme"] = theme_val

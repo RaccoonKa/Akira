@@ -241,10 +241,11 @@ class FaceManagerDialog(QDialog):
             bottom_bar.setContentsMargins(2, 0, 2, 0)
             bottom_bar.setSpacing(4)
 
+            from gui.ui_helpers import MONO_CSS_FAMILY
             name_lbl = QLabel(filename)
             name_lbl.setFont(QFont(self.font_family, 7))
             name_color = "rgba(17, 19, 24, 0.75)" if self.current_theme == "light" else "rgba(255, 253, 231, 0.65)"
-            name_lbl.setStyleSheet(f"color: {name_color}; font-family: 'Consolas', monospace;")
+            name_lbl.setStyleSheet(f"color: {name_color}; font-family: {MONO_CSS_FAMILY};")
             bottom_bar.addWidget(name_lbl, 1)
 
             del_btn = QPushButton("✕")
@@ -303,14 +304,16 @@ class FaceManagerDialog(QDialog):
         event.accept()
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-            event.accept()
+        from gui.ui_helpers import handle_drag_press
+        handle_drag_press(self, event)
 
     def mouseMoveEvent(self, event):
-        if event.buttons() == Qt.MouseButton.LeftButton and not self.drag_position.isNull():
-            self.move(event.globalPosition().toPoint() - self.drag_position)
-            event.accept()
+        from gui.ui_helpers import handle_drag_move
+        handle_drag_move(self, event)
+
+    def mouseReleaseEvent(self, event):
+        from gui.ui_helpers import handle_drag_release
+        handle_drag_release(self, event)
 
     def paintEvent(self, event):
         painter = QPainter(self)

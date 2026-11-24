@@ -202,9 +202,10 @@ class YandexIotAuthDialog(QDialog):
         lbl_cid.setFont(QFont(self.font_family, 9, QFont.Weight.Bold))
         card_layout.addWidget(lbl_cid)
 
+        from gui.ui_helpers import get_monospace_font
         self.client_id_input = QLineEdit()
         self.client_id_input.setObjectName("SettingInput")
-        self.client_id_input.setFont(QFont("Consolas", 10))
+        self.client_id_input.setFont(get_monospace_font(10))
         self.client_id_input.setPlaceholderText("Вставь Client ID из oauth.yandex.ru...")
         self.client_id_input.setText(self.client_id)
         card_layout.addWidget(self.client_id_input)
@@ -302,14 +303,16 @@ class YandexIotAuthDialog(QDialog):
         event.accept()
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-            event.accept()
+        from gui.ui_helpers import handle_drag_press
+        handle_drag_press(self, event)
 
     def mouseMoveEvent(self, event):
-        if event.buttons() == Qt.MouseButton.LeftButton and not self.drag_position.isNull():
-            self.move(event.globalPosition().toPoint() - self.drag_position)
-            event.accept()
+        from gui.ui_helpers import handle_drag_move
+        handle_drag_move(self, event)
+
+    def mouseReleaseEvent(self, event):
+        from gui.ui_helpers import handle_drag_release
+        handle_drag_release(self, event)
 
     def paintEvent(self, event):
         painter = QPainter(self)

@@ -365,11 +365,12 @@ class RouterAiAuthDialog(QDialog):
         input_row = QHBoxLayout()
         input_row.setSpacing(7)
 
+        from gui.ui_helpers import get_monospace_font
         self.key_input = QLineEdit()
         self.key_input.setEchoMode(QLineEdit.EchoMode.PasswordEchoOnEdit)
         self.key_input.setPlaceholderText("sk-...")
         self.key_input.setFixedHeight(32)
-        self.key_input.setFont(QFont("Consolas", 10))
+        self.key_input.setFont(get_monospace_font(10))
 
         if self.existing_key:
             self.key_input.setText(self.existing_key)
@@ -528,19 +529,16 @@ class RouterAiAuthDialog(QDialog):
         super().closeEvent(event)
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-            event.accept()
+        from gui.ui_helpers import handle_drag_press
+        handle_drag_press(self, event)
 
     def mouseMoveEvent(self, event):
-        if event.buttons() == Qt.MouseButton.LeftButton and not self.drag_position.isNull():
-            self.move(event.globalPosition().toPoint() - self.drag_position)
-            event.accept()
+        from gui.ui_helpers import handle_drag_move
+        handle_drag_move(self, event)
 
     def mouseReleaseEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.drag_position = QPoint()
-            event.accept()
+        from gui.ui_helpers import handle_drag_release
+        handle_drag_release(self, event)
 
     def paintEvent(self, event):
         painter = QPainter(self)

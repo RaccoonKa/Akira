@@ -1,4 +1,5 @@
 import os
+import sys
 import math
 import random
 import shutil
@@ -20,14 +21,18 @@ from PyQt6.QtGui import (
 from core.utils.config import save_config, load_config, get_user_data_path, get_resource_path
 from gui.windows.settings_window import ModernToggle, NoScrollComboBox
 from gui.styles import get_main_style
+from gui.ui_helpers import handle_drag_press, handle_drag_move, handle_drag_release
 
 try:
-    from core.utils.blur import enable_window_acrylic
+    from gui.components.blur import enable_window_acrylic
 except ImportError:
     try:
-        from gui.utils.blur import enable_window_acrylic
+        from core.utils.blur import enable_window_acrylic
     except ImportError:
-        enable_window_acrylic = None
+        try:
+            from gui.utils.blur import enable_window_acrylic
+        except ImportError:
+            enable_window_acrylic = None
 
 WIZARD_DARK_EXTRA = """
 QFrame#WizardCard {
@@ -649,12 +654,14 @@ class OnboardingWizard(QDialog):
         self._init_window_icon()
         self.setWindowTitle("Akira")
 
+        from gui.ui_helpers import get_ui_fallback_font
         font_path = get_resource_path("assets", "fonts", "Arian_normal.otf")
         font_id = QFontDatabase.addApplicationFont(font_path)
         if font_id != -1:
-            self.font_family = QFontDatabase.applicationFontFamilies(font_id)[0]
+            families = QFontDatabase.applicationFontFamilies(font_id)
+            self.font_family = families[0] if families else get_ui_fallback_font()
         else:
-            self.font_family = "Arial"
+            self.font_family = get_ui_fallback_font()
 
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
@@ -665,13 +672,19 @@ class OnboardingWizard(QDialog):
 
     def _init_window_icon(self):
         ico_path = get_resource_path("assets", "icon", "ico", "akira_icon.ico")
-        png_path = get_resource_path("assets", "icon", "akira_icon.png")
+        png_path = get_resource_path("assets", "icon", "png", "akira_icon.png")
 
         app_icon = None
-        if os.path.exists(ico_path):
-            app_icon = QIcon(ico_path)
-        elif os.path.exists(png_path):
-            app_icon = QIcon(png_path)
+        if sys.platform == "win32":
+            if os.path.exists(ico_path):
+                app_icon = QIcon(ico_path)
+            elif os.path.exists(png_path):
+                app_icon = QIcon(png_path)
+        else:
+            if os.path.exists(png_path):
+                app_icon = QIcon(png_path)
+            elif os.path.exists(ico_path):
+                app_icon = QIcon(ico_path)
 
         if app_icon and not app_icon.isNull():
             self.setWindowIcon(app_icon)
@@ -1040,9 +1053,10 @@ class OnboardingWizard(QDialog):
         row_head.addWidget(btn_paste)
         cell_key_l.addLayout(row_head)
 
+        from gui.ui_helpers import get_monospace_font
         self.giga_input = QLineEdit()
         self.giga_input.setObjectName("WizardInput")
-        self.giga_input.setFont(QFont("Consolas", 10))
+        self.giga_input.setFont(get_monospace_font(10))
         initial_key = self.config.get("api_keys", {}).get("gigachat", "") if isinstance(self.config, dict) else ""
         self.giga_input.setText(initial_key)
         self.giga_input.setPlaceholderText("Вставь строку авторизационных данных Base64...")
@@ -1176,7 +1190,7 @@ class OnboardingWizard(QDialog):
             "Трекинг глаз", "Контроль усталости", mods.get("eye_tracking", False)
         )
         cell_auto, self.auto_toggle = _make_toggle_cell(
-            "Автозапуск", "Автоматический запуск вместе с Windows",
+            "Автозапуск", "Автоматический запуск вместе с системой",
             self.config.get("autostart", False) if isinstance(self.config, dict) else False,
             right_pad=26
         )
@@ -1349,16 +1363,13 @@ class OnboardingWizard(QDialog):
                 self.back_btn.hide()
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+        if handle_drag_press(self, event):
             event.accept()
 
     def mouseMoveEvent(self, event):
-        if event.buttons() == Qt.MouseButton.LeftButton and not self.drag_position.isNull():
-            self.move(event.globalPosition().toPoint() - self.drag_position)
+        if handle_drag_move(self, event):
             event.accept()
 
     def mouseReleaseEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.drag_position = QPoint()
+        if handle_drag_release(self, event):
             event.accept()

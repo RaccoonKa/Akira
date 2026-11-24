@@ -691,7 +691,8 @@ class ImageMediaCard(QFrame):
     def mouseDoubleClickEvent(self, event):
         if self.state == "ready" and self.image_path and os.path.exists(self.image_path):
             try:
-                os.startfile(self.image_path)
+                from core.utils.platform_utils import open_path
+                open_path(self.image_path)
             except Exception:
                 pass
         super().mouseDoubleClickEvent(event)
@@ -3206,13 +3207,14 @@ class StudioFrame(QFrame):
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
 
+        from gui.ui_helpers import get_ui_fallback_font
         ui_font_path = get_resource_path("assets", "fonts", "Arian_normal.otf")
         ui_font_id = QFontDatabase.addApplicationFont(ui_font_path)
         if ui_font_id != -1:
             families = QFontDatabase.applicationFontFamilies(ui_font_id)
-            self.font_family = families[0] if families else "Arial"
+            self.font_family = families[0] if families else get_ui_fallback_font()
         else:
-            self.font_family = "Arial"
+            self.font_family = get_ui_fallback_font()
 
         chat_font_path = get_resource_path("assets", "fonts", "J Audio Cassette.otf")
         chat_font_id = QFontDatabase.addApplicationFont(chat_font_path)

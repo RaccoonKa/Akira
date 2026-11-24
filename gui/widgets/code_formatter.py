@@ -1,5 +1,6 @@
 import os
 import re
+from gui.ui_helpers import MONO_CSS_FAMILY, get_monospace_font, get_ui_fallback_font
 import html
 from PyQt6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -501,9 +502,7 @@ class CodeBlockWidget(QFrame):
         display_lang = get_display_language(self.language)
         self.lang_label = QLabel(display_lang)
         self.lang_label.setObjectName("CodeLangLabel")
-        mono_small = QFont("Consolas", 8)
-        mono_small.setStyleHint(QFont.StyleHint.Monospace)
-        self.lang_label.setFont(mono_small)
+        self.lang_label.setFont(get_monospace_font(8))
         lang_box.addWidget(self.lang_label)
 
         self.header_layout.addWidget(self.lang_container, 0, Qt.AlignmentFlag.AlignLeft)
@@ -554,9 +553,7 @@ class CodeBlockWidget(QFrame):
         self.code_edit.setReadOnly(True)
         self.code_edit.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
 
-        mono_font = QFont("Consolas", 10)
-        mono_font.setStyleHint(QFont.StyleHint.Monospace)
-        self.code_edit.setFont(mono_font)
+        self.code_edit.setFont(get_monospace_font(10))
         self.code_edit.setPlainText(self.code)
         self.code_edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.code_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -849,7 +846,7 @@ def markdown_to_rich_html(text: str, theme: str = "dark") -> str:
         idx = len(inline_codes)
         snippet = m.group(1)
         inline_codes.append(
-            f'<span style="font-family: Consolas, monospace; background-color: {code_bg}; '
+            f'<span style="font-family: {MONO_CSS_FAMILY}; background-color: {code_bg}; '
             f'color: {code_fg}; padding: 1px 4px; border-radius: 4px;">{snippet}</span>'
         )
         return f"@@INLINE_CODE_{idx}@@"

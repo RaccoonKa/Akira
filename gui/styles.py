@@ -203,7 +203,7 @@ QLineEdit#SettingInput {
     border: 1px solid #78735f;
     border-radius: 6px;
     padding: 6px 10px;
-    font-family: 'Consolas', 'Segoe UI', monospace;
+    font-family: 'JetBrains Mono', 'DejaVu Sans Mono', 'Liberation Mono', 'Ubuntu Mono', 'Consolas', 'Segoe UI', 'Noto Sans', monospace;
     font-size: 11px;
 }
 QLineEdit#SettingInput:focus {
@@ -507,7 +507,7 @@ QLabel#ModeItemTitle {
 QLabel#ModeItemPath {
     color: rgba(255, 253, 231, 0.45);
     font-size: 9px;
-    font-family: 'Consolas', 'Segoe UI', monospace;
+    font-family: 'JetBrains Mono', 'DejaVu Sans Mono', 'Liberation Mono', 'Ubuntu Mono', 'Consolas', 'Segoe UI', 'Noto Sans', monospace;
 }
 
 QFrame#IotCard {
@@ -1022,7 +1022,7 @@ QLineEdit#SettingInput {
     border: 1.5px solid #111318;
     border-radius: 6px;
     padding: 6px 10px;
-    font-family: 'Consolas', 'Segoe UI', monospace;
+    font-family: 'JetBrains Mono', 'DejaVu Sans Mono', 'Liberation Mono', 'Ubuntu Mono', 'Consolas', 'Segoe UI', 'Noto Sans', monospace;
     font-size: 11px;
 }
 QLineEdit#SettingInput:focus {

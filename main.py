@@ -32,8 +32,18 @@ if getattr(sys, "frozen", False) or "__compiled__" in globals() or (
 # Автоматический запуск через .venv проекта, если скрипт запущен через глобальный Python в IDE
 if not getattr(sys, "frozen", False) and "__compiled__" not in globals():
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    venv_python = os.path.join(base_dir, ".venv", "Scripts", "python.exe")
-    if os.path.isfile(venv_python) and os.path.normcase(sys.executable) != os.path.normcase(venv_python):
+    venv_dir = os.path.join(base_dir, ".venv")
+    venv_python = (
+        os.path.join(venv_dir, "Scripts", "python.exe")
+        if sys.platform == "win32"
+        else os.path.join(venv_dir, "bin", "python")
+    )
+    in_project_venv = os.path.normcase(os.path.abspath(sys.prefix)) == os.path.normcase(os.path.abspath(venv_dir))
+    if (
+        os.path.isfile(venv_python)
+        and not in_project_venv
+        and os.path.normcase(os.path.abspath(sys.executable)) != os.path.normcase(os.path.abspath(venv_python))
+    ):
         import subprocess
         sys.exit(subprocess.call([venv_python] + sys.argv))
 
@@ -46,7 +56,9 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "1"
 
 # Гарантируем, что папка приложения и _internal находятся в sys.path
-app_dir = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, 'frozen', False) else __file__))
+app_dir = os.path.dirname(
+    os.path.realpath(sys.executable) if getattr(sys, 'frozen', False) else os.path.abspath(__file__)
+)
 for p in (app_dir, os.path.join(app_dir, "_internal")):
     if os.path.exists(p) and p not in sys.path:
         sys.path.insert(0, p)
@@ -62,14 +74,19 @@ try:
 except Exception:
     pass
 
-# Подключение DLL PyTorch в standalone-режиме
+# Подключение библиотек PyTorch в standalone-режиме
 torch_lib = os.path.join(app_dir, "torch", "lib")
 if os.path.isdir(torch_lib):
-    try:
-        os.add_dll_directory(torch_lib)
-    except Exception:
-        pass
-    os.environ["PATH"] = torch_lib + os.pathsep + os.environ.get("PATH", "")
+    if sys.platform == "win32" and hasattr(os, "add_dll_directory"):
+        try:
+            os.add_dll_directory(torch_lib)
+        except Exception:
+            pass
+        os.environ["PATH"] = torch_lib + os.pathsep + os.environ.get("PATH", "")
+    elif sys.platform != "win32":
+        ld_path = os.environ.get("LD_LIBRARY_PATH", "")
+        if torch_lib not in ld_path.split(os.pathsep):
+            os.environ["LD_LIBRARY_PATH"] = torch_lib + (os.pathsep + ld_path if ld_path else "")
 
 # Безопасный fallback для проверки версий зависимостей (transformers dependency_versions_check)
 try:
@@ -168,7 +185,7 @@ if "core.nlp.asr_corrector" not in sys.modules:
     _dummy_asr_mod.ASRCorrector = _LazyASRCorrector
     sys.modules['core.nlp.asr_corrector'] = _dummy_asr_mod
 
-# Логирование критических ошибок запуска в crash.log и нативное диалоговое окно Windows
+# Логирование критических ошибок запуска в crash.log и нативное диалоговое окно ошибки
 def _global_exception_handler(exc_type, exc_value, exc_traceback):
     if issubclass(exc_type, KeyboardInterrupt):
         sys.__excepthook__(exc_type, exc_value, exc_traceback)
@@ -177,17 +194,46 @@ def _global_exception_handler(exc_type, exc_value, exc_traceback):
     err_text = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
     try:
         from datetime import datetime
-        crash_log_path = os.path.join(os.environ.get("APPDATA", app_dir), "Akira", "crash.log")
+        from core.utils.platform_utils import get_default_user_data_dir
+        crash_log_path = os.path.join(get_default_user_data_dir(), "crash.log")
         os.makedirs(os.path.dirname(crash_log_path), exist_ok=True)
         with open(crash_log_path, "a", encoding="utf-8") as f:
             f.write(f"\n[{datetime.now()}] CRITICAL STARTUP ERROR:\n{err_text}\n")
     except Exception:
         pass
-    try:
-        import ctypes
-        ctypes.windll.user32.MessageBoxW(0, f"Ошибка запуска Akira:\n\n{err_text[:1200]}", "Akira Error", 0x10)
-    except Exception:
-        pass
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(0, f"Ошибка запуска Akira:\n\n{err_text[:1200]}", "Akira Error", 0x10)
+        except Exception:
+            pass
+    else:
+        shown = False
+        try:
+            from PyQt6.QtWidgets import QApplication, QMessageBox
+            if QApplication.instance() is not None:
+                QMessageBox.critical(None, "Akira Error", f"Ошибка запуска Akira:\n\n{err_text[:1200]}")
+                shown = True
+        except Exception:
+            pass
+        if not shown:
+            try:
+                import shutil
+                import subprocess
+                zenity_exe = shutil.which("zenity")
+                kdialog_exe = shutil.which("kdialog")
+                if zenity_exe:
+                    subprocess.Popen(
+                        [zenity_exe, "--error", "--title=Akira Error", f"--text=Ошибка запуска Akira:\n\n{err_text[:800]}"],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    )
+                elif kdialog_exe:
+                    subprocess.Popen(
+                        [kdialog_exe, "--error", f"Ошибка запуска Akira:\n\n{err_text[:800]}", "--title", "Akira Error"],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    )
+            except Exception:
+                pass
     sys.__excepthook__(exc_type, exc_value, exc_traceback)
 
 sys.excepthook = _global_exception_handler
@@ -225,23 +271,33 @@ qInstallMessageHandler(_qt_message_handler)
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QIcon
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
-from core.utils.config import load_config
+from core.utils.config import load_config, get_resource_path
 from gui.windows.chat_window import MainWindow
 from gui.components.tray import SystemTray
 from gui.dialogs.onboarding_wizard import OnboardingWizard
 
-def get_ico_path():
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    ico_path = os.path.join(base_dir, "assets", "icon", "ico", "akira_icon.ico")
-    if os.path.exists(ico_path):
-        return os.path.abspath(ico_path)
-    fallback_ico = os.path.join(base_dir, "assets", "icon", "icon.ico")
-    if os.path.exists(fallback_ico):
-        return os.path.abspath(fallback_ico)
+def get_app_icon_path():
+    if sys.platform == "win32":
+        candidates = [
+            get_resource_path("assets", "icon", "ico", "akira_icon.ico"),
+            get_resource_path("assets", "icon", "icon.ico"),
+            get_resource_path("assets", "icon", "png", "akira_icon.png"),
+        ]
+    else:
+        candidates = [
+            get_resource_path("assets", "icon", "png", "akira_icon.png"),
+            get_resource_path("assets", "icon", "ico", "akira_icon.ico"),
+        ]
+    for cand in candidates:
+        if cand and os.path.exists(cand):
+            return os.path.abspath(cand)
     return ""
 
+def get_ico_path():
+    return get_app_icon_path()
+
 def apply_native_windows_icon(hwnd, icon_path):
-    if not icon_path or not os.path.exists(icon_path):
+    if sys.platform != "win32" or not icon_path or not os.path.exists(icon_path):
         return
 
     wm_seticon = 0x0080
@@ -273,16 +329,69 @@ def apply_native_windows_icon(hwnd, icon_path):
         except AttributeError:
             ctypes.windll.user32.SetClassLongW(hwnd, gclp_hiconsm, h_icon_small)
 
-def main():
-    myappid = 'svetozar.akira.voiceassistant.5.0.0'
+def _sanitize_linux_qt_env():
+    """Убирает переопределения Qt5-путей от OpenCV (cv2/qt), мешающие PyQt6."""
+    if sys.platform == "win32":
+        return
+    for var in ("QT_QPA_PLATFORM_PLUGIN_PATH", "QT_QPA_FONTDIR", "QT_PLUGIN_PATH"):
+        val = os.environ.get(var, "")
+        if "cv2" in val.replace("\\", "/").split("/") or "cv2/qt" in val.replace("\\", "/"):
+            os.environ.pop(var, None)
+
+
+def _check_linux_qt_x11_prereqs():
+    """Проверяет наличие системной libxcb-cursor.so.0 до вызова QApplication на X11."""
+    if not sys.platform.startswith("linux"):
+        return
+    qpa = os.environ.get("QT_QPA_PLATFORM", "").strip().lower()
+    if qpa in ("offscreen", "minimal", "wayland", "wayland-egl", "linuxfb", "eglfs", "vnc"):
+        return
     try:
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+        from core.utils.platform_utils import is_wayland
+        if is_wayland():
+            return
     except Exception:
         pass
+
+    try:
+        ctypes.CDLL("libxcb-cursor.so.0")
+    except OSError:
+        msg = (
+            "Не найдена системная библиотека libxcb-cursor.so.0 (требуется для PyQt6 6.5+ на X11).\n\n"
+            "Установите её в терминале Linux Mint / Ubuntu командой:\n"
+            "sudo apt update && sudo apt install -y libxcb-cursor0 vlc libvlc5 xdotool scrot"
+        )
+        print(f"[Startup Error]: {msg}", file=sys.stderr, flush=True)
+        try:
+            import shutil
+            import subprocess
+            zenity_exe = shutil.which("zenity")
+            kdialog_exe = shutil.which("kdialog")
+            if zenity_exe:
+                subprocess.Popen([zenity_exe, "--error", "--title=Akira — не хватает пакетов", f"--text={msg}"])
+            elif kdialog_exe:
+                subprocess.Popen([kdialog_exe, "--error", msg, "--title", "Akira — не хватает пакетов"])
+        except Exception:
+            pass
+        sys.exit(1)
+
+
+def main():
+    if sys.platform == "win32":
+        myappid = 'svetozar.akira.voiceassistant.5.0.0'
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+        except Exception:
+            pass
+    else:
+        _sanitize_linux_qt_env()
+        _check_linux_qt_x11_prereqs()
 
     app = QApplication(sys.argv)
     app.setApplicationName("Akira")
     app.setApplicationDisplayName("Akira")
+    if sys.platform != "win32" and hasattr(app, "setDesktopFileName"):
+        app.setDesktopFileName("akira")
     app.setQuitOnLastWindowClosed(False)
 
     server_name = "AkiraVoiceAssistant_SingleInstance_IPC"
@@ -299,7 +408,7 @@ def main():
     server.removeServer(server_name)
     server.listen(server_name)
 
-    ico_path = get_ico_path()
+    ico_path = get_app_icon_path()
     app_icon = QIcon(ico_path) if ico_path else QIcon()
     app.setWindowIcon(app_icon)
 
@@ -311,8 +420,9 @@ def main():
         wizard.setWindowTitle("Akira")
         wizard.setWindowIcon(app_icon)
 
-        wizard_hwnd = int(wizard.winId())
-        apply_native_windows_icon(wizard_hwnd, ico_path)
+        if sys.platform == "win32":
+            wizard_hwnd = int(wizard.winId())
+            apply_native_windows_icon(wizard_hwnd, ico_path)
 
         wizard.exec()
         config = load_config()
@@ -328,12 +438,15 @@ def main():
             window.bring_to_front()
     server.newConnection.connect(handle_second_instance)
 
-    hwnd = int(window.winId())
-    apply_native_windows_icon(hwnd, ico_path)
+    if sys.platform == "win32":
+        hwnd = int(window.winId())
+        apply_native_windows_icon(hwnd, ico_path)
 
     window.show()
     window.bring_to_front()
-    apply_native_windows_icon(hwnd, ico_path)
+    if sys.platform == "win32":
+        hwnd = int(window.winId())
+        apply_native_windows_icon(hwnd, ico_path)
 
     tray = SystemTray(window, app)
     tray.show()

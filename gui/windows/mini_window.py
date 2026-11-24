@@ -8,12 +8,15 @@ from PyQt6.QtSvg import QSvgRenderer
 from core.utils.config import get_resource_path
 
 try:
-    from core.utils.blur import enable_window_acrylic
+    from gui.components.blur import enable_window_acrylic
 except ImportError:
     try:
-        from gui.utils.blur import enable_window_acrylic
+        from core.utils.blur import enable_window_acrylic
     except ImportError:
-        enable_window_acrylic = None
+        try:
+            from gui.utils.blur import enable_window_acrylic
+        except ImportError:
+            enable_window_acrylic = None
 
 SVG_POWER = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
 <path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/>
@@ -453,7 +456,9 @@ class MiniWindow(QWidget):
         self.input_field.clear()
 
     def show_at(self, x: int, y: int):
-        self.move(x, y)
+        from core.utils.platform_utils import is_wayland
+        if not is_wayland():
+            self.move(x, y)
         self.show()
         self.raise_()
         self.activateWindow()
@@ -490,16 +495,13 @@ class MiniWindow(QWidget):
         painter.drawPath(clip_path)
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-            event.accept()
+        from gui.ui_helpers import handle_drag_press
+        handle_drag_press(self, event)
 
     def mouseMoveEvent(self, event):
-        if event.buttons() == Qt.MouseButton.LeftButton and not self.drag_position.isNull():
-            self.move(event.globalPosition().toPoint() - self.drag_position)
-            event.accept()
+        from gui.ui_helpers import handle_drag_move
+        handle_drag_move(self, event)
 
     def mouseReleaseEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.drag_position = QPoint()
-            event.accept()
+        from gui.ui_helpers import handle_drag_release
+        handle_drag_release(self, event)

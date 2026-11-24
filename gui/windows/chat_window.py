@@ -1,4 +1,5 @@
 import os
+import sys
 import math
 import time
 import random
@@ -37,33 +38,51 @@ from core.vision.vision_provider import VisionThread
 from core.vision.presence_manager import PresenceManager
 from core.utils.config import get_resource_path, load_config, save_config
 from core.utils.updater import UpdateCheckerThread
-from comtypes import CoInitialize, CoUninitialize
+if sys.platform == "win32":
+    try:
+        from comtypes import CoInitialize, CoUninitialize
+    except ImportError:
+        CoInitialize = CoUninitialize = None
+else:
+    CoInitialize = CoUninitialize = None
 from core.system.volume_ducker import volume_ducker
 from core.system.activity_tracker import activity_tracker
 
-try:
-    import ctypes
-    from ctypes import wintypes
-    _dwmapi = ctypes.WinDLL("dwmapi")
-    _gdi32 = ctypes.WinDLL("gdi32")
-    _user32 = ctypes.windll.user32
+from core.utils.platform_utils import is_wayland
+from gui.ui_helpers import get_ui_fallback_font
 
-    _DwmSetWindowAttribute = _dwmapi.DwmSetWindowAttribute
-    _DwmSetWindowAttribute.argtypes = [ctypes.c_void_p, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
-    _DwmSetWindowAttribute.restype = ctypes.c_long
+if sys.platform == "win32":
+    try:
+        import ctypes
+        from ctypes import wintypes
+        _dwmapi = ctypes.WinDLL("dwmapi")
+        _gdi32 = ctypes.WinDLL("gdi32")
+        _user32 = ctypes.windll.user32
 
-    _DwmSetIconicThumbnail = _dwmapi.DwmSetIconicThumbnail
-    _DwmSetIconicThumbnail.argtypes = [ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD]
-    _DwmSetIconicThumbnail.restype = ctypes.c_long
+        _DwmSetWindowAttribute = _dwmapi.DwmSetWindowAttribute
+        _DwmSetWindowAttribute.argtypes = [ctypes.c_void_p, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+        _DwmSetWindowAttribute.restype = ctypes.c_long
 
-    _DwmInvalidateIconicBitmaps = _dwmapi.DwmInvalidateIconicBitmaps
-    _DwmInvalidateIconicBitmaps.argtypes = [ctypes.c_void_p]
-    _DwmInvalidateIconicBitmaps.restype = ctypes.c_long
+        _DwmSetIconicThumbnail = _dwmapi.DwmSetIconicThumbnail
+        _DwmSetIconicThumbnail.argtypes = [ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD]
+        _DwmSetIconicThumbnail.restype = ctypes.c_long
 
-    _DeleteObject = _gdi32.DeleteObject
-    _DeleteObject.argtypes = [ctypes.c_void_p]
-    _DeleteObject.restype = wintypes.BOOL
-except Exception:
+        _DwmInvalidateIconicBitmaps = _dwmapi.DwmInvalidateIconicBitmaps
+        _DwmInvalidateIconicBitmaps.argtypes = [ctypes.c_void_p]
+        _DwmInvalidateIconicBitmaps.restype = ctypes.c_long
+
+        _DeleteObject = _gdi32.DeleteObject
+        _DeleteObject.argtypes = [ctypes.c_void_p]
+        _DeleteObject.restype = wintypes.BOOL
+    except Exception:
+        _dwmapi = None
+        _gdi32 = None
+        _user32 = None
+        _DwmSetWindowAttribute = None
+        _DwmSetIconicThumbnail = None
+        _DwmInvalidateIconicBitmaps = None
+        _DeleteObject = None
+else:
     _dwmapi = None
     _gdi32 = None
     _user32 = None
@@ -79,15 +98,18 @@ DWMWA_HAS_ICONIC_BITMAP = 10
 from core.utils.text_cleaner import clean_chat_display_text, CHAT_ACTION_TAG_REGEX as ACTION_TAG_REGEX
 
 try:
-    from core.utils.blur import enable_window_acrylic
+    from gui.components.blur import enable_window_acrylic
 except ImportError:
     try:
-        from gui.utils.blur import enable_window_acrylic
+        from core.utils.blur import enable_window_acrylic
     except ImportError:
         try:
-            from blur import enable_window_acrylic
+            from gui.utils.blur import enable_window_acrylic
         except ImportError:
-            enable_window_acrylic = None
+            try:
+                from blur import enable_window_acrylic
+            except ImportError:
+                enable_window_acrylic = None
 
 warnings.filterwarnings("ignore", message="data discontinuity in recording")
 
@@ -328,19 +350,26 @@ class AudioVisualizerWorker(QThread):
         self.peak_level = 0.02
 
     def run(self):
+        if CoInitialize:
+            try:
+                CoInitialize()
+            except Exception:
+                pass
+
         try:
-            CoInitialize()
-        except Exception:
-            pass
+            import soundcard as sc
+            if hasattr(sc, "SoundcardRuntimeWarning"):
+                warnings.filterwarnings("ignore", category=sc.SoundcardRuntimeWarning)
+        except Exception as e:
+            print(f"[Audio Visualizer Warning]: soundcard недоступен: {e}")
+            return
 
-        import soundcard as sc
-        warnings.filterwarnings("ignore", category=sc.SoundcardRuntimeWarning)
-
+        last_err_ts = 0.0
         while self.running:
             try:
                 default_speaker = sc.default_speaker()
                 if not default_speaker:
-                    self.msleep(300)
+                    self.msleep(500)
                     continue
 
                 mic = None
@@ -356,44 +385,56 @@ class AudioVisualizerWorker(QThread):
                         mic = matching[0] if matching else loopbacks[0]
 
                 if not mic:
-                    self.msleep(300)
+                    self.msleep(500)
                     continue
 
-                try:
-                    recorder_ctx = mic.recorder(samplerate=None, blocksize=2048)
-                except Exception:
-                    recorder_ctx = mic.recorder(samplerate=44100, blocksize=2048)
+                rate_candidates = [48000, 44100] if sys.platform != "win32" else [None, 44100]
+                last_open_err = None
+                opened = False
+                for sr in rate_candidates:
+                    try:
+                        with mic.recorder(samplerate=sr, blocksize=2048) as recorder:
+                            opened = True
+                            while self.running:
+                                data = recorder.record(numframes=2048)
+                                if not self.running:
+                                    break
 
-                with recorder_ctx as recorder:
-                    while self.running:
-                        data = recorder.record(numframes=2048)
+                                samples = data[:, 0] if data.ndim > 1 else data
+                                rms = float(np.sqrt(np.mean(samples ** 2)))
+
+                                if rms < 0.002:
+                                    self.audio_data_signal.emit(0.0, 45.0, False)
+                                    continue
+
+                                fft_vals = np.abs(np.fft.rfft(samples))
+                                bass = float(np.sum(fft_vals[1:15]))
+
+                                raw = rms * 2.2 + bass * 0.0045
+                                self.peak_level = max(raw, self.peak_level * 0.985, 0.02)
+
+                                normalized = min(1.0, (raw / self.peak_level) ** 1.35)
+                                self.audio_data_signal.emit(normalized, 45.0, True)
+                        break
+                    except Exception as open_err:
+                        last_open_err = open_err
                         if not self.running:
                             break
-
-                        samples = data[:, 0] if data.ndim > 1 else data
-                        rms = float(np.sqrt(np.mean(samples ** 2)))
-
-                        if rms < 0.002:
-                            self.audio_data_signal.emit(0.0, 45.0, False)
-                            continue
-
-                        fft_vals = np.abs(np.fft.rfft(samples))
-                        bass = float(np.sum(fft_vals[1:15]))
-
-                        raw = rms * 2.2 + bass * 0.0045
-                        self.peak_level = max(raw, self.peak_level * 0.985, 0.02)
-
-                        normalized = min(1.0, (raw / self.peak_level) ** 1.35)
-                        self.audio_data_signal.emit(normalized, 45.0, True)
+                if not opened and last_open_err is not None and self.running:
+                    raise last_open_err
 
             except Exception as e:
-                print(f"[Audio Visualizer Error]: {e}")
-                self.msleep(300)
+                now_ts = time.time()
+                if now_ts - last_err_ts >= 30.0:
+                    print(f"[Audio Visualizer Error]: {e}")
+                    last_err_ts = now_ts
+                self.msleep(800)
 
-        try:
-            CoUninitialize()
-        except Exception:
-            pass
+        if CoUninitialize:
+            try:
+                CoUninitialize()
+            except Exception:
+                pass
 
     def stop(self):
         self.running = False
@@ -422,6 +463,84 @@ class CommandWorker(QThread):
             attached_file=self.attached_file
         )
         self.result_ready.emit(response)
+
+
+class TorrServerDownloadWorker(QThread):
+    """Фоновая загрузка движка TorrServer на Linux и последующий запуск фильма/сериала в VLC."""
+    playback_ready = pyqtSignal(str, str)
+    download_failed = pyqtSignal(str)
+
+    def __init__(self, movie_payload: dict, parent=None):
+        super().__init__(parent)
+        self.movie_payload = movie_payload or {}
+
+    def run(self):
+        from services.torrent.torrserver_manager import torr_manager
+
+        title = self.movie_payload.get("title", "Видео")
+        magnet = self.movie_payload.get("magnet", "")
+        is_series = bool(self.movie_payload.get("is_series", False))
+
+        ok, info = torr_manager.download_linux_binary()
+        if not ok:
+            self.download_failed.emit(f"Не удалось скачать TorrServer: {info}")
+            return
+
+        if not torr_manager.start_server():
+            self.download_failed.emit("TorrServer скачался, но не удалось запустить локальный сервер.")
+            return
+
+        stream_url = torr_manager.get_stream_url(magnet, is_series=is_series)
+        if not stream_url:
+            self.download_failed.emit(f"В раздаче «{title}» не нашлось видеофайлов.")
+            return
+
+        self.playback_ready.emit(stream_url, title)
+
+
+class VlcInstallWorker(QThread):
+    """Фоновая установка VLC на Linux с последующим переходом к TorrServer или запуску фильма."""
+    playback_ready = pyqtSignal(str, str)
+    need_torrserver = pyqtSignal(object)
+    install_failed = pyqtSignal(str)
+
+    def __init__(self, movie_payload: dict, parent=None):
+        super().__init__(parent)
+        self.movie_payload = movie_payload or {}
+
+    def run(self):
+        from core.system.actions import ym_manager
+        from services.torrent.torrserver_manager import torr_manager
+        from services.torrent.vlc_player import vlc_player
+
+        if not vlc_player.is_available():
+            if not vlc_player.install_silent():
+                self.install_failed.emit("Не удалось установить VLC плеер автоматически. Открываю сайт.")
+                return
+
+        try:
+            ym_manager.reinit_vlc()
+        except Exception:
+            pass
+
+        title = self.movie_payload.get("title", "Видео")
+        magnet = self.movie_payload.get("magnet", "")
+        is_series = bool(self.movie_payload.get("is_series", False))
+
+        if not torr_manager.is_binary_installed():
+            self.need_torrserver.emit(dict(self.movie_payload))
+            return
+
+        if not torr_manager.start_server():
+            self.install_failed.emit("VLC установлен, но не удалось запустить локальный сервер TorrServer.")
+            return
+
+        stream_url = torr_manager.get_stream_url(magnet, is_series=is_series)
+        if not stream_url:
+            self.install_failed.emit(f"В раздаче «{title}» не нашлось видеофайлов.")
+            return
+
+        self.playback_ready.emit(stream_url, title)
 
 
 class AkiraMicWidget(QFrame):
@@ -1917,6 +2036,8 @@ class MainWindow(QWidget):
                 pass
 
     def nativeEvent(self, eventType, message):
+        if sys.platform != "win32":
+            return False, 0
         if message and _dwmapi and _DwmSetIconicThumbnail:
             try:
                 ptr = int(message)
@@ -1961,43 +2082,97 @@ class MainWindow(QWidget):
         screen = QGuiApplication.primaryScreen()
         avail = screen.availableGeometry()
 
-        w = self.EXTENDED_WIDTH
+        if sys.platform == "win32":
+            w = self.EXTENDED_WIDTH
+        else:
+            w = (
+                self.EXTENDED_WIDTH
+                if getattr(self, "window_mode", "normal") == "extended"
+                else getattr(self, "NORMAL_WIDTH", 380)
+            )
         h = self.WINDOW_HEIGHT
         x = avail.x() + avail.width() - w - 20
         y = avail.y() + avail.height() - h - 20
-        start_y = avail.y() + avail.height() + 50
-
-        if not self.isVisible() or self.isMinimized():
-            self.setWindowState(Qt.WindowState.WindowNoState)
-            self.move(x, start_y)
-            super().showNormal()
-
-        self.raise_()
-        self.activateWindow()
-        if _user32 and hasattr(self, "winId"):
-            try:
-                hwnd = int(self.winId())
-                HWND_TOP = 0
-                SWP_NOMOVE = 0x0002
-                SWP_NOSIZE = 0x0001
-                SWP_SHOWWINDOW = 0x0040
-                _user32.SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
-                _user32.BringWindowToTop(hwnd)
-                _user32.SetForegroundWindow(hwnd)
-            except Exception:
-                pass
-
-        self.opening_anim = QPropertyAnimation(self, b"pos")
-        self.opening_anim.setDuration(450)
-        self.opening_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self.opening_anim.setStartValue(QPoint(x, start_y))
-        self.opening_anim.setEndValue(QPoint(x, y))
 
         def _on_opened():
             self._is_animating_window = False
             self._window_ready = True
             self._check_and_reveal()
 
+        if sys.platform != "win32" and is_wayland():
+            if not self.isVisible() or self.isMinimized():
+                self.setWindowState(Qt.WindowState.WindowNoState)
+                self.setWindowOpacity(0.0)
+                super().showNormal()
+            self.raise_()
+            self.activateWindow()
+
+            self.opening_anim = QPropertyAnimation(self, b"windowOpacity")
+            self.opening_anim.setDuration(280)
+            self.opening_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+            self.opening_anim.setStartValue(float(self.windowOpacity()))
+            self.opening_anim.setEndValue(1.0)
+            self.opening_anim.finished.connect(_on_opened)
+            self.opening_anim.start()
+            return
+
+        if sys.platform == "win32":
+            start_y = avail.y() + avail.height() + 50
+            if not self.isVisible() or self.isMinimized():
+                self.setWindowState(Qt.WindowState.WindowNoState)
+                self.move(x, start_y)
+                super().showNormal()
+
+            self.raise_()
+            self.activateWindow()
+            if _user32 and hasattr(self, "winId"):
+                try:
+                    hwnd = int(self.winId())
+                    HWND_TOP = 0
+                    SWP_NOMOVE = 0x0002
+                    SWP_NOSIZE = 0x0001
+                    SWP_SHOWWINDOW = 0x0040
+                    _user32.SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
+                    _user32.BringWindowToTop(hwnd)
+                    _user32.SetForegroundWindow(hwnd)
+                except Exception:
+                    pass
+
+            self.opening_anim = QPropertyAnimation(self, b"pos")
+            self.opening_anim.setDuration(450)
+            self.opening_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+            self.opening_anim.setStartValue(QPoint(x, start_y))
+            self.opening_anim.setEndValue(QPoint(x, y))
+            self.opening_anim.finished.connect(_on_opened)
+            self.opening_anim.start()
+            return
+
+        # Linux X11 (Cinnamon): стартуем внутри рабочей области (не за нижней панелью), + плавное появление
+        start_y = min(y + 36, max(y, avail.y() + avail.height() - 48))
+        if not self.isVisible() or self.isMinimized():
+            self.setWindowState(Qt.WindowState.WindowNoState)
+            self.setWindowOpacity(0.0)
+            self.move(x, start_y)
+            super().showNormal()
+
+        self.raise_()
+        self.activateWindow()
+
+        anim_pos = QPropertyAnimation(self, b"pos")
+        anim_pos.setDuration(320)
+        anim_pos.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim_pos.setStartValue(QPoint(x, start_y))
+        anim_pos.setEndValue(QPoint(x, y))
+
+        anim_op = QPropertyAnimation(self, b"windowOpacity")
+        anim_op.setDuration(320)
+        anim_op.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim_op.setStartValue(0.0)
+        anim_op.setEndValue(1.0)
+
+        self.opening_anim = QParallelAnimationGroup(self)
+        self.opening_anim.addAnimation(anim_pos)
+        self.opening_anim.addAnimation(anim_op)
         self.opening_anim.finished.connect(_on_opened)
         self.opening_anim.start()
 
@@ -2009,19 +2184,54 @@ class MainWindow(QWidget):
             self.opening_anim.stop()
 
         self._is_animating_window = True
-        full = QGuiApplication.primaryScreen().geometry()
-        target_y = full.y() + full.height() + 15
-
-        self.closing_anim = QPropertyAnimation(self, b"pos")
-        self.closing_anim.setDuration(450)
-        self.closing_anim.setEasingCurve(QEasingCurve.Type.InCubic)
-        self.closing_anim.setStartValue(self.pos())
-        self.closing_anim.setEndValue(QPoint(self.x(), target_y))
 
         def _on_closed():
             self._is_animating_window = False
             action_func()
+            if sys.platform != "win32":
+                self.setWindowOpacity(1.0)
 
+        if sys.platform != "win32" and is_wayland():
+            self.closing_anim = QPropertyAnimation(self, b"windowOpacity")
+            self.closing_anim.setDuration(250)
+            self.closing_anim.setEasingCurve(QEasingCurve.Type.InCubic)
+            self.closing_anim.setStartValue(float(self.windowOpacity()))
+            self.closing_anim.setEndValue(0.0)
+            self.closing_anim.finished.connect(_on_closed)
+            self.closing_anim.start()
+            return
+
+        if sys.platform == "win32":
+            full = QGuiApplication.primaryScreen().geometry()
+            target_y = full.y() + full.height() + 15
+
+            self.closing_anim = QPropertyAnimation(self, b"pos")
+            self.closing_anim.setDuration(450)
+            self.closing_anim.setEasingCurve(QEasingCurve.Type.InCubic)
+            self.closing_anim.setStartValue(self.pos())
+            self.closing_anim.setEndValue(QPoint(self.x(), target_y))
+            self.closing_anim.finished.connect(_on_closed)
+            self.closing_anim.start()
+            return
+
+        full = QGuiApplication.primaryScreen().geometry()
+        target_y = min(self.y() + 36, max(self.y(), full.y() + full.height() - 48))
+
+        anim_pos = QPropertyAnimation(self, b"pos")
+        anim_pos.setDuration(260)
+        anim_pos.setEasingCurve(QEasingCurve.Type.InCubic)
+        anim_pos.setStartValue(self.pos())
+        anim_pos.setEndValue(QPoint(self.x(), target_y))
+
+        anim_op = QPropertyAnimation(self, b"windowOpacity")
+        anim_op.setDuration(260)
+        anim_op.setEasingCurve(QEasingCurve.Type.InCubic)
+        anim_op.setStartValue(float(self.windowOpacity()))
+        anim_op.setEndValue(0.0)
+
+        self.closing_anim = QParallelAnimationGroup(self)
+        self.closing_anim.addAnimation(anim_pos)
+        self.closing_anim.addAnimation(anim_op)
         self.closing_anim.finished.connect(_on_closed)
         self.closing_anim.start()
 
@@ -2059,15 +2269,31 @@ class MainWindow(QWidget):
 
     def _update_click_mask(self, width: int):
         """Оставляет активной для мыши только видимую часть корпуса Акиры."""
+        if sys.platform != "win32":
+            self.clearMask()
+            return
         from PyQt6.QtGui import QRegion
         x_local = self.EXTENDED_WIDTH - width
         self.setMask(QRegion(x_local, 0, width, self.WINDOW_HEIGHT))
 
+    def _sync_linux_geometry(self, width: int, anchor_right: int | None = None):
+        """На Linux изменяет реальную ширину окна ОС (вместо прозрачного поля слева), чтобы предпросмотр в панели задач не содержал пустоты."""
+        target_w = max(self.NORMAL_WIDTH, min(self.EXTENDED_WIDTH, int(width)))
+        right_edge = anchor_right if anchor_right is not None else (self.x() + self.width())
+        self.setFixedSize(target_w, self.WINDOW_HEIGHT)
+        if not is_wayland():
+            self.move(right_edge - target_w, self.y())
+        self.bg_frame.setGeometry(0, 0, target_w, self.WINDOW_HEIGHT)
+        self.clearMask()
+
     def _on_expand_step(self, val):
         w = int(round(val))
-        x_local = self.EXTENDED_WIDTH - w
-        self.bg_frame.setGeometry(x_local, 0, w, self.WINDOW_HEIGHT)
-        self._update_click_mask(w)
+        if sys.platform == "win32":
+            x_local = self.EXTENDED_WIDTH - w
+            self.bg_frame.setGeometry(x_local, 0, w, self.WINDOW_HEIGHT)
+            self._update_click_mask(w)
+        else:
+            self._sync_linux_geometry(w, anchor_right=getattr(self, "_linux_anchor_right", None))
 
     def toggle_extended_mode(self):
         if getattr(self, '_is_mode_animating', False):
@@ -2079,6 +2305,8 @@ class MainWindow(QWidget):
         self.window_mode = "extended" if is_expanding else "normal"
         self.update_title_icons()
         self._is_mode_animating = True
+        if sys.platform != "win32":
+            self._linux_anchor_right = self.x() + self.width()
         
         if is_expanding:
             if self.right_panel.isVisible():
@@ -2099,8 +2327,11 @@ class MainWindow(QWidget):
             self.expand_anim.setEndValue(float(self.EXTENDED_WIDTH))
             
             def on_expand_finished():
-                self.bg_frame.setGeometry(0, 0, self.EXTENDED_WIDTH, self.WINDOW_HEIGHT)
-                self.clearMask()
+                if sys.platform == "win32":
+                    self.bg_frame.setGeometry(0, 0, self.EXTENDED_WIDTH, self.WINDOW_HEIGHT)
+                    self.clearMask()
+                else:
+                    self._sync_linux_geometry(self.EXTENDED_WIDTH, anchor_right=getattr(self, "_linux_anchor_right", None))
                 
                 self.studio_panel.show()
                 try:
@@ -2150,9 +2381,12 @@ class MainWindow(QWidget):
                 self.expand_anim.setEndValue(float(self.NORMAL_WIDTH))
                 
                 def on_collapse_finished():
-                    init_x = self.EXTENDED_WIDTH - self.NORMAL_WIDTH
-                    self.bg_frame.setGeometry(init_x, 0, self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
-                    self._update_click_mask(self.NORMAL_WIDTH)
+                    if sys.platform == "win32":
+                        init_x = self.EXTENDED_WIDTH - self.NORMAL_WIDTH
+                        self.bg_frame.setGeometry(init_x, 0, self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
+                        self._update_click_mask(self.NORMAL_WIDTH)
+                    else:
+                        self._sync_linux_geometry(self.NORMAL_WIDTH, anchor_right=getattr(self, "_linux_anchor_right", None))
                     self._is_mode_animating = False
                     self.invalidate_taskbar_thumbnail()
                     
@@ -2171,6 +2405,8 @@ class MainWindow(QWidget):
             return
 
         self._is_mode_animating = True
+        if sys.platform != "win32":
+            self._linux_anchor_right = self.x() + self.width()
 
         # Если открыт маленький чат или настройки — мягко закрываем их перед уходом в мини-режим
         if self.right_panel.isVisible() and self.right_panel.height() > 10:
@@ -2207,9 +2443,12 @@ class MainWindow(QWidget):
                 self.expand_anim.setEndValue(float(self.NORMAL_WIDTH))
 
                 def _after_studio_collapse():
-                    init_x = self.EXTENDED_WIDTH - self.NORMAL_WIDTH
-                    self.bg_frame.setGeometry(init_x, 0, self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
-                    self._update_click_mask(self.NORMAL_WIDTH)
+                    if sys.platform == "win32":
+                        init_x = self.EXTENDED_WIDTH - self.NORMAL_WIDTH
+                        self.bg_frame.setGeometry(init_x, 0, self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
+                        self._update_click_mask(self.NORMAL_WIDTH)
+                    else:
+                        self._sync_linux_geometry(self.NORMAL_WIDTH, anchor_right=getattr(self, "_linux_anchor_right", None))
                     self._start_mini_enter_transition()
 
                 self.expand_anim.finished.connect(_after_studio_collapse)
@@ -2224,7 +2463,7 @@ class MainWindow(QWidget):
         screen = QGuiApplication.primaryScreen().availableGeometry()
         cur_pos = self.pos()
 
-        visible_x = cur_pos.x() + (self.EXTENDED_WIDTH - self.NORMAL_WIDTH)
+        visible_x = cur_pos.x() + (self.EXTENDED_WIDTH - self.NORMAL_WIDTH) if sys.platform == "win32" else cur_pos.x()
         visible_y = cur_pos.y()
         target_x = visible_x + (self.NORMAL_WIDTH - 460)
         target_y = visible_y + (self.WINDOW_HEIGHT - 56)
@@ -2308,10 +2547,11 @@ class MainWindow(QWidget):
         screen = QGuiApplication.primaryScreen().availableGeometry()
         mini_pos = self.mini_window.pos()
 
-        target_x = mini_pos.x() + 460 - self.EXTENDED_WIDTH
+        target_w = self.EXTENDED_WIDTH if sys.platform == "win32" else self.NORMAL_WIDTH
+        target_x = mini_pos.x() + 460 - target_w
         target_y = mini_pos.y() + 56 - self.WINDOW_HEIGHT
 
-        target_x = max(screen.left() + 10, min(target_x, screen.right() - self.EXTENDED_WIDTH - 10))
+        target_x = max(screen.left() + 10, min(target_x, screen.right() - target_w - 10))
         target_y = max(screen.top() + 10, min(target_y, screen.bottom() - self.WINDOW_HEIGHT - 10))
 
         self.is_mini_mode = False
@@ -2339,9 +2579,12 @@ class MainWindow(QWidget):
 
         # Фаза 2: с нахлёстом 95 мс вверх выплывает основной корпус, а сфера распускается из ядра
         def _spawn_main():
-            init_x = self.EXTENDED_WIDTH - self.NORMAL_WIDTH
-            self.bg_frame.setGeometry(init_x, 0, self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
-            self._update_click_mask(self.NORMAL_WIDTH)
+            if sys.platform == "win32":
+                init_x = self.EXTENDED_WIDTH - self.NORMAL_WIDTH
+                self.bg_frame.setGeometry(init_x, 0, self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
+                self._update_click_mask(self.NORMAL_WIDTH)
+            else:
+                self._sync_linux_geometry(self.NORMAL_WIDTH, anchor_right=target_x + self.NORMAL_WIDTH)
 
             self.left_panel.set_emotion(self.mini_window.mini_mic.target_emotion)
             self.left_panel.trigger_morph_bloom(start_scale=0.35, duration=480)
@@ -2438,23 +2681,82 @@ class MainWindow(QWidget):
             if voice_text:
                 self.speak_reply(voice_text, is_whisper=False)
 
-            if isinstance(response, dict):
-                act = response.get("action")
-                if act == "enable_game_mode":
-                    QTimer.singleShot(600, lambda: self.toggle_game_mode(enable=True, announce=False))
-                elif act == "punitive_lock":
-                    QTimer.singleShot(1800, SystemActions.lock_screen)
-                elif act == "retaliation_track":
-                    QTimer.singleShot(1200, lambda: SystemActions.play_music("synthwave"))
+            self._handle_command_action(response)
+
+    def _handle_command_action(self, response):
+        if not isinstance(response, dict):
+            return
+        act = response.get("action")
+        if act == "enable_game_mode":
+            QTimer.singleShot(600, lambda: self.toggle_game_mode(enable=True, announce=False))
+        elif act == "punitive_lock":
+            QTimer.singleShot(1800, SystemActions.lock_screen)
+        elif act == "retaliation_track":
+            QTimer.singleShot(1200, lambda: SystemActions.play_music("synthwave"))
+        elif act == "install_vlc_and_play":
+            movie_payload = response.get("movie_payload") or {}
+            QTimer.singleShot(150, lambda p=movie_payload: self._start_vlc_install(p))
+        elif act == "download_torrserver_and_play":
+            movie_payload = response.get("movie_payload") or {}
+            QTimer.singleShot(150, lambda p=movie_payload: self._start_torrserver_download(p))
+
+    def _start_vlc_install(self, movie_payload: dict):
+        if getattr(self, "_vlc_install_worker", None) and self._vlc_install_worker.isRunning():
+            return
+        self._vlc_install_worker = VlcInstallWorker(movie_payload, parent=self)
+        self._vlc_install_worker.playback_ready.connect(self._on_vlc_playback_ready)
+        self._vlc_install_worker.need_torrserver.connect(self._on_vlc_need_torrserver)
+        self._vlc_install_worker.install_failed.connect(self._on_vlc_install_failed)
+        self._vlc_install_worker.start()
+
+    def _on_vlc_playback_ready(self, stream_url: str, title: str):
+        from services.torrent.vlc_player import vlc_player
+        vlc_player.play(stream_url, title)
+        chat_msg = f"VLC установлен! Подключаюсь к раздаче «{title}» и буферизирую поток... Открываю VLC 🍿"
+        voice_msg = "Плеер установлен! Буферизирую поток, фильм сейчас начнется."
+        self.stream_text_to_chat(chat_msg)
+        self.speak_reply(voice_msg, is_whisper=False)
+
+    def _on_vlc_need_torrserver(self, movie_payload: dict):
+        warn_msg = "Плеер VLC установлен! Теперь скачаю движок TorrServer и сразу включу кино!"
+        self.stream_text_to_chat(warn_msg)
+        self.speak_reply(warn_msg, is_whisper=False)
+        self._start_torrserver_download(movie_payload)
+
+    def _on_vlc_install_failed(self, err_msg: str):
+        from services.torrent.vlc_player import vlc_player
+        vlc_player.open_download_page()
+        self.stream_text_to_chat(f"⚠️ {err_msg}")
+        self.speak_reply("Не удалось автоматически установить VLC. Открываю страницу загрузки.", is_whisper=False)
+
+    def _start_torrserver_download(self, movie_payload: dict):
+        if getattr(self, "_torrserver_download_worker", None) and self._torrserver_download_worker.isRunning():
+            return
+        self._torrserver_download_worker = TorrServerDownloadWorker(movie_payload, parent=self)
+        self._torrserver_download_worker.playback_ready.connect(self._on_torrserver_playback_ready)
+        self._torrserver_download_worker.download_failed.connect(self._on_torrserver_download_failed)
+        self._torrserver_download_worker.start()
+
+    def _on_torrserver_playback_ready(self, stream_url: str, title: str):
+        from services.torrent.vlc_player import vlc_player
+        vlc_player.play(stream_url, title)
+        chat_msg = f"TorrServer установлен! Подключаюсь к раздаче «{title}» и буферизирую поток... Открываю VLC 🍿"
+        voice_msg = "Движок загружен! Буферизирую поток, фильм сейчас начнется."
+        self.stream_text_to_chat(chat_msg)
+        self.speak_reply(voice_msg, is_whisper=False)
+
+    def _on_torrserver_download_failed(self, err_msg: str):
+        self.stream_text_to_chat(f"⚠️ {err_msg}")
+        self.speak_reply("Не удалось загрузить или запустить TorrServer.", is_whisper=False)
 
     def init_ui(self):
         ui_font_path = get_resource_path("assets", "fonts", "Arian_normal.otf")
         ui_font_id = QFontDatabase.addApplicationFont(ui_font_path)
         if ui_font_id != -1:
             families = QFontDatabase.applicationFontFamilies(ui_font_id)
-            self.font_family = families[0] if families else "Arial"
+            self.font_family = families[0] if families else get_ui_fallback_font()
         else:
-            self.font_family = "Arial"
+            self.font_family = get_ui_fallback_font()
 
         chat_font_path = get_resource_path("assets", "fonts", "J Audio Cassette.otf")
         chat_font_id = QFontDatabase.addApplicationFont(chat_font_path)
@@ -2470,16 +2772,24 @@ class MainWindow(QWidget):
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
-        # Окно ОС всегда зафиксировано на EXTENDED_WIDTH (Zero-Move)
-        self.setFixedSize(self.EXTENDED_WIDTH, self.WINDOW_HEIGHT)
+        # На Windows окно ОС зафиксировано на EXTENDED_WIDTH (Zero-Move + DwmSetIconicThumbnail);
+        # На Linux реальная ширина совпадает с видимым корпусом, чтобы предпросмотр в панели Cinnamon не содержал пустоты.
+        if sys.platform == "win32":
+            self.setFixedSize(self.EXTENDED_WIDTH, self.WINDOW_HEIGHT)
+        else:
+            self.setFixedSize(self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
 
         # Корпус Акиры
         self.bg_frame = BackgroundFrame(self)
         self.bg_frame.setObjectName("CentralWidget")
-        
-        init_x = self.EXTENDED_WIDTH - self.NORMAL_WIDTH
-        self.bg_frame.setGeometry(init_x, 0, self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
-        self._update_click_mask(self.NORMAL_WIDTH)
+
+        if sys.platform == "win32":
+            init_x = self.EXTENDED_WIDTH - self.NORMAL_WIDTH
+            self.bg_frame.setGeometry(init_x, 0, self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
+            self._update_click_mask(self.NORMAL_WIDTH)
+        else:
+            self.bg_frame.setGeometry(0, 0, self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
+            self.clearMask()
 
         container_layout = QHBoxLayout(self.bg_frame)
         container_layout.setContentsMargins(2, 2, 2, 2)
@@ -3226,14 +3536,7 @@ class MainWindow(QWidget):
                 if hasattr(self, 'mini_window'):
                     self.mini_window.mini_mic.set_processing(False)
 
-            if isinstance(response, dict):
-                act = response.get("action")
-                if act == "enable_game_mode":
-                    QTimer.singleShot(600, lambda: self.toggle_game_mode(enable=True, announce=False))
-                elif act == "punitive_lock":
-                    QTimer.singleShot(1800, SystemActions.lock_screen)
-                elif act == "retaliation_track":
-                    QTimer.singleShot(1200, lambda: SystemActions.play_music("synthwave"))
+            self._handle_command_action(response)
         else:
             self.left_panel.set_processing(False)
             if hasattr(self, 'mini_window'):
@@ -3386,19 +3689,15 @@ class MainWindow(QWidget):
             if voice_text:
                 self.speak_reply(voice_text, is_whisper=False)
 
-            if isinstance(response, dict):
-                act = response.get("action")
-                if act == "enable_game_mode":
-                    QTimer.singleShot(600, lambda: self.toggle_game_mode(enable=True, announce=False))
-                elif act == "punitive_lock":
-                    QTimer.singleShot(1800, SystemActions.lock_screen)
-                elif act == "retaliation_track":
-                    QTimer.singleShot(1200, lambda: SystemActions.play_music("synthwave"))
+            self._handle_command_action(response)
 
     def on_stt_error(self, err):
         pass
 
     def closeEvent(self, event):
+        if not event.spontaneous() or getattr(self, "_is_shutting_down", False):
+            event.accept()
+            return
         event.ignore()
         self.close_animated()
 
@@ -3457,7 +3756,10 @@ class MainWindow(QWidget):
                     sw.terminate()
                     sw.wait(200)
 
-        for worker_name in ('voice_worker', 'text_worker', 'mini_text_worker'):
+        for worker_name in (
+            'voice_worker', 'text_worker', 'mini_text_worker',
+            '_vlc_install_worker', '_torrserver_download_worker',
+        ):
             worker = getattr(self, worker_name, None)
             if worker and worker.isRunning():
                 worker.terminate()
