@@ -130,8 +130,13 @@ def get_random_laugh_bytes(target_sr=22050):
 
 def get_tts_execution_providers():
     available = ort.get_available_providers()
-    if "DmlExecutionProvider" in available:
-        return ["DmlExecutionProvider", "CPUExecutionProvider"]
+    if sys.platform == "win32":
+        if "DmlExecutionProvider" in available:
+            return ["DmlExecutionProvider", "CPUExecutionProvider"]
+        return ["CPUExecutionProvider"]
+    for gpu_provider in ("CUDAExecutionProvider", "ROCMExecutionProvider"):
+        if gpu_provider in available:
+            return [gpu_provider, "CPUExecutionProvider"]
     return ["CPUExecutionProvider"]
 
 
@@ -142,8 +147,10 @@ def load_piper_voice(model_path, config_path, espeak_data_dir=None):
     else:
         voice = PiperVoice.load(model_path=model_path, config_path=config_path, espeak_data_dir=data_dir)
     providers = get_tts_execution_providers()
+    primary = providers[0] if providers else "CPUExecutionProvider"
 
-    if "DmlExecutionProvider" in providers:
+    if primary != "CPUExecutionProvider":
+        label = "DirectML" if primary == "DmlExecutionProvider" else primary.replace("ExecutionProvider", "")
         try:
             sess_opts = ort.SessionOptions()
             sess_opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
@@ -153,11 +160,14 @@ def load_piper_voice(model_path, config_path, espeak_data_dir=None):
                 sess_options=sess_opts,
                 providers=providers
             )
-            print(f"[TTS]: Модель {os.path.basename(model_path)} запущена на GPU (DirectML)")
+            print(f"[TTS]: Модель {os.path.basename(model_path)} запущена на GPU ({label})")
         except Exception as e:
-            print(f"[TTS Warning]: DirectML недоступен для {os.path.basename(model_path)} ({e}). Откат на CPU.")
+            print(f"[TTS Warning]: {label} недоступен для {os.path.basename(model_path)} ({e}). Откат на CPU.")
     else:
-        print(f"[TTS]: Видеокарта с DirectML не найдена. {os.path.basename(model_path)} работает на CPU.")
+        if sys.platform == "win32":
+            print(f"[TTS]: Видеокарта с DirectML не найдена. {os.path.basename(model_path)} работает на CPU.")
+        else:
+            print(f"[TTS]: GPU-провайдер ONNX (CUDA/ROCm) не найден. {os.path.basename(model_path)} работает на CPU.")
 
     return voice
 

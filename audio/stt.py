@@ -12,15 +12,21 @@ from core.nlp.speech.asr_corrector import ASRCorrector
 from core.utils.config import load_config, get_resource_path
 from core.system.actions import ym_manager
 
-try:
-    from comtypes import CoInitialize, CoUninitialize
-    _HAS_COM = True
-except ImportError:
+if sys.platform == "win32":
+    try:
+        from comtypes import CoInitialize, CoUninitialize
+        _HAS_COM = True
+    except ImportError:
+        _HAS_COM = False
+else:
     _HAS_COM = False
 
 try:
+    import warnings as _warnings
     import soundcard as sc
-except ImportError:
+    if hasattr(sc, "SoundcardRuntimeWarning"):
+        _warnings.filterwarnings("ignore", category=sc.SoundcardRuntimeWarning)
+except Exception:
     sc = None
 
 FAST_PASS_WORDS = {
@@ -84,6 +90,9 @@ class STTThread(QThread):
         self._running = True
         self.is_paused = False
         self.samplerate = 16000
+        self._stream_samplerate = self.samplerate
+        self._stream_channels = 1
+        self._last_stream_error = None
         self.audio_queue = queue.Queue()
         self.manual_trigger_flag = False
         self.is_speaking = False
@@ -124,8 +133,38 @@ class STTThread(QThread):
         self.followup_timeout = timeout
         self.manual_trigger_flag = True
 
+    @staticmethod
+    def _resample_audio(samples: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
+        if src_rate == dst_rate or src_rate <= 0 or dst_rate <= 0 or len(samples) == 0:
+            return samples
+        try:
+            import math
+            from scipy.signal import resample_poly
+            common = math.gcd(int(src_rate), int(dst_rate))
+            up = int(dst_rate) // common
+            down = int(src_rate) // common
+            return resample_poly(samples, up, down).astype(np.float32)
+        except Exception:
+            target_len = max(1, int(round(len(samples) * (dst_rate / float(src_rate)))))
+            x_old = np.linspace(0.0, 1.0, num=len(samples), endpoint=False)
+            x_new = np.linspace(0.0, 1.0, num=target_len, endpoint=False)
+            return np.interp(x_new, x_old, samples).astype(np.float32)
+
     def _audio_callback(self, indata, frames, time_info, status):
-        audio_data = np.frombuffer(indata, dtype=np.int16).astype(np.float32)
+        raw = np.frombuffer(indata, dtype=np.int16).astype(np.float32)
+        stream_ch = getattr(self, "_stream_channels", 1)
+        if stream_ch > 1 and len(raw) >= stream_ch:
+            usable = (len(raw) // stream_ch) * stream_ch
+            audio_data = raw[:usable].reshape(-1, stream_ch).mean(axis=1)
+        else:
+            audio_data = raw
+
+        stream_sr = getattr(self, "_stream_samplerate", self.samplerate)
+        if stream_sr != self.samplerate:
+            audio_data = self._resample_audio(audio_data, stream_sr, self.samplerate)
+        if len(audio_data) == 0:
+            return
+
         audio_data = audio_data - np.mean(audio_data)
 
         peak = np.max(np.abs(audio_data))
@@ -216,13 +255,18 @@ class STTThread(QThread):
         return corrected
 
     def _get_default_mic_info(self):
-        """Определяет актуальный системный микрофон по умолчанию через WASAPI."""
-        if sc is None:
-            return None, None
+        """Определяет актуальный системный микрофон по умолчанию (soundcard + fallback через sounddevice)."""
+        if sc is not None:
+            try:
+                mic = sc.default_microphone()
+                if mic:
+                    return getattr(mic, 'id', None), getattr(mic, 'name', 'Default Microphone')
+            except Exception:
+                pass
         try:
-            mic = sc.default_microphone()
-            if mic:
-                return getattr(mic, 'id', None), getattr(mic, 'name', 'Default Microphone')
+            dev = sd.query_devices(kind='input')
+            if dev:
+                return f"sd:{dev.get('index', 0)}", dev.get('name', 'Default Microphone')
         except Exception:
             pass
         return None, None
@@ -236,19 +280,54 @@ class STTThread(QThread):
 
     def _open_stream(self):
         """Создает и запускает входной аудиопоток с автоматическим ресемплингом в 16 кГц."""
+        rate_candidates = [self.samplerate]
+        channel_candidates = [1]
+
         try:
-            stream = sd.RawInputStream(
-                samplerate=self.samplerate,
-                blocksize=4000,
-                dtype="int16",
-                channels=1,
-                callback=self._audio_callback
-            )
-            stream.start()
-            return stream
-        except Exception as e:
-            print(f"[STT Stream Error]: Не удалось открыть поток микрофона: {e}", flush=True)
-            return None
+            dev = sd.query_devices(kind="input")
+            if dev:
+                def_sr = int(round(float(dev.get("default_samplerate") or 0)))
+                if def_sr > 0 and def_sr not in rate_candidates:
+                    rate_candidates.append(def_sr)
+                if int(dev.get("max_input_channels") or 1) >= 2:
+                    channel_candidates.append(2)
+        except Exception:
+            pass
+
+        for fallback_sr in (48000, 44100, 32000, 22050):
+            if fallback_sr not in rate_candidates:
+                rate_candidates.append(fallback_sr)
+
+        last_error = None
+        for ch in channel_candidates:
+            for sr in rate_candidates:
+                try:
+                    stream = sd.RawInputStream(
+                        samplerate=sr,
+                        blocksize=4000 if sr == self.samplerate else max(1024, int(round(sr * 0.25))),
+                        dtype="int16",
+                        channels=ch,
+                        callback=self._audio_callback,
+                    )
+                    stream.start()
+                    self._stream_samplerate = sr
+                    self._stream_channels = ch
+                    self._last_stream_error = None
+                    if sr != self.samplerate or ch != 1:
+                        print(
+                            f"[STT]: Поток микрофона открыт на {sr} Гц (каналов: {ch}), "
+                            f"ресемплинг -> {self.samplerate} Гц",
+                            flush=True,
+                        )
+                    return stream
+                except Exception as e:
+                    last_error = e
+
+        err_str = str(last_error) if last_error else "неизвестная ошибка"
+        if err_str != getattr(self, "_last_stream_error", None):
+            self._last_stream_error = err_str
+            print(f"[STT Stream Error]: Не удалось открыть поток микрофона: {err_str}", flush=True)
+        return None
 
     def run(self):
         if _HAS_COM:
@@ -283,14 +362,16 @@ class STTThread(QThread):
         utterance_buffer = bytearray()
         wake_signaled = False
         device_check_counter = 0
+        retry_threshold = 15
 
         self.listening_state_changed.emit(False)
 
         try:
             while self._running:
-                # 1. Проверка смены устройства и здоровья потока каждые ~1.5 сек
+                # 1. Проверка смены устройства и здоровья потока
                 device_check_counter += 1
-                if device_check_counter >= 15:
+                check_limit = 15 if (stream is not None and stream.active) else retry_threshold
+                if device_check_counter >= check_limit:
                     device_check_counter = 0
 
                     is_stream_dead = (stream is None) or (not stream.active)
@@ -320,9 +401,12 @@ class STTThread(QThread):
 
                         stream = self._open_stream()
                         if stream:
+                            retry_threshold = 15
                             current_mic_id = new_mic_id
                             current_mic_name = new_mic_name
                             print(f"[STT]: Микрофон переключен на: {current_mic_name}", flush=True)
+                        else:
+                            retry_threshold = min(75, retry_threshold * 2)
 
                 if stream is None:
                     self.msleep(200)

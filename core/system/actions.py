@@ -1,16 +1,20 @@
 import os
+import sys
 import time
 import subprocess
 import webbrowser
 import datetime
 import psutil
 import re
-import ctypes
 import json
 import random
 import requests
-from PIL import ImageGrab
-import pyautogui
+from core.utils.platform_utils import get_pyautogui, get_system_timezone_name, take_screenshot_pil
+
+if sys.platform == "win32":
+    import core.system.platform_win as _platform_actions
+else:
+    import core.system.platform_linux as _platform_actions
 
 import certifi
 
@@ -26,10 +30,14 @@ weather_session.headers.update({
     "Accept": "application/json"
 })
 
-from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
-from comtypes import CLSCTX_ALL, CoInitialize
-
 from core.utils.config import get_resource_path, load_config, save_config, get_user_data_path
+from core.system.audio_control import (
+    volume_up as _platform_volume_up,
+    volume_down as _platform_volume_down,
+    set_volume as _platform_set_volume,
+    mute_volume as _platform_mute_volume,
+    unmute_volume as _platform_unmute_volume,
+)
 from services.wikipedia.wikipedia_manager import WikipediaManager
 from services.yandex.yandex_music_manager import YandexMusicManager
 from services.google.youtube_manager import YouTubeManager
@@ -38,8 +46,6 @@ from services.zapret.zapret import ZapretManager
 from services.vpn.vpn_manager import VpnManager
 from services.yandex.smart_home_manager import SmartHomeManager
 from services.torrent.vlc_player import vlc_player
-
-pyautogui.FAILSAFE = False
 
 wiki_manager = WikipediaManager()
 ym_manager = YandexMusicManager()
@@ -358,11 +364,8 @@ def get_city_from_system_timezone():
         pass
 
     try:
-        import winreg
-        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\TimeZoneInformation")
-        tz_name, _ = winreg.QueryValueEx(key, "TimeZoneKeyName")
-        winreg.CloseKey(key)
-        if tz_name in tz_map:
+        tz_name = get_system_timezone_name()
+        if tz_name and tz_name in tz_map:
             return tz_map[tz_name]
     except Exception:
         pass
@@ -501,13 +504,11 @@ class SystemActions:
 
     @staticmethod
     def lock_screen():
-        os.system("rundll32.exe user32.dll,LockWorkStation")
-        return "Экран заблокирован"
+        return _platform_actions.lock_screen()
 
     @staticmethod
     def sleep_mode():
-        os.system("rundll32.exe powrprof.dll,SetSuspendState 0,1,0")
-        return "Перевожу компьютер в спящий режим"
+        return _platform_actions.sleep_mode()
 
     @staticmethod
     def shutdown_pc(text=""):
@@ -526,7 +527,7 @@ class SystemActions:
         if re.search(appliances_regex, text_low) and not any(name in text_low for name in ["светозар", "свят"]):
             return smart_home_manager.turn_off(text)
 
-        os.system("shutdown /s /t 5")
+        _platform_actions.shutdown_system(delay_seconds=5)
         if "спокойной ночи" in text_low or "доброй ночи" in text_low:
             return "Сладких снов!"
         if any(w in text_low for w in ["пока", "до свидания", "до встречи", "до завтра", "бай"]):
@@ -535,23 +536,19 @@ class SystemActions:
 
     @staticmethod
     def restart_pc():
-        os.system("shutdown /r /t 5")
-        return "Перезагружаю компьютер"
+        return _platform_actions.restart_system(delay_seconds=5)
 
     @staticmethod
     def cancel_shutdown(text=""):
-        os.system("shutdown /a")
-        return "Отменила выключение компьютера!"
+        return _platform_actions.cancel_shutdown()
 
     @staticmethod
     def open_calculator():
-        subprocess.Popen("calc.exe")
-        return "Открываю калькулятор"
+        return _platform_actions.open_calculator()
 
     @staticmethod
     def open_task_manager():
-        subprocess.Popen("taskmgr.exe")
-        return "Открываю диспетчер задач"
+        return _platform_actions.open_task_manager()
 
     @staticmethod
     def open_browser():
@@ -706,27 +703,11 @@ class SystemActions:
 
     @staticmethod
     def open_discord():
-        try:
-            subprocess.Popen(["cmd", "/c", "start", "discord:"], shell=True)
-        except Exception:
-            discord_exe = os.path.expanduser(r"~\AppData\Local\Discord\Update.exe")
-            if os.path.exists(discord_exe):
-                subprocess.Popen([discord_exe, "--processStart", "Discord.exe"])
-            else:
-                webbrowser.open("https://discord.com/app")
-        return "Запускаю Дискорд"
+        return _platform_actions.open_discord()
 
     @staticmethod
     def open_telegram():
-        telegram_exe = os.path.expanduser(r"~\AppData\Roaming\Telegram Desktop\Telegram.exe")
-        if os.path.exists(telegram_exe):
-            subprocess.Popen(telegram_exe)
-        else:
-            try:
-                subprocess.Popen(["cmd", "/c", "start", "telegram:"], shell=True)
-            except Exception:
-                webbrowser.open("https://web.telegram.org")
-        return "Открываю Телеграм"
+        return _platform_actions.open_telegram()
 
     @staticmethod
     def open_vpn():
@@ -769,7 +750,9 @@ class SystemActions:
         elif ym_manager.player and ym_manager.player.is_playing():
             ym_manager.toggle_pause()
         else:
-            pyautogui.press('space')
+            pag = get_pyautogui()
+            if pag:
+                pag.press('space')
         return ""
 
     @staticmethod
@@ -779,7 +762,9 @@ class SystemActions:
         elif ym_manager.player and ym_manager.player.is_playing():
             ym_manager.next_track()
         else:
-            pyautogui.hotkey('shift', 'n')
+            pag = get_pyautogui()
+            if pag:
+                pag.hotkey('shift', 'n')
         return "Следующее"
 
     @staticmethod
@@ -787,7 +772,9 @@ class SystemActions:
         if vlc_player.is_playing():
             vlc_player.toggle_fullscreen()
         else:
-            pyautogui.press('f')
+            pag = get_pyautogui()
+            if pag:
+                pag.press('f')
         return "Разворачиваю"
 
     @staticmethod
@@ -836,75 +823,25 @@ class SystemActions:
         os.makedirs(screenshots_dir, exist_ok=True)
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         path = os.path.join(screenshots_dir, f"screenshot_{timestamp}.png")
-        img = ImageGrab.grab()
-        img.save(path)
-        return "Скриншот экрана сохранен"
+        try:
+            img = take_screenshot_pil()
+            img.save(path)
+            return "Скриншот экрана сохранен"
+        except Exception as e:
+            print(f"[Screenshot Error]: {e}", flush=True)
+            return "Не удалось сделать скриншот экрана"
 
     @staticmethod
     def volume_up(text=""):
         num = extract_number(text)
         delta = num if num is not None else 10
-        try:
-            try:
-                CoInitialize()
-            except Exception:
-                pass
-            devices = AudioUtilities.GetSpeakers()
-            volume = None
-            if hasattr(devices, 'EndpointVolume'):
-                volume = devices.EndpointVolume
-            elif hasattr(devices, 'Activate'):
-                interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-                volume = ctypes.cast(interface, ctypes.POINTER(IAudioEndpointVolume))
-            elif hasattr(devices, '_device') and hasattr(devices._device, 'Activate'):
-                interface = devices._device.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-                volume = ctypes.cast(interface, ctypes.POINTER(IAudioEndpointVolume))
-
-            if volume:
-                current_level = int(round(volume.GetMasterVolumeLevelScalar() * 100))
-                new_level = min(100, current_level + delta)
-                volume.SetMasterVolumeLevelScalar(new_level / 100.0, None)
-                return "Сделала"
-        except Exception:
-            pass
-
-        steps = max(1, delta // 2)
-        for _ in range(steps):
-            pyautogui.press("volumeup")
-        return "Сделала"
+        return _platform_volume_up(delta)
 
     @staticmethod
     def volume_down(text=""):
         num = extract_number(text)
         delta = num if num is not None else 10
-        try:
-            try:
-                CoInitialize()
-            except Exception:
-                pass
-            devices = AudioUtilities.GetSpeakers()
-            volume = None
-            if hasattr(devices, 'EndpointVolume'):
-                volume = devices.EndpointVolume
-            elif hasattr(devices, 'Activate'):
-                interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-                volume = ctypes.cast(interface, ctypes.POINTER(IAudioEndpointVolume))
-            elif hasattr(devices, '_device') and hasattr(devices._device, 'Activate'):
-                interface = devices._device.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-                volume = ctypes.cast(interface, ctypes.POINTER(IAudioEndpointVolume))
-
-            if volume:
-                current_level = int(round(volume.GetMasterVolumeLevelScalar() * 100))
-                new_level = max(0, current_level - delta)
-                volume.SetMasterVolumeLevelScalar(new_level / 100.0, None)
-                return "Сделала"
-        except Exception:
-            pass
-
-        steps = max(1, delta // 2)
-        for _ in range(steps):
-            pyautogui.press("volumedown")
-        return "Сделала"
+        return _platform_volume_down(delta)
 
     @staticmethod
     def set_volume(text=""):
@@ -921,57 +858,28 @@ class SystemActions:
         num = extract_number(text)
         if num is None:
             return "Сделала"
-        level = max(0, min(100, num))
-
-        try:
-            try:
-                CoInitialize()
-            except Exception:
-                pass
-
-            devices = AudioUtilities.GetSpeakers()
-
-            if hasattr(devices, 'EndpointVolume'):
-                volume = devices.EndpointVolume
-                volume.SetMasterVolumeLevelScalar(level / 100.0, None)
-                return "Сделала"
-
-            if hasattr(devices, 'Activate'):
-                interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-                volume = ctypes.cast(interface, ctypes.POINTER(IAudioEndpointVolume))
-                volume.SetMasterVolumeLevelScalar(level / 100.0, None)
-                return "Сделала"
-
-            if hasattr(devices, '_device') and hasattr(devices._device, 'Activate'):
-                interface = devices._device.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-                volume = ctypes.cast(interface, ctypes.POINTER(IAudioEndpointVolume))
-                volume.SetMasterVolumeLevelScalar(level / 100.0, None)
-                return "Сделала"
-
-            return "Сделала"
-        except Exception:
-            return "Сделала"
+        return _platform_set_volume(num)
 
     @staticmethod
     def mute_volume():
-        pyautogui.press("volumemute")
-        return "Выключаю звук"
+        return _platform_mute_volume()
 
     @staticmethod
     def unmute_volume():
-        pyautogui.press("volumemute")
-        return "Включаю звук"
+        return _platform_unmute_volume()
 
     @staticmethod
     def seek_media(direction: str = "forward", seconds: int = 10):
         if vlc_player.is_playing():
             vlc_player.seek(direction, seconds)
         else:
-            presses = max(1, round(seconds / 10))
-            key = "right" if direction == "forward" else "left"
-            for _ in range(presses):
-                pyautogui.press(key)
-                time.sleep(0.04)
+            pag = get_pyautogui()
+            if pag:
+                presses = max(1, round(seconds / 10))
+                key = "right" if direction == "forward" else "left"
+                for _ in range(presses):
+                    pag.press(key)
+                    time.sleep(0.04)
 
         action_word = "вперёд" if direction == "forward" else "назад"
         return f"Перемотала на {seconds} сек. {action_word}"
@@ -993,43 +901,27 @@ class SystemActions:
         return yt_manager.search_and_play(query)
 
     @staticmethod
+    def _normalize_mode_apps(apps) -> list[str]:
+        if isinstance(apps, str):
+            return [x.strip() for x in apps.split(",") if x.strip()]
+        return [str(x).strip() for x in (apps or []) if str(x).strip()]
+
+    @staticmethod
     def mode_work(text=""):
         cfg = load_config()
-        apps = cfg.get("work_apps", [])
-        if isinstance(apps, str):
-            apps = [x.strip() for x in apps.split(",") if x.strip()]
+        apps = SystemActions._normalize_mode_apps(cfg.get("work_apps", []))
         if not apps:
             apps = ["https://github.com"]
-
-        for item in apps:
-            item = item.strip()
-            if item.startswith("http://") or item.startswith("https://"):
-                webbrowser.open(item)
-            else:
-                try:
-                    subprocess.Popen(item, shell=True)
-                except Exception:
-                    pass
+        _platform_actions.launch_mode_items(apps)
         return "Запускаю рабочий режим"
 
     @staticmethod
     def mode_rest(text=""):
         cfg = load_config()
-        apps = cfg.get("rest_apps", [])
-        if isinstance(apps, str):
-            apps = [x.strip() for x in apps.split(",") if x.strip()]
+        apps = SystemActions._normalize_mode_apps(cfg.get("rest_apps", []))
         if not apps:
             apps = ["https://youtube.com"]
-
-        for item in apps:
-            item = item.strip()
-            if item.startswith("http://") or item.startswith("https://"):
-                webbrowser.open(item)
-            else:
-                try:
-                    subprocess.Popen(item, shell=True)
-                except Exception:
-                    pass
+        _platform_actions.launch_mode_items(apps)
         return "Запускаю режим отдыха"
 
     @staticmethod
@@ -1057,9 +949,12 @@ class SystemActions:
 
     @staticmethod
     def start_zapret(text=""):
+        if sys.platform != "win32" and hasattr(zapret_manager, "is_installed") and not zapret_manager.is_installed():
+            return zapret_manager.get_install_hint()
         menu = zapret_manager.get_strategies_menu()
+        max_idx = len(getattr(zapret_manager, "STRATEGIES", [])) or 20
         return {
-            "chat": f"Список доступных вариантов обхода:\n\n{menu}\n\nНазови или введи номер нужного обхода (от 1 до 20):",
+            "chat": f"Список доступных вариантов обхода:\n\n{menu}\n\nНазови или введи номер нужного обхода (от 1 до {max_idx}):",
             "voice": "Вывела список обходов в чат. Назови или введи номер нужного варианта."
         }
 
@@ -1614,43 +1509,11 @@ class SystemActions:
 
     @staticmethod
     def get_recycle_bin_info():
-        try:
-            from ctypes import wintypes
-            class SHQUERYRBINFO(ctypes.Structure):
-                _fields_ = [
-                    ('cbSize', wintypes.DWORD),
-                    ('i64Size', ctypes.c_int64),
-                    ('i64NumItems', ctypes.c_int64)
-                ]
-            info = SHQUERYRBINFO()
-            info.cbSize = ctypes.sizeof(SHQUERYRBINFO)
-            res = ctypes.windll.shell32.SHQueryRecycleBinW(None, ctypes.byref(info))
-            if res == 0:
-                size_mb = round(info.i64Size / (1024 * 1024), 1)
-                return {"num_items": int(info.i64NumItems), "size_bytes": int(info.i64Size), "size_mb": size_mb}
-        except Exception as e:
-            print(f"[RecycleBin Query Error]: {e}")
-        return {"num_items": 0, "size_bytes": 0, "size_mb": 0.0}
+        return _platform_actions.get_recycle_bin_info()
 
     @staticmethod
     def empty_recycle_bin(text=""):
-        try:
-            info = SystemActions.get_recycle_bin_info()
-            num = info["num_items"]
-            size_mb = info["size_mb"]
-            flags = 7  # SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND
-            ctypes.windll.shell32.SHEmptyRecycleBinW(None, None, flags)
-
-            if num > 0 or size_mb > 0:
-                mb_str = f"{int(size_mb)}" if size_mb.is_integer() else f"{size_mb}"
-                msg = f"Очистила корзину! Освободила {mb_str} МБ ✨"
-            else:
-                msg = "Корзина уже была пуста, но я на всякий случай всё перепроверила ✨"
-
-            return {"chat": msg, "voice": msg, "emotion": "happy"}
-        except Exception as e:
-            err_msg = f"Не удалось очистить корзину: {e}"
-            return {"chat": err_msg, "voice": "Не удалось очистить корзину.", "emotion": "sad"}
+        return _platform_actions.empty_recycle_bin()
 
     @staticmethod
     def tell_digital_chores(text=""):
