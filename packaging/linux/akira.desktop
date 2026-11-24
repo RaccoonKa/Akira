@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Akira
+GenericName=Voice Assistant
+GenericName[ru]=Голосовой ассистент
+Comment=Akira AI Desktop Voice Assistant
+Comment[ru]=Голосовой ИИ-ассистент Акира
+Exec=/opt/Akira/Akira %U
+Icon=akira
+Terminal=false
+Categories=Utility;
+Keywords=AI;Voice;Assistant;Akira;Акира;Голосовой;
+StartupNotify=true
+StartupWMClass=Akira
