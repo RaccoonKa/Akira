@@ -3,6 +3,7 @@ import base64
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -11,7 +12,6 @@ from pathlib import Path
 
 import cv2
 import psutil
-import pyautogui
 import websockets
 from PyQt6.QtCore import QThread
 
@@ -23,6 +23,12 @@ from core.nlp.command_parser import CommandParser
 from core.system.actions import SystemActions
 from core.utils.config import get_user_data_path, load_config, save_config
 from core.utils.text_cleaner import clean_chat_display_text
+from core.utils.platform_utils import take_screenshot_pil, open_video_capture, subprocess_no_window_kwargs
+
+if sys.platform == "win32":
+    import core.system.platform_win as _platform_power
+else:
+    import core.system.platform_linux as _platform_power
 
 SERVER_HOST = "185.79.139.120:8000"
 PAIRING_PATH = Path(get_user_data_path("pairing_session.json"))
@@ -64,20 +70,31 @@ def get_hardware_status() -> str:
 
     disks_info = []
     seen_mounts = set()
+    skip_fstypes = {"squashfs", "tmpfs", "devtmpfs", "overlay", "proc", "sysfs", "cgroup", "cgroup2", "fuse.portal", "fuse.gvfsd-fuse", "efivarfs", "autofs"}
     for part in psutil.disk_partitions(all=False):
         if "cdrom" in part.opts or not part.fstype:
             continue
         mount = part.mountpoint
+        if sys.platform != "win32":
+            if part.fstype.lower() in skip_fstypes:
+                continue
+            if mount == "/boot/efi" or mount.startswith(("/snap", "/run", "/dev", "/sys", "/proc")):
+                continue
         if mount in seen_mounts:
             continue
         seen_mounts.add(mount)
         try:
             usage = psutil.disk_usage(mount)
+            if usage.total <= 0:
+                continue
             free_gb = usage.free / (1024 ** 3)
             total_gb = usage.total / (1024 ** 3)
-            drive_clean = part.device.rstrip("\\").rstrip("/").rstrip(":")
+            if sys.platform == "win32":
+                drive_label = part.device.rstrip("\\").rstrip("/").rstrip(":")
+            else:
+                drive_label = mount
             disks_info.append(
-                f"💾 **Диск {drive_clean}:** {free_gb:.1f} ГБ свободно из {total_gb:.1f} ГБ ({usage.percent}%)"
+                f"💾 **Диск {drive_label}:** {free_gb:.1f} ГБ свободно из {total_gb:.1f} ГБ ({usage.percent}%)"
             )
         except (PermissionError, OSError):
             continue
@@ -85,20 +102,25 @@ def get_hardware_status() -> str:
     disks_str = "\n".join(disks_info) if disks_info else "**Диски:** Не удалось определить"
 
     gpu_info = "Недоступно"
-    try:
-        flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-        cmd = "nvidia-smi --query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits"
-        out = subprocess.check_output(cmd, shell=True, text=True, creationflags=flags).strip()
-        if out:
-            parts = [p.strip() for p in out.split(",")]
-            if len(parts) >= 5:
-                gpu_name, temp, util, mem_used, mem_total = parts[0], parts[1], parts[2], parts[3], parts[4]
-                gpu_info = (
-                    f"{gpu_name}\n   Температура: {temp}°C | Нагрузка: {util}%\n"
-                    f"   VRAM: {int(mem_used)} МБ / {int(mem_total)} МБ"
-                )
-    except Exception:
-        pass
+    nvidia_smi = shutil.which("nvidia-smi")
+    if nvidia_smi:
+        try:
+            cmd = [
+                nvidia_smi,
+                "--query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total",
+                "--format=csv,noheader,nounits",
+            ]
+            out = subprocess.check_output(cmd, text=True, **subprocess_no_window_kwargs()).strip()
+            if out:
+                parts = [p.strip() for p in out.split(",")]
+                if len(parts) >= 5:
+                    gpu_name, temp, util, mem_used, mem_total = parts[0], parts[1], parts[2], parts[3], parts[4]
+                    gpu_info = (
+                        f"{gpu_name}\n   Температура: {temp}°C | Нагрузка: {util}%\n"
+                        f"   VRAM: {int(mem_used)} МБ / {int(mem_total)} МБ"
+                    )
+        except Exception:
+            pass
 
     return (
         f"📊 **Текущий статус ПК:**\n\n"
@@ -111,7 +133,7 @@ def get_hardware_status() -> str:
 
 def take_screenshot_base64() -> str:
     try:
-        shot = pyautogui.screenshot()
+        shot = take_screenshot_pil()
         buf = io.BytesIO()
         shot.save(buf, format="PNG")
         return base64.b64encode(buf.getvalue()).decode("utf-8")
@@ -129,7 +151,7 @@ def take_webcam_base64() -> str:
             frame = main_window_instance.vision_thread.current_frame
 
     if frame is None:
-        cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+        cap = open_video_capture(0)
         ret, frame_read = cap.read()
         cap.release()
         if ret and frame_read is not None:
@@ -223,8 +245,7 @@ class DownloadWatcher:
 
     def cancel_shutdown(self):
         self.stop()
-        flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-        subprocess.run("shutdown /a", shell=True, creationflags=flags)
+        _platform_power.cancel_shutdown()
         print("[DownloadWatcher]: Автовыключение отменено", flush=True)
 
     async def _watch_loop(self):
@@ -272,8 +293,7 @@ class DownloadWatcher:
                 if should_finish:
                     self.running = False
                     _enqueue_message({"action": "download_completed"})
-                    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-                    subprocess.run("shutdown /s /t 60", shell=True, creationflags=flags)
+                    _platform_power.shutdown_system(delay_seconds=60)
                     print("[DownloadWatcher]: Закачки завершены, запущен таймер на 60с перед выключением", flush=True)
                     break
 
@@ -427,7 +447,6 @@ class TelegramBotThread(QThread):
             return
 
         resp_payload = {}
-        flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
         if action == "save_incoming_file":
             filename = payload.get("filename", "file.bin")
@@ -453,14 +472,14 @@ class TelegramBotThread(QThread):
             SystemActions.lock_screen()
             resp_payload = {"text": "Заблокировала твой ПК 🔒"}
         elif action == "restart":
-            subprocess.run("shutdown /r /t 5", shell=True, creationflags=flags)
+            _platform_power.restart_system(delay_seconds=5)
             resp_payload = {"text": "Перезагружаю компьютер... 🔄"}
         elif action == "shutdown":
-            subprocess.run("shutdown /s /t 5", shell=True, creationflags=flags)
+            _platform_power.shutdown_system(delay_seconds=5)
             resp_payload = {"text": "Выключаю ПК. До связи! 👋"}
         elif action == "shutdown_now":
             self.download_watcher.stop()
-            subprocess.run("shutdown /s /t 0", shell=True, creationflags=flags)
+            _platform_power.shutdown_system(delay_seconds=0)
             resp_payload = {"text": "Выключаю прямо сейчас"}
         elif action == "start_download_watcher":
             self.download_watcher.start()
@@ -476,6 +495,26 @@ class TelegramBotThread(QThread):
             parser = get_command_parser()
             result = await self.loop.run_in_executor(None, parser.process_command, text, None, False, None)
             if isinstance(result, dict):
+                if result.get("action") == "download_torrserver_and_play":
+                    movie_payload = result.get("movie_payload") or {}
+                    def _bg_torr():
+                        from services.torrent.torrserver_manager import torr_manager
+                        from services.torrent.vlc_player import vlc_player
+                        ok, info = torr_manager.download_linux_binary()
+                        if not ok:
+                            send_text_to_server(f"⚠️ Не удалось скачать TorrServer: {info}")
+                            return
+                        if torr_manager.start_server():
+                            s_url = torr_manager.get_stream_url(
+                                movie_payload.get("magnet", ""),
+                                is_series=bool(movie_payload.get("is_series", False)),
+                            )
+                            if s_url:
+                                vlc_player.play(s_url, movie_payload.get("title", ""))
+                                send_text_to_server(f"🍿 TorrServer готов! Запускаю «{movie_payload.get('title', 'фильм')}» в VLC.")
+                                return
+                        send_text_to_server("⚠️ TorrServer загружен, но не удалось запустить видеопоток.")
+                    threading.Thread(target=_bg_torr, daemon=True).start()
                 raw_reply = result.get("chat", "") or result.get("voice", "") or "Команда принята"
             else:
                 raw_reply = str(result)

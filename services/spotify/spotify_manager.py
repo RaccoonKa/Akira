@@ -1,14 +1,15 @@
 import os
+import sys
 import random
 import threading
 import subprocess
 import time
-import winreg
 import re
 import shutil
 import spotipy
 from spotipy.oauth2 import SpotifyPKCE
 from core.utils.config import load_config, get_user_data_path
+from core.utils.platform_utils import open_path
 
 
 class SpotifyManager:
@@ -88,6 +89,31 @@ class SpotifyManager:
             return False
 
     def _is_spotify_installed(self):
+        if sys.platform != "win32":
+            which_sp = shutil.which("spotify")
+            if which_sp:
+                return which_sp
+
+            for cand in (
+                "/snap/bin/spotify",
+                "/usr/bin/spotify",
+                "/usr/local/bin/spotify",
+                "/usr/share/spotify/spotify",
+            ):
+                if os.path.isfile(cand) and os.access(cand, os.X_OK):
+                    return cand
+
+            flatpak = shutil.which("flatpak")
+            if flatpak:
+                try:
+                    res = subprocess.run([flatpak, "info", "com.spotify.Client"], capture_output=True, timeout=2.5)
+                    if res.returncode == 0:
+                        return "flatpak:com.spotify.Client"
+                except Exception:
+                    pass
+            return None
+
+        import winreg
         try:
             key = winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, r"spotify\shell\open\command")
             val, _ = winreg.QueryValueEx(key, "")
@@ -152,7 +178,20 @@ class SpotifyManager:
     def _launch_app(self):
         installed_path = self._is_spotify_installed()
         if not installed_path:
+            if sys.platform != "win32":
+                return open_path("spotify:")
             return False
+
+        if sys.platform != "win32":
+            try:
+                if installed_path == "flatpak:com.spotify.Client":
+                    flatpak = shutil.which("flatpak") or "flatpak"
+                    subprocess.Popen([flatpak, "run", "com.spotify.Client"], start_new_session=True)
+                else:
+                    subprocess.Popen([installed_path], start_new_session=True)
+                return True
+            except Exception:
+                return open_path("spotify:")
 
         try:
             subprocess.Popen([installed_path])

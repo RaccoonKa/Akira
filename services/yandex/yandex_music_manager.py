@@ -1,4 +1,6 @@
 import os
+import sys
+import ctypes.util
 import re
 import random
 import threading
@@ -9,20 +11,28 @@ import requests
 import webbrowser
 from core.utils.config import load_config
 
-vlc_paths = [
-    r"C:\Program Files\VideoLAN\VLC",
-    r"C:\Program Files (x86)\VideoLAN\VLC"
-]
-for p in vlc_paths:
-    if os.path.exists(p):
-        try:
-            os.add_dll_directory(p)
-        except Exception:
-            pass
-        os.environ["PATH"] = p + os.pathsep + os.environ.get("PATH", "")
-        plugins_dir = os.path.join(p, "plugins")
-        if os.path.exists(plugins_dir):
-            os.environ["VLC_PLUGIN_PATH"] = plugins_dir
+if sys.platform == "win32":
+    vlc_paths = [
+        r"C:\Program Files\VideoLAN\VLC",
+        r"C:\Program Files (x86)\VideoLAN\VLC"
+    ]
+    for p in vlc_paths:
+        if os.path.exists(p):
+            try:
+                os.add_dll_directory(p)
+            except Exception:
+                pass
+            os.environ["PATH"] = p + os.pathsep + os.environ.get("PATH", "")
+            plugins_dir = os.path.join(p, "plugins")
+            if os.path.exists(plugins_dir):
+                os.environ["VLC_PLUGIN_PATH"] = plugins_dir
+else:
+    if not os.environ.get("VLC_PLUGIN_PATH"):
+        for p_dir in ("/usr/lib/x86_64-linux-gnu/vlc/plugins", "/usr/lib/aarch64-linux-gnu/vlc/plugins", "/usr/lib/vlc/plugins"):
+            if os.path.isdir(p_dir):
+                os.environ["VLC_PLUGIN_PATH"] = p_dir
+                break
+    ctypes.util.find_library("vlc")
 
 try:
     import vlc
@@ -35,30 +45,69 @@ from yandex_music import Client
 
 
 class YandexMusicManager:
+    @staticmethod
+    def _build_vlc_args() -> list[str]:
+        args = [
+            "--no-video",
+            "--quiet",
+            "--network-caching=3000",
+            "--no-qt-privacy-ask",
+            "--no-qt-error-dialogs",
+        ]
+        if sys.platform == "win32":
+            args.append("--no-qt-updates-notif")
+        return args
+
+    def reinit_vlc(self) -> bool:
+        global HAS_VLC, vlc
+        if sys.platform != "win32":
+            if not os.environ.get("VLC_PLUGIN_PATH"):
+                for p_dir in (
+                    "/usr/lib/x86_64-linux-gnu/vlc/plugins",
+                    "/usr/lib/aarch64-linux-gnu/vlc/plugins",
+                    "/usr/lib/vlc/plugins",
+                ):
+                    if os.path.isdir(p_dir):
+                        os.environ["VLC_PLUGIN_PATH"] = p_dir
+                        break
+            ctypes.util.find_library("vlc")
+
+        if not HAS_VLC or vlc is None:
+            try:
+                import vlc as _vlc
+                vlc = _vlc
+                HAS_VLC = True
+            except Exception:
+                HAS_VLC = False
+
+        if not HAS_VLC or vlc is None:
+            self.vlc_instance = None
+            self.player = None
+            return False
+
+        try:
+            self.vlc_instance = vlc.Instance(*self._build_vlc_args())
+            if not self.vlc_instance:
+                self.player = None
+                return False
+            self.player = self.vlc_instance.media_player_new()
+            if self.player:
+                self.player.audio_set_volume(self.normal_volume)
+                return True
+            return False
+        except Exception as e:
+            print(f"[YandexMusic Init VLC Warning]: {e}")
+            self.vlc_instance = None
+            self.player = None
+            return False
+
     def __init__(self):
         self.client = None
         self.normal_volume = 100
         self.is_ducked = False
-        if HAS_VLC:
-            try:
-                self.vlc_instance = vlc.Instance(
-                    '--no-video',
-                    '--quiet',
-                    '--network-caching=3000',
-                    '--no-qt-privacy-ask',
-                    '--no-qt-updates-notif',
-                    '--no-qt-error-dialogs'
-                )
-                self.player = self.vlc_instance.media_player_new()
-                if self.player:
-                    self.player.audio_set_volume(self.normal_volume)
-            except Exception as e:
-                print(f"[YandexMusic Init VLC Warning]: {e}")
-                self.vlc_instance = None
-                self.player = None
-        else:
-            self.vlc_instance = None
-            self.player = None
+        self.vlc_instance = None
+        self.player = None
+        self.reinit_vlc()
         self.queue = []
         self.history = []
         self.current_track = None
@@ -182,16 +231,18 @@ class YandexMusicManager:
     def _ensure_vlc(self):
         """
         Гарантирует доступность VLC:
-        - Если VLC не установлен, запускает тихую установку и открывает плеер для первичной настройки пользователем.
-        - Если VLC установлен, но ещё ни разу не настраивался (нет vlcrc), открывает плеер для галочек сети.
+        - Если VLC не установлен, запускает тихую установку.
+        - На Windows при необходимости открывает плеер для первичной настройки; на Linux сразу переинициализирует libvlc.
         Возвращает: True (готов), 'SETUP_NEEDED' (открыт для настройки пользователем) или 'DOWNLOAD_NEEDED' (сбой).
         """
-        global HAS_VLC, vlc
         from services.torrent.vlc_player import vlc_player
 
         if not vlc_player.is_available():
             installed = vlc_player.install_silent()
             if installed:
+                if sys.platform != "win32":
+                    if self.reinit_vlc():
+                        return True
                 vlc_player.open_for_setup()
                 return "SETUP_NEEDED"
             return "DOWNLOAD_NEEDED"
@@ -202,7 +253,7 @@ class YandexMusicManager:
 
         if not HAS_VLC or not self.player:
             vlc_exe = vlc_player.vlc_path or vlc_player._find_vlc()
-            if vlc_exe:
+            if vlc_exe and sys.platform == "win32":
                 vlc_dir = os.path.dirname(vlc_exe)
                 try:
                     os.add_dll_directory(vlc_dir)
@@ -212,23 +263,7 @@ class YandexMusicManager:
                 plugins_dir = os.path.join(vlc_dir, "plugins")
                 if os.path.exists(plugins_dir):
                     os.environ["VLC_PLUGIN_PATH"] = plugins_dir
-            try:
-                import vlc as _vlc
-                vlc = _vlc
-                HAS_VLC = True
-                self.vlc_instance = vlc.Instance(
-                    '--no-video',
-                    '--quiet',
-                    '--network-caching=3000',
-                    '--no-qt-privacy-ask',
-                    '--no-qt-updates-notif',
-                    '--no-qt-error-dialogs'
-                )
-                self.player = self.vlc_instance.media_player_new()
-                if self.player:
-                    self.player.audio_set_volume(self.normal_volume)
-            except Exception as e:
-                print(f"[VLC Load Error]: {e}")
+            self.reinit_vlc()
 
         return True if (HAS_VLC and self.player is not None) else "DOWNLOAD_NEEDED"
 

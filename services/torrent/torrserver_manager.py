@@ -3,17 +3,38 @@ import sys
 import time
 import re
 import json
+import shutil
+import platform
 import urllib.parse
 import subprocess
 import requests
 import tempfile
 from core.utils.config import get_resource_path, get_user_data_path
+from core.utils.platform_utils import subprocess_no_window_kwargs
 
 TORRSERVER_PORT = 8090
 TORRSERVER_URL = f"http://127.0.0.1:{TORRSERVER_PORT}"
+GITHUB_RELEASES_API = "https://api.github.com/repos/YouROK/TorrServer/releases/latest"
+
+
+def _get_linux_torrserver_filename() -> str:
+    machine = platform.machine().lower()
+    if machine in ("aarch64", "arm64"):
+        return "TorrServer-linux-arm64"
+    return "TorrServer-linux-amd64"
 
 
 def get_torrserver_bin_path() -> str:
+    if sys.platform != "win32":
+        bin_name = _get_linux_torrserver_filename()
+        user_bin = get_user_data_path("torrserver", bin_name)
+        if os.path.isfile(user_bin):
+            return user_bin
+        sys_bin = shutil.which("torrserver") or shutil.which(bin_name)
+        if sys_bin:
+            return sys_bin
+        return user_bin
+
     paths_to_check = [
         get_resource_path("assets", "installers", "torrserver.exe"),
         get_resource_path("assets", "bin", "torrserver.exe"),
@@ -45,6 +66,113 @@ def _natural_sort_key(file_dict: dict):
 class TorrServerManager:
     def __init__(self):
         self.process = None
+
+    def is_binary_installed(self) -> bool:
+        bin_path = get_torrserver_bin_path()
+        if not bin_path or not os.path.isfile(bin_path):
+            return False
+        if sys.platform == "win32":
+            return True
+        try:
+            if os.path.getsize(bin_path) >= 1_000_000:
+                return True
+            return shutil.which(os.path.basename(bin_path)) is not None and os.access(bin_path, os.X_OK)
+        except OSError:
+            return False
+
+    def _resolve_linux_download_url(self, bin_name: str) -> str:
+        fallback_url = f"https://github.com/YouROK/TorrServer/releases/latest/download/{bin_name}"
+        try:
+            resp = requests.get(
+                GITHUB_RELEASES_API,
+                headers={"User-Agent": "Akira-Assistant", "Accept": "application/vnd.github+json"},
+                timeout=12.0,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                for asset in data.get("assets", []):
+                    name = asset.get("name", "")
+                    if name == bin_name or name.lower() == bin_name.lower():
+                        dl = asset.get("browser_download_url")
+                        if dl:
+                            return dl
+        except Exception as e:
+            print(f"[TorrServer Release Lookup Warning]: {e}")
+        return fallback_url
+
+    def download_linux_binary(self, progress_callback=None) -> tuple[bool, str]:
+        """
+        Скачивает официальный бинарник TorrServer для Linux (amd64/arm64) в каталог данных пользователя,
+        проверяет ELF-заголовок и размер, выставляет chmod +x.
+        """
+        if sys.platform == "win32":
+            path = get_torrserver_bin_path()
+            return (os.path.isfile(path), path if os.path.isfile(path) else "torrserver.exe не найден")
+
+        bin_name = _get_linux_torrserver_filename()
+        torr_data_dir = get_user_data_path("torrserver")
+        os.makedirs(torr_data_dir, exist_ok=True)
+        target_path = os.path.join(torr_data_dir, bin_name)
+        part_path = f"{target_path}.part"
+
+        if os.path.isfile(target_path) and os.path.getsize(target_path) >= 1_000_000:
+            try:
+                with open(target_path, "rb") as f:
+                    if f.read(4) == b"\x7fELF":
+                        os.chmod(target_path, 0o755)
+                        return True, target_path
+            except OSError:
+                pass
+
+        url = self._resolve_linux_download_url(bin_name)
+        try:
+            with requests.get(
+                url,
+                stream=True,
+                timeout=(15.0, 60.0),
+                headers={"User-Agent": "Akira-Assistant"},
+                allow_redirects=True,
+            ) as resp:
+                if resp.status_code != 200:
+                    return False, f"GitHub вернул статус {resp.status_code}"
+
+                total_bytes = int(resp.headers.get("Content-Length", "0") or 0)
+                downloaded = 0
+                header_bytes = b""
+
+                with open(part_path, "wb") as f:
+                    for chunk in resp.iter_content(chunk_size=131072):
+                        if not chunk:
+                            continue
+                        if len(header_bytes) < 4:
+                            need = 4 - len(header_bytes)
+                            header_bytes += chunk[:need]
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if progress_callback:
+                            try:
+                                progress_callback(downloaded, total_bytes)
+                            except Exception:
+                                pass
+
+                if downloaded < 1_000_000:
+                    raise ValueError(f"Скачанный файл слишком мал ({downloaded} байт)")
+                if total_bytes > 0 and downloaded != total_bytes:
+                    raise ValueError(f"Неполная загрузка ({downloaded} из {total_bytes} байт)")
+                if header_bytes[:4] != b"\x7fELF":
+                    raise ValueError("Загруженный файл не является корректным Linux ELF-бинарником")
+
+            os.chmod(part_path, 0o755)
+            os.replace(part_path, target_path)
+            print(f"[TorrServer]: Бинарник успешно загружен -> {target_path}", flush=True)
+            return True, target_path
+        except Exception as e:
+            if os.path.exists(part_path):
+                try:
+                    os.remove(part_path)
+                except OSError:
+                    pass
+            return False, str(e)
 
     def is_running(self) -> bool:
         try:
@@ -116,19 +244,23 @@ class TorrServerManager:
         self._ensure_optimal_config(torr_data_dir)
 
         try:
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            startupinfo.wShowWindow = subprocess.SW_HIDE
+            if sys.platform != "win32":
+                try:
+                    os.chmod(bin_path, 0o755)
+                except OSError:
+                    pass
 
-            flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            popen_kwargs = subprocess_no_window_kwargs()
+            if sys.platform != "win32":
+                popen_kwargs["start_new_session"] = True
 
             self.process = subprocess.Popen(
                 [bin_path, "-p", str(TORRSERVER_PORT), "-d", torr_data_dir],
                 cwd=torr_data_dir,
-                startupinfo=startupinfo,
-                creationflags=flags,
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
+                stderr=subprocess.DEVNULL,
+                **popen_kwargs,
             )
 
             for _ in range(25):

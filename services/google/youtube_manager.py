@@ -4,7 +4,7 @@ import webbrowser
 import threading
 import time
 import requests
-import pyautogui
+from core.utils.platform_utils import get_pyautogui, is_wayland
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
@@ -18,7 +18,14 @@ class YouTubeManager:
 
     def _auto_fullscreen(self, delay=2.2):
         time.sleep(delay)
-        pyautogui.press('f')
+        if is_wayland():
+            return
+        pag = get_pyautogui()
+        if pag:
+            try:
+                pag.press('f')
+            except Exception:
+                pass
 
     def _resolve_first_video(self, query: str):
         encoded_query = urllib.parse.quote(query)

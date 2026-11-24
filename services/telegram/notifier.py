@@ -3,6 +3,7 @@ import threading
 import base64
 import cv2
 from services.telegram.telegram_bot import send_alert_to_server, send_text_to_server
+from core.utils.platform_utils import open_video_capture
 
 
 def _send_photo_worker(frame_or_path, caption: str):
@@ -16,7 +17,7 @@ def _send_photo_worker(frame_or_path, caption: str):
             if ret and buffer is not None:
                 base64_img = base64.b64encode(buffer.tobytes()).decode("utf-8")
         else:
-            cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+            cap = open_video_capture(0)
             ret, frame = cap.read()
             cap.release()
             if ret and frame is not None:
