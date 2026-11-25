@@ -8,7 +8,7 @@ import wave
 from PyQt6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QScrollArea, QWidget, QComboBox, QDialog,
-    QFileDialog, QSlider, QProgressBar, QLineEdit, QSizePolicy
+    QSlider, QProgressBar, QLineEdit, QSizePolicy
 )
 from PyQt6.QtCore import (
     Qt, QTimer, QRectF, QPoint, QPointF, pyqtSignal,
@@ -32,7 +32,7 @@ from gui.dialogs.routerai_auth_dialog import RouterAiAuthDialog
 from services.spotify.spotify_manager import SpotifyManager
 from gui.dialogs.mode_config_dialog import ModeConfigDialog
 from gui.dialogs.face_manager_dialog import FaceManagerDialog
-from gui.ui_helpers import MONO_CSS_FAMILY
+from gui.ui_helpers import MONO_CSS_FAMILY, open_file_dialog, open_files_dialog
 
 
 def is_valid_wav(path: str) -> bool:
@@ -1640,7 +1640,7 @@ class SettingsFrame(QFrame):
             self.window().setFocus()
 
     def _add_owner_face(self):
-        files, _ = QFileDialog.getOpenFileNames(self, "Выбор фотографий владельца", "", "Images (*.png *.jpg *.jpeg)")
+        files = open_files_dialog(self, "Выбор фотографий владельца", "", "Images (*.png *.jpg *.jpeg)")
         if files:
             face_dir = os.path.normpath(get_user_data_path("owner_face"))
             os.makedirs(face_dir, exist_ok=True)
@@ -1765,11 +1765,11 @@ class SettingsFrame(QFrame):
             self.preview_sound.stop()
 
     def _choose_custom_alarm_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(
+        file_path = open_file_dialog(
             self,
             "Выбор звукового файла",
             "",
-            "Аудио файлы (*.wav *.mp3 *.ogg *.flac *.m4a);;WAV (*.wav);;MP3 (*.mp3);;Все файлы (*.*)"
+            "Аудио файлы (*.wav *.mp3 *.ogg *.flac *.m4a);;WAV (*.wav);;MP3 (*.mp3);;Все файлы (*)"
         )
         if file_path:
             self.btn_preview_alarm.hide()

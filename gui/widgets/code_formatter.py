@@ -1,10 +1,10 @@
 import os
 import re
-from gui.ui_helpers import MONO_CSS_FAMILY, get_monospace_font, get_ui_fallback_font
+from gui.ui_helpers import MONO_CSS_FAMILY, get_monospace_font, get_ui_fallback_font, save_file_dialog
 import html
 from PyQt6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QTextEdit, QFileDialog, QSizePolicy
+    QTextEdit, QSizePolicy
 )
 from PyQt6.QtCore import Qt, QTimer, QRegularExpression, QByteArray
 from PyQt6.QtGui import (
@@ -608,11 +608,11 @@ class CodeBlockWidget(QFrame):
         ext = get_extension_for_language(self.language)
         disp = get_display_language(self.language)
 
-        file_path, _ = QFileDialog.getSaveFileName(
+        file_path = save_file_dialog(
             self,
             "Сохранить код в файл",
             default_name,
-            f"{disp} (*{ext});;Все файлы (*.*)"
+            f"{disp} (*{ext});;Все файлы (*)"
         )
         if not file_path:
             return

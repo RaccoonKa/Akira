@@ -1,12 +1,13 @@
 import os
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QLineEdit, QScrollArea, QWidget, QFileDialog
+    QFrame, QLineEdit, QScrollArea, QWidget
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QRectF
 from PyQt6.QtGui import QPainter, QPen, QColor, QFont, QPainterPath, QGuiApplication
 from core.utils.config import load_config
 from gui.styles import get_main_style
+from gui.ui_helpers import open_file_dialog
 
 
 class ModeConfigDialog(QDialog):
@@ -620,7 +621,7 @@ class ModeConfigDialog(QDialog):
             file_filter = "Исполняемые файлы (*.exe *.lnk *.bat *.cmd);;Все файлы (*.*)"
         else:
             file_filter = "Программы и ярлыки (*.desktop *.sh *.AppImage);;Все файлы (*)"
-        file_path, _ = QFileDialog.getOpenFileName(
+        file_path = open_file_dialog(
             self,
             "Выбор программы",
             "",

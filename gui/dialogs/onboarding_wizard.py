@@ -7,7 +7,7 @@ import webbrowser
 from PyQt6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QLineEdit, QPushButton, QStackedWidget, QFrame,
-    QFileDialog, QApplication
+    QApplication
 )
 from PyQt6.QtCore import (
     Qt, QTimer, QRectF, QPoint, QPointF,
@@ -21,7 +21,7 @@ from PyQt6.QtGui import (
 from core.utils.config import save_config, load_config, get_user_data_path, get_resource_path
 from gui.windows.settings_window import ModernToggle, NoScrollComboBox
 from gui.styles import get_main_style
-from gui.ui_helpers import handle_drag_press, handle_drag_move, handle_drag_release
+from gui.ui_helpers import handle_drag_press, handle_drag_move, handle_drag_release, open_files_dialog
 
 try:
     from gui.components.blur import enable_window_acrylic
@@ -1219,7 +1219,7 @@ class OnboardingWizard(QDialog):
         self.btn_manage_faces.setText(f"БАЗА ФОТО ({count})")
 
     def _add_owner_face(self):
-        files, _ = QFileDialog.getOpenFileNames(self, "Выбор фотографий владельца", "", "Images (*.png *.jpg *.jpeg)")
+        files = open_files_dialog(self, "Выбор фотографий владельца", "", "Images (*.png *.jpg *.jpeg)")
         if files:
             face_dir = os.path.normpath(get_user_data_path("owner_face"))
             os.makedirs(face_dir, exist_ok=True)

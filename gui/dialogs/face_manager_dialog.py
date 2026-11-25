@@ -2,7 +2,7 @@ import os
 import shutil
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QScrollArea, QWidget, QFileDialog, QGridLayout
+    QFrame, QScrollArea, QWidget, QGridLayout
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QRectF
 from PyQt6.QtGui import (
@@ -11,6 +11,7 @@ from PyQt6.QtGui import (
 )
 from core.utils.config import get_user_data_path, load_config
 from gui.styles import get_main_style
+from gui.ui_helpers import open_files_dialog
 
 
 class FaceManagerDialog(QDialog):
@@ -262,11 +263,11 @@ class FaceManagerDialog(QDialog):
             self.grid_layout.addWidget(card, row, col)
 
     def _add_photos(self):
-        files, _ = QFileDialog.getOpenFileNames(
+        files = open_files_dialog(
             self,
             "Выбор фотографий владельца",
             "",
-            "Изображения (*.png *.jpg *.jpeg *.webp *.bmp);;Все файлы (*.*)"
+            "Изображения (*.png *.jpg *.jpeg *.webp *.bmp);;Все файлы (*)"
         )
         if files:
             count = 0
