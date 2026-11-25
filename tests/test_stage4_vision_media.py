@@ -359,6 +359,117 @@ class Stage4VisionMediaTests(unittest.TestCase):
             w_ready.run()
         self.assertEqual(ready, [("http://127.0.0.1:8090/stream?inception", "Начало")])
 
+    def test_11_yandex_music_wave_favorites_playlists_and_phrases(self):
+        from core.nlp.parser.command_parser import CommandParser
+        from core.system.actions import LIKE_TRACK_PHRASES, NEXT_TRACK_PHRASES, SystemActions, ym_manager
+        from services.yandex.yandex_music_manager import YandexMusicManager
+
+        class _InlineThread:
+            def __init__(self, target=None, daemon=None):
+                self._target = target
+
+            def start(self):
+                if self._target:
+                    self._target()
+
+        def _mk_track(tid: int, title: str):
+            t = MagicMock()
+            t.id = str(tid)
+            t.title = title
+            t.track = None
+            return t
+
+        ym = YandexMusicManager()
+        ym.vlc_instance = MagicMock()
+        ym.player = MagicMock()
+        ym.player.audio_get_volume.return_value = 80
+        ym.player.is_playing.return_value = True
+        fake_client = MagicMock()
+        ym.client = fake_client
+
+        # 1. My Wave advances queue=<prev_id>, sends feedback, and skips previously played tracks
+        t1, t2, t3 = _mk_track(101, "T1"), _mk_track(102, "T2"), _mk_track(103, "T3")
+        rotor1 = MagicMock(batch_id="b1", sequence=[MagicMock(track=t1), MagicMock(track=t2)])
+        rotor2 = MagicMock(batch_id="b2", sequence=[MagicMock(track=t1), MagicMock(track=t2), MagicMock(track=t3)])
+        fake_client.rotor_station_tracks.side_effect = [rotor1, rotor2]
+
+        with patch("services.yandex.yandex_music_manager.HAS_VLC", True), \
+                patch.object(ym, "_ensure_vlc", return_value=True), \
+                patch.object(ym, "_get_direct_stream_url", return_value="http://stream.local/1.mp3"), \
+                patch.object(ym, "_start_watcher"), \
+                patch("services.yandex.yandex_music_manager.threading.Thread", _InlineThread), \
+                patch("services.yandex.yandex_music_manager.time.sleep"):
+            self.assertIs(ym.play_my_wave(), True)
+            self.assertEqual(ym.current_track.id, "101")
+            ym.next_track(manual=True)
+            self.assertEqual(ym.current_track.id, "102")
+            ym.next_track(manual=False)
+            self.assertEqual(ym.current_track.id, "103")
+            second_call = fake_client.rotor_station_tracks.call_args_list[1]
+            self.assertEqual(second_call.kwargs.get("queue"), "102")
+
+            # 2. Specific track auto-continues into My Wave after finishing
+            t_song = _mk_track(555, "Кукушка")
+            rotor_after = MagicMock(batch_id="b3", sequence=[MagicMock(track=t_song), MagicMock(track=_mk_track(556, "Next"))])
+            fake_client.search.return_value = MagicMock(best=MagicMock(type="track", result=t_song))
+            fake_client.rotor_station_tracks.side_effect = [rotor_after]
+            ym.play_query("кукушка")
+            self.assertEqual(ym.current_track.id, "555")
+            self.assertTrue(ym.is_radio)
+            self.assertEqual(ym._wave_station, "user:onyourwave")
+            ym.next_track(manual=False)
+            self.assertEqual(ym.current_track.id, "556")
+
+            # 3. Favorites & custom playlist lookup (exact + fuzzy)
+            fav1, fav2 = _mk_track(701, "Fav1"), _mk_track(702, "Fav2")
+            fake_client.users_likes_tracks.return_value = MagicMock(tracks=[MagicMock(track=fav1), MagicMock(track=fav2)])
+            self.assertIs(ym.play_favorites(), True)
+            self.assertIn(ym.current_track.id, ("701", "702"))
+
+            pl_track = _mk_track(801, "Cyber")
+            user_pl = MagicMock(title="Ночной Киберпанк", kind=7, owner=MagicMock(uid=1))
+            user_pl.fetch_tracks.return_value = [MagicMock(track=pl_track)]
+            fake_client.users_playlists_list.return_value = [user_pl]
+            self.assertIs(ym.play_playlist("киберпанк"), True)
+            self.assertEqual(ym.current_track.id, "801")
+            self.assertEqual(ym._last_playlist_title, "Ночной Киберпанк")
+
+        # 4. Parser rules + SystemActions phrases & routing
+        parser = CommandParser.__new__(CommandParser)
+        self.assertEqual(parser._check_rules("добавь в любимое"), "like_yandex_track")
+        self.assertEqual(parser._check_rules("убери из любимого"), "unlike_yandex_track")
+        self.assertEqual(parser._check_rules("включи моё любимое"), "play_yandex_favorites")
+        self.assertEqual(parser._check_rules("включи плейлист киберпанк"), "play_music")
+
+        with patch("core.system.actions._is_spotify_active", return_value=False):
+            with patch.object(ym_manager, "current_track", _mk_track(901, "Cool")), \
+                    patch.object(ym_manager, "like_current") as mock_like:
+                like_reply = SystemActions.like_yandex_track("поставь лайк")
+                mock_like.assert_called_once()
+                self.assertIn(like_reply, LIKE_TRACK_PHRASES)
+
+            with patch.object(ym_manager, "next_track"):
+                next_reply = SystemActions.media_next_track()
+                self.assertIn(next_reply, NEXT_TRACK_PHRASES)
+
+            with patch.object(ym_manager, "play_favorites", return_value=True) as mock_fav, \
+                    patch.object(ym_manager, "play_my_wave", return_value=True) as mock_wave, \
+                    patch.object(ym_manager, "play_playlist", return_value=True) as mock_pl, \
+                    patch.object(ym_manager, "play_query", return_value="Ищу") as mock_query:
+                ym_manager._last_playlist_title = "Ночной Киберпанк"
+                SystemActions.open_yandex_music("включи моё любимое", force_yandex=True)
+                mock_fav.assert_called_once()
+
+                SystemActions.open_yandex_music("включи мою волну", force_yandex=True)
+                mock_wave.assert_called_once()
+
+                pl_msg = SystemActions.open_yandex_music("включи плейлист ночной киберпанк", force_yandex=True)
+                mock_pl.assert_called_once_with("ночной киберпанк")
+                self.assertIn("Ночной Киберпанк", pl_msg)
+
+                SystemActions.open_yandex_music("включи мою любимую песню кукушка", force_yandex=True)
+                mock_query.assert_called_once_with("мою любимую кукушка")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

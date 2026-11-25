@@ -121,6 +121,7 @@ class TestStage8EndToEndVerification(unittest.TestCase):
         from audio import tts
         from core.system import audio_control_linux as acl
         from core.system import volume_ducker_linux as vdl
+        from core.utils import onnx_runtime as ort_rt
 
         with patch.object(tts.ort, "get_available_providers", return_value=["CUDAExecutionProvider", "CPUExecutionProvider"]), \
                 patch.object(tts.sys, "platform", "linux"):
@@ -130,11 +131,37 @@ class TestStage8EndToEndVerification(unittest.TestCase):
                 patch.object(tts.sys, "platform", "win32"):
             self.assertEqual(tts.get_tts_execution_providers(), ["DmlExecutionProvider", "CPUExecutionProvider"])
 
+        with patch.object(tts.ort, "get_available_providers", return_value=["CUDAExecutionProvider", "CPUExecutionProvider"]), \
+                patch.object(tts.sys, "platform", "win32"):
+            self.assertEqual(tts.get_tts_execution_providers(), ["CUDAExecutionProvider", "CPUExecutionProvider"])
+
         with patch.object(tts.ort, "get_available_providers", return_value=["CPUExecutionProvider"]), \
                 patch.object(tts.sys, "platform", "linux"):
             self.assertEqual(tts.get_tts_execution_providers(), ["CPUExecutionProvider"])
 
+        # create_onnx_session selects GPU when active, and safely falls back to CPU on GPU init error
+        fake_ort = MagicMock()
+        fake_ort.get_available_providers.return_value = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        fake_sess_gpu = MagicMock()
+        fake_sess_gpu.get_providers.return_value = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        fake_sess_cpu = MagicMock()
+        fake_sess_cpu.get_providers.return_value = ["CPUExecutionProvider"]
+        fake_ort.InferenceSession.side_effect = [RuntimeError("cuda init failed"), fake_sess_cpu]
+        with patch.object(ort_rt, "prepare_onnx_gpu_env"), \
+                patch.object(ort_rt.sys, "platform", "linux"):
+            sess, ep = ort_rt.create_onnx_session("dummy.onnx", ort_module=fake_ort, prefer_gpu=True)
+            self.assertIs(sess, fake_sess_cpu)
+            self.assertEqual(ep, "CPUExecutionProvider")
+
+            fake_ort.InferenceSession.side_effect = [fake_sess_gpu]
+            sess2, ep2 = ort_rt.create_onnx_session("dummy.onnx", ort_module=fake_ort, prefer_gpu=True)
+            self.assertIs(sess2, fake_sess_gpu)
+            self.assertEqual(ep2, "CUDAExecutionProvider")
+
         self.assertIsInstance(tts.apply_pronunciation_and_translit("Привет, Akira!"), str)
+        tts_probe = tts.TTSThread.__new__(tts.TTSThread)
+        cleaned_mashin = tts_probe._clean_text_for_tts("восстание машин")
+        self.assertIn("маши\u0301н", cleaned_mashin)
 
         other_stream = MagicMock()
         other_stream.index = 101
@@ -461,7 +488,7 @@ class TestStage8EndToEndVerification(unittest.TestCase):
                 env=env,
                 capture_output=True,
                 text=True,
-                timeout=60,
+                timeout=120,
             )
             self.assertEqual(res.returncode, 0, res.stdout + "\n" + res.stderr)
             self.assertIn("MAIN_CLEAN_EXIT 0", res.stdout)

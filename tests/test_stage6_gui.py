@@ -302,10 +302,11 @@ class TestStage6GuiCrossplatform(unittest.TestCase):
         finally:
             host.close()
 
-    def test_09_linux_window_width_matches_visible_body_no_void(self):
+    def test_09_linux_window_no_void_and_jitter_free_studio_expand(self):
         from core.database import chat_db as cdb
         from core.utils.config import DEFAULT_CONFIG
         from gui.windows import chat_window as cw_mod
+        from PyQt6.QtCore import QPoint, QRect
         import tempfile
 
         with tempfile.TemporaryDirectory() as tmp, \
@@ -319,23 +320,273 @@ class TestStage6GuiCrossplatform(unittest.TestCase):
                     patch("core.utils.config.get_user_data_path", side_effect=lambda *p: os.path.join(tmp, *p)):
                 mw = cw_mod.MainWindow(dict(DEFAULT_CONFIG))
                 try:
-                    # Normal mode on Linux: OS window width == NORMAL_WIDTH (380), no transparent void left side
+                    # 1. Linux X11 Normal mode: single unified MainWindow stays compact at NORMAL_WIDTH (no void in preview)
                     self.assertEqual(mw.width(), mw.NORMAL_WIDTH)
-                    self.assertEqual(mw.bg_frame.x(), 0)
-                    self.assertEqual(mw.bg_frame.width(), mw.NORMAL_WIDTH)
+                    self.assertEqual(mw.bg_frame.geometry(), QRect(0, 0, mw.NORMAL_WIDTH, mw.WINDOW_HEIGHT))
+                    self.assertIsNone(mw.bg_frame._reveal_width)
+                    self.assertIsNone(getattr(mw, "studio_wing", None))
+                    self.assertIs(mw.studio_panel.parent(), mw.bg_frame)
+                    self.assertIs(mw.right_area.parent(), mw.bg_frame)
+                    self.assertIs(mw.studio_panel.main_window, mw)
 
-                    # Expand & collapse keep right edge anchored cleanly
-                    mw.move(400, 100)
-                    right_before = mw.x() + mw.width()
-                    mw._sync_linux_geometry(mw.EXTENDED_WIDTH, anchor_right=right_before)
+                    # 2. Single-window expand & collapse on Linux X11: stationary OS frame & right_area during animation
+                    mw.move(1000, 120)
+                    expected_right_edge = mw.x() + mw.width()
+
+                    mw._prepare_linux_expand_window()
+                    anchor_pos = QPoint(mw.pos())
+                    anchor_size = mw.size()
+                    expected_right_geo = QRect(
+                        mw.EXTENDED_WIDTH - mw.NORMAL_WIDTH + 2,
+                        2,
+                        mw.NORMAL_WIDTH - 4,
+                        mw.WINDOW_HEIGHT - 4,
+                    )
+                    self.assertEqual(anchor_size.width(), mw.EXTENDED_WIDTH)
+                    self.assertEqual(mw.x() + mw.width(), expected_right_edge)
+                    self.assertEqual(mw.right_area.geometry(), expected_right_geo)
+
+                    start_w, end_w = mw._expand_anim_bounds()
+                    self.assertEqual((start_w, end_w), (float(mw.NORMAL_WIDTH), float(mw.EXTENDED_WIDTH)))
+                    for step_w in (mw.NORMAL_WIDTH, 520, 700, mw.EXTENDED_WIDTH, 700, 520, mw.NORMAL_WIDTH):
+                        mw._on_expand_step(step_w)
+                        self.assertEqual(mw.pos(), anchor_pos)
+                        self.assertEqual(mw.size(), anchor_size)
+                        self.assertEqual(mw.right_area.geometry(), expected_right_geo)
+                        self.assertEqual(mw.bg_frame.visible_rect().width(), step_w)
+
+                    mw._apply_expanded_geometry()
                     self.assertEqual(mw.width(), mw.EXTENDED_WIDTH)
-                    self.assertEqual(mw.x() + mw.width(), right_before)
-                    self.assertEqual(mw.bg_frame.geometry().width(), mw.EXTENDED_WIDTH)
+                    self.assertEqual(mw.bg_frame.visible_rect().width(), mw.EXTENDED_WIDTH)
 
-                    mw._sync_linux_geometry(mw.NORMAL_WIDTH, anchor_right=right_before)
+                    mw._apply_collapsed_geometry()
                     self.assertEqual(mw.width(), mw.NORMAL_WIDTH)
-                    self.assertEqual(mw.x() + mw.width(), right_before)
-                    self.assertEqual(mw.bg_frame.geometry().x(), 0)
+                    self.assertEqual(mw.x() + mw.width(), expected_right_edge)
+                    self.assertEqual(mw.y(), 120)
+                    self.assertEqual(mw.bg_frame.geometry(), QRect(0, 0, mw.NORMAL_WIDTH, mw.WINDOW_HEIGHT))
+                    self.assertEqual(mw.right_area.geometry(), QRect(2, 2, mw.NORMAL_WIDTH - 4, mw.WINDOW_HEIGHT - 4))
+                    self.assertIsNone(mw.bg_frame._reveal_width)
+
+                    # 3. Wayland keeps single-window resize expand/collapse without move()
+                    with patch.object(cw_mod, "is_wayland", return_value=True):
+                        mw._on_expand_step(640)
+                        self.assertEqual(mw.width(), 640)
+                        self.assertIsNone(mw.bg_frame._reveal_width)
+                        mw._apply_collapsed_geometry()
+                        self.assertEqual(mw.width(), mw.NORMAL_WIDTH)
+
+                    # 4. X11 ConfigureNotify handoff defers child shifts & repaints cleanly on match
+                    import ctypes
+                    import struct
+                    from PyQt6.QtGui import QGuiApplication
+
+                    QWidget.show(mw)
+                    mw.move(1000, 120)
+                    self.app.processEvents()
+                    wid = int(mw.winId())
+                    ready_calls = []
+
+                    with patch.dict(os.environ, {"DISPLAY": ":0"}), \
+                            patch.object(QGuiApplication, "platformName", return_value="xcb"), \
+                            patch.object(mw, "_apply_x11_northeast_gravity"):
+                        mw._prepare_linux_expand_window(on_ready=lambda: ready_calls.append("expanded"))
+                        self.assertFalse(mw.updatesEnabled())
+                        self.assertEqual(mw.right_area.geometry().x(), 2)
+                        self.assertIsNotNone(mw._x11_handoff_filter)
+
+                        # Wrong width event must not trigger early unlock
+                        wrong_pkt = (ctypes.c_ubyte * 24).from_buffer_copy(
+                            struct.pack("<BBHIIIhhHH", 22, 0, 1, wid, wid, 0, 500, 120, 640, 560)
+                        )
+                        mw._x11_handoff_filter.nativeEventFilter(b"xcb_generic_event_t", ctypes.addressof(wrong_pkt))
+                        self.app.processEvents()
+                        self.assertFalse(mw.updatesEnabled())
+
+                        # Exact ConfigureNotify(880) unlocks & moves right_area synchronously
+                        ok_pkt = (ctypes.c_ubyte * 24).from_buffer_copy(
+                            struct.pack("<BBHIIIhhHH", 22, 0, 2, wid, wid, 0, 500, 120, mw.EXTENDED_WIDTH, mw.WINDOW_HEIGHT)
+                        )
+                        mw._x11_handoff_filter.nativeEventFilter(b"xcb_generic_event_t", ctypes.addressof(ok_pkt))
+                        self.app.processEvents()
+                        self.assertTrue(mw.updatesEnabled())
+                        self.assertEqual(mw.right_area.geometry(), expected_right_geo)
+                        self.assertEqual(ready_calls, ["expanded"])
+
+                        # Collapse handoff awaits ConfigureNotify(380) before moving right_area back to x=2
+                        collapse_done = []
+                        mw._apply_collapsed_geometry(on_done=lambda: collapse_done.append("collapsed"))
+                        self.assertFalse(mw.updatesEnabled())
+                        self.assertEqual(mw.right_area.geometry(), expected_right_geo)
+
+                        ok_col_pkt = (ctypes.c_ubyte * 24).from_buffer_copy(
+                            struct.pack("<BBHIIIhhHH", 22, 0, 3, wid, wid, 0, 1000, 120, mw.NORMAL_WIDTH, mw.WINDOW_HEIGHT)
+                        )
+                        mw._x11_handoff_filter.nativeEventFilter(b"xcb_generic_event_t", ctypes.addressof(ok_col_pkt))
+                        self.app.processEvents()
+                        self.assertTrue(mw.updatesEnabled())
+                        self.assertEqual(mw.right_area.geometry(), QRect(2, 2, mw.NORMAL_WIDTH - 4, mw.WINDOW_HEIGHT - 4))
+                        self.assertEqual(collapse_done, ["collapsed"])
+
+                    # 5. Windows Zero-Move + stationary right_area inside fixed EXTENDED_WIDTH bg_frame
+                    with patch.object(cw_mod, "CommandParser", return_value=MagicMock()), \
+                            patch.object(cw_mod.sys, "platform", "win32"):
+                        win_mw = cw_mod.MainWindow(dict(DEFAULT_CONFIG))
+                        try:
+                            expected_right_geo = QRect(
+                                win_mw.EXTENDED_WIDTH - win_mw.NORMAL_WIDTH + 2,
+                                2,
+                                win_mw.NORMAL_WIDTH - 4,
+                                win_mw.WINDOW_HEIGHT - 4,
+                            )
+                            self.assertEqual(win_mw.width(), win_mw.EXTENDED_WIDTH)
+                            self.assertEqual(win_mw.bg_frame.geometry(), QRect(0, 0, win_mw.EXTENDED_WIDTH, win_mw.WINDOW_HEIGHT))
+                            self.assertEqual(win_mw.bg_frame.visible_rect().width(), win_mw.NORMAL_WIDTH)
+                            self.assertEqual(win_mw.right_area.geometry(), expected_right_geo)
+
+                            for w_step in (win_mw.NORMAL_WIDTH, 550, 720, win_mw.EXTENDED_WIDTH):
+                                win_mw._on_expand_step(w_step)
+                                self.assertEqual(win_mw.bg_frame.geometry(), QRect(0, 0, win_mw.EXTENDED_WIDTH, win_mw.WINDOW_HEIGHT))
+                                self.assertEqual(win_mw.right_area.geometry(), expected_right_geo)
+                                self.assertEqual(win_mw.bg_frame.visible_rect().width(), w_step)
+                        finally:
+                            win_mw.shutdown()
+                            win_mw.close()
+                finally:
+                    mw.shutdown()
+                    mw.close()
+
+    def test_10_game_mode_persists_across_restart_and_pauses_stt(self):
+        import json
+        import tempfile
+        from core.database import chat_db as cdb
+        from core.utils import config as cfg_mod
+        from gui.windows import chat_window as cw_mod
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.object(cdb, "get_db_path", return_value=os.path.join(tmp, "s6_gm.db")):
+            cfg_file = Path(tmp) / "config.json"
+            cfg_file.write_text(json.dumps(dict(cfg_mod.DEFAULT_CONFIG)), encoding="utf-8")
+
+            def _load():
+                return json.loads(cfg_file.read_text(encoding="utf-8"))
+
+            def _save(data):
+                cfg_file.write_text(json.dumps(data), encoding="utf-8")
+
+            test_db = cdb.StudioChatDatabase()
+            stt1 = MagicMock()
+            stt2 = MagicMock()
+
+            with patch.object(cw_mod, "load_config", side_effect=_load), \
+                    patch.object(cw_mod, "save_config", side_effect=_save), \
+                    patch("gui.windows.studio_frame.load_config", side_effect=_load), \
+                    patch("gui.windows.settings_window.load_config", side_effect=_load), \
+                    patch("gui.windows.studio_frame.studio_db", test_db), \
+                    patch.object(cw_mod, "TTSThread", return_value=MagicMock()), \
+                    patch.object(cw_mod, "VisionThread"), \
+                    patch.object(cw_mod, "UpdateCheckerThread"), \
+                    patch("core.utils.config.get_user_data_path", side_effect=lambda *p: os.path.join(tmp, *p)):
+                with patch.object(cw_mod, "STTThread", return_value=stt1):
+                    mw1 = cw_mod.MainWindow(_load())
+                    try:
+                        self.assertFalse(mw1.is_game_mode)
+                        mw1.toggle_game_mode(enable=True, announce=False)
+                        self.assertTrue(mw1.is_game_mode)
+                        self.assertTrue(_load()["is_game_mode"])
+                        stt1.set_paused.assert_called_with(True)
+                    finally:
+                        mw1.shutdown()
+                        mw1.close()
+
+                # Simulated full close & reopen reads saved is_game_mode=True
+                with patch.object(cw_mod, "STTThread", return_value=stt2):
+                    mw2 = cw_mod.MainWindow(_load())
+                    try:
+                        self.assertTrue(mw2.is_game_mode)
+                        self.assertTrue(stt2.is_paused)
+                        self.assertIn("активен", mw2.game_mode_btn.toolTip())
+
+                        # Explicit turn off persists False
+                        mw2.toggle_game_mode(enable=False, announce=False)
+                        self.assertFalse(mw2.is_game_mode)
+                        self.assertFalse(_load()["is_game_mode"])
+                    finally:
+                        mw2.shutdown()
+                        mw2.close()
+
+    def test_11_main_chat_smooth_scroll_and_studio_styling(self):
+        import tempfile
+        from PyQt6.QtGui import QWheelEvent
+        from core.database import chat_db as cdb
+        from core.utils.config import DEFAULT_CONFIG
+        from gui.styles import get_main_style
+        from gui.widgets.code_formatter import CodeBlockWidget
+        from gui.windows import chat_window as cw_mod
+        from gui.windows.studio_frame import SmoothScrollArea, StudioAkiraStream, StudioUserMessage
+
+        self.assertIn("QScrollArea#ChatHistory", get_main_style("dark"))
+        self.assertIn("QScrollArea#ChatHistory", get_main_style("light"))
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.object(cdb, "get_db_path", return_value=os.path.join(tmp, "s6_chat.db")):
+            test_db = cdb.StudioChatDatabase()
+            with patch.object(cw_mod, "STTThread", return_value=MagicMock()), \
+                    patch.object(cw_mod, "TTSThread", return_value=MagicMock()), \
+                    patch.object(cw_mod, "VisionThread"), \
+                    patch.object(cw_mod, "UpdateCheckerThread"), \
+                    patch("gui.windows.studio_frame.studio_db", test_db), \
+                    patch("core.utils.config.get_user_data_path", side_effect=lambda *p: os.path.join(tmp, *p)):
+                mw = cw_mod.MainWindow(dict(DEFAULT_CONFIG))
+                try:
+                    feed = mw.chat_history
+                    self.assertIsInstance(feed, cw_mod.ChatHistoryFeed)
+                    self.assertIsInstance(feed, SmoothScrollArea)
+
+                    mw.right_panel.set_emotion("happy")
+                    feed.append("Вы: Покажи код на Python")
+                    mw.stream_text_to_chat("Лови пример:\n```python\nprint('hello')\n```")
+                    feed.finish_active_stream()
+
+                    items = [
+                        feed.feed_layout.itemAt(i).widget()
+                        for i in range(feed.feed_layout.count())
+                    ]
+                    self.assertEqual(len(items), 2)
+                    self.assertIsInstance(items[0], StudioUserMessage)
+                    self.assertIsNotNone(items[0].rail)
+                    self.assertIsInstance(items[1], StudioAkiraStream)
+                    self.assertIsNotNone(items[1].rail)
+                    self.assertTrue(any(isinstance(cb, CodeBlockWidget) for cb in items[1].code_blocks))
+
+                    # Show panel to verify real layout & smooth wheel scroll momentum timer
+                    QWidget.show(mw)
+                    mw.right_panel.setFixedHeight(280)
+                    mw.right_panel.show()
+                    for idx in range(12):
+                        feed.append(f"Вы: Сообщение #{idx}")
+                        feed.append(f"Акира: Длинный ответ номер {idx} для проверки прокрутки чата в основном окне.")
+
+                    self.app.processEvents()
+                    self.app.processEvents()
+                    self.assertGreater(feed.verticalScrollBar().maximum(), 0)
+
+                    wheel_ev = QWheelEvent(
+                        QPointF(100, 100),
+                        QPointF(100, 100),
+                        QPoint(0, 0),
+                        QPoint(0, 120),
+                        Qt.MouseButton.NoButton,
+                        Qt.KeyboardModifier.NoModifier,
+                        Qt.ScrollPhase.NoScrollPhase,
+                        False,
+                    )
+                    feed.wheelEvent(wheel_ev)
+                    self.assertTrue(feed._timer.isActive())
+
+                    # Switching theme propagates to all Studio-styled widgets in main chat
+                    mw.apply_theme("light")
+                    self.assertEqual(items[0].current_theme, "light")
+                    self.assertEqual(items[1].current_theme, "light")
                 finally:
                     mw.shutdown()
                     mw.close()
