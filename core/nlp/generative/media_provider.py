@@ -15,6 +15,7 @@ from datetime import datetime
 import requests
 
 from core.utils.config import load_config, get_user_data_path
+from core.utils.attachments import parse_attached_files
 
 ROUTERAI_BASE_URL = "https://routerai.ru/api/v1"
 IMAGE_MODEL = "google/gemini-nano-banana-2.1"
@@ -95,10 +96,11 @@ class MediaProvider:
         if clean_prompt:
             messages_content.append({"type": "text", "text": clean_prompt})
 
-        if ref_image_path and os.path.exists(ref_image_path):
-            data_uri = self._encode_image_file(ref_image_path)
-            if data_uri:
-                messages_content.append({"type": "image_url", "image_url": {"url": data_uri}})
+        for ref_path in parse_attached_files(ref_image_path):
+            if os.path.exists(ref_path):
+                data_uri = self._encode_image_file(ref_path)
+                if data_uri:
+                    messages_content.append({"type": "image_url", "image_url": {"url": data_uri}})
 
         chat_payload = {
             "model": IMAGE_MODEL,
@@ -223,10 +225,11 @@ class MediaProvider:
         if clean_prompt:
             messages_content.append({"type": "text", "text": clean_prompt})
 
-        if ref_image_path and os.path.exists(ref_image_path):
-            data_uri = self._encode_image_file(ref_image_path)
-            if data_uri:
-                messages_content.append({"type": "image_url", "image_url": {"url": data_uri}})
+        for ref_path in parse_attached_files(ref_image_path):
+            if os.path.exists(ref_path):
+                data_uri = self._encode_image_file(ref_path)
+                if data_uri:
+                    messages_content.append({"type": "image_url", "image_url": {"url": data_uri}})
 
         payload = {
             "model": MUSIC_MODEL,

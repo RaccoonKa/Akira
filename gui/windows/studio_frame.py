@@ -5,7 +5,7 @@ import random
 from datetime import datetime
 from PyQt6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QScrollArea, QWidget, QFileDialog, QSizePolicy,
+    QScrollArea, QWidget, QSizePolicy,
     QTextEdit, QLineEdit, QGraphicsOpacityEffect, QLayout
 )
 from PyQt6.QtCore import (
@@ -21,6 +21,12 @@ from PyQt6.QtGui import (
 from PyQt6.QtSvg import QSvgRenderer
 from core.utils.config import get_resource_path, load_config
 from gui.styles import get_main_style
+from gui.ui_helpers import open_file_dialog, open_files_dialog, save_file_dialog
+from core.utils.attachments import (
+    MAX_STUDIO_ATTACHMENTS,
+    parse_attached_files,
+    serialize_attached_files,
+)
 from core.database.chat_db import studio_db
 from core.nlp.generative.media_provider import media_provider
 from gui.widgets.code_formatter import (
@@ -682,11 +688,11 @@ class ImageMediaCard(QFrame):
         if not self._pixmap or self._pixmap.isNull():
             return
         default_name = os.path.basename(self.image_path) if self.image_path else "akira_art.png"
-        save_path, _ = QFileDialog.getSaveFileName(
+        save_path = save_file_dialog(
             self,
             "Сохранить изображение",
             default_name,
-            "PNG Image (*.png);;JPEG Image (*.jpg *.jpeg);;All Files (*.*)"
+            "PNG Image (*.png);;JPEG Image (*.jpg *.jpeg);;All Files (*)"
         )
         if save_path:
             self._pixmap.save(save_path)
@@ -1066,11 +1072,11 @@ class AudioMediaCard(QFrame):
         if not self.audio_path or not os.path.exists(self.audio_path):
             return
         default_name = os.path.basename(self.audio_path) if self.audio_path else "akira_melody.mp3"
-        save_path, _ = QFileDialog.getSaveFileName(
+        save_path = save_file_dialog(
             self,
             "Сохранить аудиозапись",
             default_name,
-            "MP3 Audio (*.mp3);;All Files (*.*)"
+            "MP3 Audio (*.mp3);;All Files (*)"
         )
         if save_path:
             import shutil
@@ -1238,6 +1244,85 @@ def get_studio_emotion_color(emotion: str, theme: str = "dark") -> QColor:
     return QColor.fromHsv(int(h), int(s), int(v))
 
 
+def _attachment_icon(path: str) -> str:
+    ext = os.path.splitext(path)[1].lower()
+    if ext in {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif"}:
+        return "🖼️"
+    if ext in {".pdf", ".doc", ".docx"}:
+        return "📑"
+    if ext in {
+        ".py", ".cs", ".js", ".ts", ".tsx", ".jsx", ".json",
+        ".yaml", ".yml", ".toml", ".html", ".css", ".sql",
+        ".sh", ".cpp", ".c", ".h", ".java", ".go", ".rs",
+    }:
+        return "💻"
+    return "📎"
+
+
+def _elide_filename(name: str, max_len: int = 20) -> str:
+    if len(name) <= max_len:
+        return name
+    stem, ext = os.path.splitext(name)
+    keep = max(4, max_len - len(ext) - 3)
+    return f"{stem[:keep]}...{ext}" if ext else f"{name[:max_len - 3]}..."
+
+
+class _HorizontalAttachmentsScroll(QScrollArea):
+    """Компактная горизонтально прокручиваемая лента чипов прикреплённых файлов."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("StudioAttachmentsScroll")
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setFixedHeight(32)
+
+    def wheelEvent(self, event):
+        h_bar = self.horizontalScrollBar()
+        if h_bar.maximum() > h_bar.minimum():
+            delta = event.pixelDelta().x() or event.pixelDelta().y()
+            if not delta:
+                delta = event.angleDelta().x() or event.angleDelta().y()
+            if delta:
+                h_bar.setValue(h_bar.value() - int(delta * 0.45))
+                event.accept()
+                return
+        super().wheelEvent(event)
+
+
+class StudioAttachmentChip(QFrame):
+    """Компактный бейдж прикреплённого файла в стиле Gemini с кнопкой удаления."""
+    removed = pyqtSignal(str)
+
+    def __init__(self, file_path: str, font_family: str, parent=None):
+        super().__init__(parent)
+        self.file_path = file_path
+        self.setObjectName("StudioAttachmentChip")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setFixedHeight(24)
+
+        full_name = os.path.basename(file_path)
+        self.setToolTip(f"{full_name}\n{file_path}")
+
+        row = QHBoxLayout(self)
+        row.setContentsMargins(8, 0, 4, 0)
+        row.setSpacing(4)
+
+        self.name_lbl = QLabel(f"{_attachment_icon(file_path)} {_elide_filename(full_name, 18)}")
+        self.name_lbl.setObjectName("StudioFileNameLabel")
+        self.name_lbl.setFont(QFont(font_family, 8))
+        row.addWidget(self.name_lbl)
+
+        self.remove_btn = QPushButton("✕")
+        self.remove_btn.setObjectName("StudioFileRemoveBtn")
+        self.remove_btn.setFixedSize(15, 15)
+        self.remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.remove_btn.setToolTip(f"Убрать {full_name}")
+        self.remove_btn.clicked.connect(lambda: self.removed.emit(self.file_path))
+        row.addWidget(self.remove_btn)
+
+
 class StudioUserMessage(QWidget):
     """Воздушное сообщение пользователя с неоновым рельсом справа."""
     def __init__(
@@ -1256,6 +1341,7 @@ class StudioUserMessage(QWidget):
         self.font_family = font_family
         self.chat_font_family = chat_font_family or font_family
         self.current_theme = theme
+        self.attached_files = parse_attached_files(attached_file)
 
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(0, 4, 0, 4)
@@ -1284,14 +1370,52 @@ class StudioUserMessage(QWidget):
         self.body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         content_col.addWidget(self.body)
 
-        if attached_file:
-            fname = os.path.basename(attached_file)
-            self.file_pill = QLabel(f"📎 {fname}")
-            self.file_pill.setObjectName("StudioFilePill")
-            self.file_pill.setFont(QFont(self.font_family, 9))
-            self.file_pill.setAlignment(Qt.AlignmentFlag.AlignRight)
-            self.file_pill.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-            content_col.addWidget(self.file_pill)
+        self.file_pills: list[QLabel] = []
+        self.file_pill = None
+        if self.attached_files:
+            pills_container = QWidget(self)
+            pills_rows = QVBoxLayout(pills_container)
+            pills_rows.setContentsMargins(0, 2, 0, 0)
+            pills_rows.setSpacing(4)
+
+            current_row_widgets = []
+            current_row_chars = 0
+            for path in self.attached_files:
+                fname = os.path.basename(path)
+                pill_text = f"{_attachment_icon(path)} {_elide_filename(fname, 22)}"
+                pill = QLabel(pill_text)
+                pill.setObjectName("StudioFilePill")
+                pill.setFont(QFont(self.font_family, 8))
+                pill.setToolTip(f"{fname}\n{path}")
+                pill.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+                self.file_pills.append(pill)
+
+                label_len = len(pill_text)
+                if current_row_widgets and (len(current_row_widgets) >= 3 or current_row_chars + label_len > 38):
+                    row_l = QHBoxLayout()
+                    row_l.setContentsMargins(0, 0, 0, 0)
+                    row_l.setSpacing(5)
+                    row_l.addStretch(1)
+                    for w in current_row_widgets:
+                        row_l.addWidget(w)
+                    pills_rows.addLayout(row_l)
+                    current_row_widgets = []
+                    current_row_chars = 0
+
+                current_row_widgets.append(pill)
+                current_row_chars += label_len + 2
+
+            if current_row_widgets:
+                row_l = QHBoxLayout()
+                row_l.setContentsMargins(0, 0, 0, 0)
+                row_l.setSpacing(5)
+                row_l.addStretch(1)
+                for w in current_row_widgets:
+                    row_l.addWidget(w)
+                pills_rows.addLayout(row_l)
+
+            self.file_pill = self.file_pills[0]
+            content_col.addWidget(pills_container)
 
         main_layout.addLayout(content_col, 1)
 
@@ -2558,15 +2682,18 @@ class StudioMediaModeBtn(QPushButton):
 class StudioFloatingDock(QFrame):
     """Парящий остров ввода внизу студии."""
     submit_requested = pyqtSignal(str, str, str)
+    MAX_ATTACHED_FILES = MAX_STUDIO_ATTACHMENTS
 
     def __init__(self, font_family: str, chat_font_family: str = None, parent=None):
         super().__init__(parent)
         self.setObjectName("StudioFloatingDock")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setAcceptDrops(True)
         self.font_family = font_family
         self.chat_font_family = chat_font_family or font_family
         self.studio_frame = parent
-        self.attached_file = None
+        self.attached_files: list[str] = []
+        self._limit_notice_active = False
         self.current_theme = "dark"
         self.media_mode = "text"
 
@@ -2575,22 +2702,35 @@ class StudioFloatingDock(QFrame):
         layout.setSpacing(4)
 
         self.file_chip = QWidget()
-        file_l = QHBoxLayout(self.file_chip)
-        file_l.setContentsMargins(0, 0, 0, 0)
-        file_l.setSpacing(6)
+        self.file_chip.setFixedHeight(32)
+        file_bar = QHBoxLayout(self.file_chip)
+        file_bar.setContentsMargins(0, 0, 0, 0)
+        file_bar.setSpacing(6)
 
-        self.file_name_lbl = QLabel("")
-        self.file_name_lbl.setObjectName("StudioFileNameLabel")
-        self.file_name_lbl.setFont(QFont(self.font_family, 9))
-        file_l.addWidget(self.file_name_lbl)
+        self.attachments_scroll = _HorizontalAttachmentsScroll(self.file_chip)
+        self.attachments_container = QWidget()
+        self.attachments_container.setStyleSheet("background: transparent;")
+        self.attachments_layout = QHBoxLayout(self.attachments_container)
+        self.attachments_layout.setContentsMargins(0, 2, 2, 2)
+        self.attachments_layout.setSpacing(5)
+        self.attachments_layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.attachments_scroll.setWidget(self.attachments_container)
+        file_bar.addWidget(self.attachments_scroll, 1)
 
-        self.file_remove_btn = QPushButton("✕")
-        self.file_remove_btn.setObjectName("StudioFileRemoveBtn")
-        self.file_remove_btn.setFixedSize(16, 16)
-        self.file_remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.file_remove_btn.clicked.connect(self.clear_attachment)
-        file_l.addWidget(self.file_remove_btn)
-        file_l.addStretch()
+        self.attach_count_lbl = QLabel("")
+        self.attach_count_lbl.setObjectName("StudioAttachCountLabel")
+        self.attach_count_lbl.setFont(QFont(self.font_family, 8))
+        file_bar.addWidget(self.attach_count_lbl)
+
+        self.clear_all_files_btn = QPushButton("Сбросить")
+        self.clear_all_files_btn.setObjectName("StudioAttachClearBtn")
+        self.clear_all_files_btn.setFont(QFont(self.font_family, 8))
+        self.clear_all_files_btn.setFixedHeight(22)
+        self.clear_all_files_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.clear_all_files_btn.setToolTip("Убрать все прикреплённые файлы")
+        self.clear_all_files_btn.clicked.connect(self.clear_attachment)
+        self.clear_all_files_btn.hide()
+        file_bar.addWidget(self.clear_all_files_btn)
 
         self.file_chip.hide()
         layout.addWidget(self.file_chip)
@@ -2699,30 +2839,144 @@ class StudioFloatingDock(QFrame):
     def randomize_placeholder(self):
         self.input_edit.setPlaceholderText(random.choice(STUDIO_PLACEHOLDERS))
 
-    def _select_file(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Выберите файл для Студии",
-            "",
-            "Все поддерживаемые (*.py *.cs *.txt *.md *.json *.log *.pdf *.docx *.png *.jpg);;Все файлы (*.*)"
+    @property
+    def attached_file(self):
+        return serialize_attached_files(self.attached_files) or None
+
+    def _update_attach_controls(self):
+        count = len(self.attached_files)
+        self.attach_btn.setEnabled(count < self.MAX_ATTACHED_FILES and self.input_edit.isEnabled())
+        if count >= self.MAX_ATTACHED_FILES:
+            self.attach_btn.setToolTip(f"Достигнут лимит вложений ({self.MAX_ATTACHED_FILES} из {self.MAX_ATTACHED_FILES})")
+        elif count > 0:
+            self.attach_btn.setToolTip(f"Добавить файлы (прикреплено {count} из {self.MAX_ATTACHED_FILES})")
+        else:
+            self.attach_btn.setToolTip(f"Прикрепить файлы (до {self.MAX_ATTACHED_FILES} шт.)")
+
+    def _rebuild_attachment_strip(self):
+        while self.attachments_layout.count():
+            item = self.attachments_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+
+        for path in self.attached_files:
+            chip = StudioAttachmentChip(path, font_family=self.font_family, parent=self.attachments_container)
+            chip.removed.connect(self.remove_attachment)
+            self.attachments_layout.addWidget(chip)
+
+        count = len(self.attached_files)
+        if not self._limit_notice_active:
+            if count >= self.MAX_ATTACHED_FILES:
+                self.attach_count_lbl.setText(f"{count}/{self.MAX_ATTACHED_FILES}")
+                self.attach_count_lbl.setStyleSheet("color: #f59e0b;")
+            else:
+                self.attach_count_lbl.setText(f"{count}/{self.MAX_ATTACHED_FILES}" if count else "")
+                self.attach_count_lbl.setStyleSheet("")
+
+        self.clear_all_files_btn.setVisible(count >= 2)
+        self.file_chip.setVisible(count > 0)
+        self._update_attach_controls()
+
+    def _show_limit_notice(self):
+        self._limit_notice_active = True
+        self.attach_count_lbl.setText(f"Макс. {self.MAX_ATTACHED_FILES}")
+        self.attach_count_lbl.setStyleSheet("color: #f59e0b; font-weight: bold;")
+
+        def _restore():
+            self._limit_notice_active = False
+            self._rebuild_attachment_strip()
+
+        QTimer.singleShot(2500, _restore)
+
+    def add_attachments(self, paths: list[str]) -> tuple[int, int]:
+        """Добавляет до MAX_ATTACHED_FILES уникальных путей. Возвращает (добавлено, пропущено_из_за_лимита)."""
+        existing_norm = {
+            os.path.normcase(os.path.abspath(p)) if os.path.isabs(p) else os.path.normcase(p)
+            for p in self.attached_files
+        }
+        added = 0
+        dropped = 0
+        for raw in (paths or []):
+            p = str(raw or "").strip()
+            if not p:
+                continue
+            norm = os.path.normcase(os.path.abspath(p)) if os.path.isabs(p) else os.path.normcase(p)
+            if norm in existing_norm:
+                continue
+            if len(self.attached_files) >= self.MAX_ATTACHED_FILES:
+                dropped += 1
+                continue
+            self.attached_files.append(p)
+            existing_norm.add(norm)
+            added += 1
+
+        self._rebuild_attachment_strip()
+        if dropped > 0:
+            self._show_limit_notice()
+        if added > 0:
+            QTimer.singleShot(
+                10,
+                lambda: self.attachments_scroll.horizontalScrollBar().setValue(
+                    self.attachments_scroll.horizontalScrollBar().maximum()
+                ),
+            )
+        return added, dropped
+
+    def remove_attachment(self, file_path: str):
+        target_norm = (
+            os.path.normcase(os.path.abspath(file_path))
+            if os.path.isabs(file_path)
+            else os.path.normcase(file_path)
         )
-        if path:
-            self.attached_file = path
-            self.file_name_lbl.setText(f"📎 {os.path.basename(path)}")
-            self.file_chip.show()
+        self.attached_files = [
+            p for p in self.attached_files
+            if (os.path.normcase(os.path.abspath(p)) if os.path.isabs(p) else os.path.normcase(p)) != target_norm
+        ]
+        self._limit_notice_active = False
+        self._rebuild_attachment_strip()
+
+    def _select_file(self):
+        if len(self.attached_files) >= self.MAX_ATTACHED_FILES:
+            self._show_limit_notice()
+            return
+        paths = open_files_dialog(
+            self,
+            f"Выберите файлы для Студии (до {self.MAX_ATTACHED_FILES} шт.)",
+            "",
+            "Все поддерживаемые (*.py *.cs *.js *.ts *.txt *.md *.json *.yaml *.yml *.log *.pdf *.docx *.png *.jpg *.jpeg *.webp);;Все файлы (*)"
+        )
+        if paths:
+            self.add_attachments(paths)
 
     def clear_attachment(self):
-        self.attached_file = None
-        self.file_name_lbl.setText("")
-        self.file_chip.hide()
+        self.attached_files.clear()
+        self._limit_notice_active = False
+        self._rebuild_attachment_strip()
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            if any(u.isLocalFile() and os.path.isfile(u.toLocalFile()) for u in event.mimeData().urls()):
+                event.acceptProposedAction()
+                return
+        super().dragEnterEvent(event)
+
+    def dropEvent(self, event):
+        if event.mimeData().hasUrls():
+            files = [u.toLocalFile() for u in event.mimeData().urls() if u.isLocalFile() and os.path.isfile(u.toLocalFile())]
+            if files:
+                self.add_attachments(files)
+                event.acceptProposedAction()
+                return
+        super().dropEvent(event)
 
     def _submit(self):
         text = self.input_edit.toPlainText().strip()
-        if not text and not self.attached_file:
+        if not text and not self.attached_files:
             return
         self.model_combo.refresh_models()
         model = self.model_combo.currentData()
-        f_path = self.attached_file
+        f_path = serialize_attached_files(self.attached_files)
         self.input_edit.clear()
         self.input_edit.adjust_height()
         self.clear_attachment()
@@ -2733,7 +2987,7 @@ class StudioFloatingDock(QFrame):
     def set_active(self, enabled: bool):
         self.input_edit.setEnabled(enabled)
         self.send_btn.setEnabled(enabled)
-        self.attach_btn.setEnabled(enabled)
+        self._update_attach_controls()
         if self.media_mode == "text":
             self.model_combo.setEnabled(enabled)
         self.media_mode_btn.setEnabled(enabled)
@@ -3267,6 +3521,7 @@ class StudioFrame(QFrame):
         self.current_theme = "dark"
         self.main_window = main_window if main_window is not None else parent
         self.current_session_id = None
+        self._session_id_remap = {}
 
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
@@ -3442,7 +3697,14 @@ class StudioFrame(QFrame):
         self.drawer.update_active_highlight(session_id)
 
     def delete_session(self, session_id: int):
-        studio_db.delete_session(session_id)
+        id_map = studio_db.delete_session(session_id) or {}
+        for old_id, new_id in id_map.items():
+            if old_id != new_id:
+                self._session_id_remap[old_id] = new_id
+
+        if self.current_session_id in id_map:
+            self.current_session_id = id_map[self.current_session_id]
+
         sessions = studio_db.get_sessions()
         existing_ids = [s["id"] for s in sessions]
 
@@ -3456,6 +3718,8 @@ class StudioFrame(QFrame):
                 new_id = studio_db.create_session(title="Новый диалог", model=model)
                 self.load_session(new_id)
                 sessions = studio_db.get_sessions()
+        else:
+            self.drawer.update_active_highlight(self.current_session_id)
 
         self.drawer.refresh_sessions(sessions, self.current_session_id)
 
@@ -3810,6 +4074,12 @@ class StudioFrame(QFrame):
                     self.main_window.speak_reply(clean_v, is_whisper=False)
 
     def _on_title_generated(self, session_id: int, title: str):
+        seen_ids = set()
+        while session_id in self._session_id_remap and session_id not in seen_ids:
+            seen_ids.add(session_id)
+            session_id = self._session_id_remap[session_id]
+        if not studio_db.get_session(session_id):
+            return
         studio_db.update_session_title(session_id, title)
         if hasattr(self, 'drawer'):
             if session_id in self.drawer.card_widgets:

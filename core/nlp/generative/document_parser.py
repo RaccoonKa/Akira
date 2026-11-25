@@ -20,7 +20,13 @@ class DocumentParser:
         ext = os.path.splitext(file_path)[1].lower()
 
         try:
-            if ext in ['.txt', '.md', '.py', '.json', '.csv', '.log']:
+            text_exts = {
+                '.txt', '.md', '.py', '.cs', '.js', '.ts', '.tsx', '.jsx',
+                '.json', '.csv', '.log', '.yaml', '.yml', '.toml', '.ini',
+                '.xml', '.html', '.css', '.scss', '.sql', '.sh', '.bat',
+                '.ps1', '.c', '.h', '.cpp', '.hpp', '.java', '.go', '.rs',
+            }
+            if ext in text_exts:
                 return self._parse_txt(file_path)
             elif ext == '.pdf':
                 return self._parse_pdf(file_path)

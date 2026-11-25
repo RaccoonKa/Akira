@@ -696,12 +696,24 @@ class LLMProvider:
 
         return answer
 
-    def ask_with_context(self, user_text: str, file_content: str):
-        temp_prompt = (
-            f"Ниже представлено содержимое текстового файла. Внимательно изучи его и ответь на вопрос.\n\n"
-            f"--- СОДЕРЖИМОЕ ФАЙЛА ---\n{file_content}\n--- КОНЕЦ ФАЙЛА ---\n\n"
-            f"Вопрос: {user_text}"
-        )
+    def ask_with_context(self, user_text: str, file_content: str, file_names: list[str] = None):
+        names = [n for n in (file_names or []) if n]
+        if len(names) > 1:
+            names_preview = ", ".join(names)
+            temp_prompt = (
+                f"Ниже представлено содержимое нескольких прикреплённых файлов ({len(names)} шт.: {names_preview}). "
+                f"Внимательно изучи их содержимое и ответь на запрос пользователя.\n\n"
+                f"{file_content}\n\n"
+                f"Вопрос: {user_text}"
+            )
+            history_prefix = f"(Отправил файлов ({len(names)}): {names_preview})"
+        else:
+            temp_prompt = (
+                f"Ниже представлено содержимое текстового файла. Внимательно изучи его и ответь на вопрос.\n\n"
+                f"--- СОДЕРЖИМОЕ ФАЙЛА ---\n{file_content}\n--- КОНЕЦ ФАЙЛА ---\n\n"
+                f"Вопрос: {user_text}"
+            )
+            history_prefix = f"(Отправил файл{f' {names[0]}' if names else ''})"
 
         messages = [{"role": "system", "content": self._get_active_system_prompt(user_text)}]
         messages.extend(self.history)
@@ -722,7 +734,7 @@ class LLMProvider:
                 slug = self.ROUTERAI_MODELS.get(effective_slot, self.ROUTERAI_MODELS["kasumi"])
                 answer = self._ask_routerai(slug, messages)
 
-            self.history.append({"role": "user", "content": f"(Отправил файл) {user_text}"})
+            self.history.append({"role": "user", "content": f"{history_prefix} {user_text}"})
             self.history.append({"role": "assistant", "content": answer})
             if len(self.history) > self.max_history:
                 self.history = self.history[-self.max_history:]
