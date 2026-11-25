@@ -13,10 +13,16 @@ from PyQt6.QtCore import QThread, pyqtSignal
 from piper.voice import PiperVoice
 from piper.config import SynthesisConfig
 from core.utils.config import get_resource_path, load_config
+from core.utils.onnx_runtime import (
+    describe_execution_provider,
+    get_onnx_execution_providers,
+    prepare_onnx_gpu_env,
+)
 from core.system.actions import ym_manager
 from core.utils.text_cleaner import clean_voice_text
 
 ort.set_default_logger_severity(3)
+prepare_onnx_gpu_env(ort)
 
 if getattr(sys, 'frozen', False):
     BASE_DIR = os.path.dirname(sys.executable)
@@ -129,10 +135,12 @@ def get_random_laugh_bytes(target_sr=22050):
     return None
 
 def get_tts_execution_providers():
+    prepare_onnx_gpu_env(ort)
     available = ort.get_available_providers()
     if sys.platform == "win32":
-        if "DmlExecutionProvider" in available:
-            return ["DmlExecutionProvider", "CPUExecutionProvider"]
+        for gpu_provider in ("DmlExecutionProvider", "CUDAExecutionProvider"):
+            if gpu_provider in available:
+                return [gpu_provider, "CPUExecutionProvider"]
         return ["CPUExecutionProvider"]
     for gpu_provider in ("CUDAExecutionProvider", "ROCMExecutionProvider"):
         if gpu_provider in available:
@@ -142,30 +150,61 @@ def get_tts_execution_providers():
 
 def load_piper_voice(model_path, config_path, espeak_data_dir=None):
     data_dir = espeak_data_dir or ESPEAK_DATA_PATH
-    if not os.path.exists(data_dir):
-        voice = PiperVoice.load(model_path=model_path, config_path=config_path)
-    else:
-        voice = PiperVoice.load(model_path=model_path, config_path=config_path, espeak_data_dir=data_dir)
     providers = get_tts_execution_providers()
     primary = providers[0] if providers else "CPUExecutionProvider"
 
-    if primary != "CPUExecutionProvider":
-        label = "DirectML" if primary == "DmlExecutionProvider" else primary.replace("ExecutionProvider", "")
-        try:
-            sess_opts = ort.SessionOptions()
-            sess_opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-            sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-            voice.session = ort.InferenceSession(
-                str(model_path),
-                sess_options=sess_opts,
-                providers=providers
-            )
-            print(f"[TTS]: Модель {os.path.basename(model_path)} запущена на GPU ({label})")
-        except Exception as e:
-            print(f"[TTS Warning]: {label} недоступен для {os.path.basename(model_path)} ({e}). Откат на CPU.")
+    sess_opts = ort.SessionOptions()
+    sess_opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    sess_opts.log_severity_level = 3
+
+    voice = None
+    active_provider = "CPUExecutionProvider"
+
+    # Сначала создаём сессию напрямую с приоритетом GPU (без двойной загрузки на CPU)
+    try:
+        from pathlib import Path
+        from piper.config import PiperConfig
+
+        with open(config_path, "r", encoding="utf-8") as cf:
+            cfg = PiperConfig.from_dict(json.load(cf))
+
+        session = None
+        if primary != "CPUExecutionProvider":
+            try:
+                session = ort.InferenceSession(str(model_path), sess_options=sess_opts, providers=providers)
+                active_list = list(session.get_providers() or [])
+                if active_list and active_list[0] != "CPUExecutionProvider":
+                    active_provider = active_list[0]
+                else:
+                    session = None
+            except Exception as e:
+                label = describe_execution_provider(primary)
+                print(f"[TTS Warning]: {label} недоступен для {os.path.basename(model_path)} ({e}). Откат на CPU.")
+                session = None
+
+        if session is None:
+            session = ort.InferenceSession(str(model_path), sess_options=sess_opts, providers=["CPUExecutionProvider"])
+            active_provider = "CPUExecutionProvider"
+
+        voice_kwargs = {"session": session, "config": cfg}
+        if data_dir and os.path.exists(data_dir):
+            voice_kwargs["espeak_data_dir"] = Path(data_dir)
+        voice = PiperVoice(**voice_kwargs)
+    except Exception:
+        if not os.path.exists(data_dir):
+            voice = PiperVoice.load(model_path=model_path, config_path=config_path)
+        else:
+            voice = PiperVoice.load(model_path=model_path, config_path=config_path, espeak_data_dir=data_dir)
+        active_list = list(getattr(voice.session, "get_providers", lambda: ["CPUExecutionProvider"])() or [])
+        active_provider = active_list[0] if active_list else "CPUExecutionProvider"
+
+    if active_provider != "CPUExecutionProvider":
+        label = describe_execution_provider(active_provider)
+        print(f"[TTS]: Модель {os.path.basename(model_path)} запущена на GPU ({label})")
     else:
         if sys.platform == "win32":
-            print(f"[TTS]: Видеокарта с DirectML не найдена. {os.path.basename(model_path)} работает на CPU.")
+            print(f"[TTS]: GPU-провайдер (DirectML/CUDA) не найден. {os.path.basename(model_path)} работает на CPU.")
         else:
             print(f"[TTS]: GPU-провайдер ONNX (CUDA/ROCm) не найден. {os.path.basename(model_path)} работает на CPU.")
 
@@ -234,6 +273,9 @@ class TTSThread(QThread):
                 self.main_voice = load_piper_voice(MAIN_VOICE_ONNX, MAIN_VOICE_JSON)
             except Exception as e:
                 print(f"[Main Piper Init Error]: {e}")
+
+        if self._stopped:
+            return
 
         if self.whisper_voice is None and os.path.exists(WHISPER_VOICE_ONNX):
             try:
@@ -506,7 +548,7 @@ class TTSThread(QThread):
 
         ym_manager.unduck()
         if self.isRunning():
-            self.wait(200)
+            self.wait(1200)
 
     def start_warmup(self, greeting_text=None, phrase=None, is_whisper=False):
         self.stop()
@@ -544,9 +586,13 @@ class TTSThread(QThread):
                 self._init_models()
 
             if self._is_warmup:
+                if self._stopped:
+                    return
                 cleaned_warmup = self._clean_text_for_tts(self.warmup_text)
                 syn_cfg = self._get_synthesis_config(is_whisper=self.is_whisper)
                 for v in (self.main_voice, self.whisper_voice):
+                    if self._stopped:
+                        return
                     if v and cleaned_warmup:
                         for _ in v.synthesize(cleaned_warmup, syn_config=syn_cfg):
                             break
@@ -567,6 +613,8 @@ class TTSThread(QThread):
                         vol_factor = self._get_volume_factor(is_whisper=self.is_whisper)
 
                         for g_idx, (g_type, g_sent) in enumerate(greeting_phrases):
+                            if self._stopped:
+                                return
                             cleaned_g = self._clean_text_for_tts(g_sent, is_clause=(g_type == 'clause'))
                             if not cleaned_g:
                                 continue

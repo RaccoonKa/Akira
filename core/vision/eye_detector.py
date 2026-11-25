@@ -9,6 +9,7 @@ import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 from core.utils.config import get_resource_path
+from core.utils.onnx_runtime import create_onnx_session
 
 
 class EyeDetector:
@@ -41,7 +42,12 @@ class EyeDetector:
                 opts.intra_op_num_threads = 1
                 opts.inter_op_num_threads = 1
                 opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-                self.session = ort.InferenceSession(self.model_path, opts, providers=['CPUExecutionProvider'])
+                self.session, _ = create_onnx_session(
+                    self.model_path,
+                    sess_options=opts,
+                    ort_module=ort,
+                    prefer_gpu=True,
+                )
                 self.input_name = self.session.get_inputs()[0].name
             except Exception:
                 pass

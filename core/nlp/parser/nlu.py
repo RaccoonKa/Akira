@@ -4,6 +4,7 @@ import numpy as np
 import onnxruntime as ort
 from transformers import AutoTokenizer
 from core.utils.config import get_resource_path
+from core.utils.onnx_runtime import create_onnx_session
 
 
 class JointNLU:
@@ -19,7 +20,7 @@ class JointNLU:
         self.tokenizer = AutoTokenizer.from_pretrained(full_model_dir, local_files_only=True)
 
         onnx_model_path = os.path.join(full_model_dir, "model_quant.onnx")
-        self.session = ort.InferenceSession(onnx_model_path, providers=["CPUExecutionProvider"])
+        self.session, _ = create_onnx_session(onnx_model_path, ort_module=ort, prefer_gpu=True)
 
     def predict(self, text):
         if not text:

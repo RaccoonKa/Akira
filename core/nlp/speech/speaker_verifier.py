@@ -3,6 +3,7 @@ import json
 import numpy as np
 import onnxruntime as ort
 from core.utils.config import get_resource_path, get_user_data_path
+from core.utils.onnx_runtime import create_onnx_session
 
 
 def _get_mel_filters(sr=16000, n_fft=512, n_mels=80, fmin=20.0, fmax=7600.0):
@@ -83,10 +84,11 @@ class SpeakerVerifier:
                 session_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
                 session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
-                self.session = ort.InferenceSession(
+                self.session, _ = create_onnx_session(
                     self.model_path,
                     sess_options=session_options,
-                    providers=["CPUExecutionProvider"]
+                    ort_module=ort,
+                    prefer_gpu=True,
                 )
                 self.input_name = self.session.get_inputs()[0].name
                 self.input_shape = self.session.get_inputs()[0].shape

@@ -3,6 +3,7 @@ import numpy as np
 import onnxruntime as ort
 from transformers import PreTrainedTokenizerFast, AutoTokenizer
 from core.utils.config import get_resource_path
+from core.utils.onnx_runtime import create_onnx_session
 
 EMOTION_CLASSES = [
     ("happy", "радость / похвала"),
@@ -57,10 +58,11 @@ class TextEmotionClassifier:
             session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
             onnx_path = os.path.join(self.model_dir, "aki_text_emotions_int8.onnx")
-            self.session = ort.InferenceSession(
+            self.session, _ = create_onnx_session(
                 onnx_path,
                 sess_options=session_options,
-                providers=["CPUExecutionProvider"]
+                ort_module=ort,
+                prefer_gpu=True,
             )
             print("[TextEmotion]: Текстовый классификатор эмоций готов к работе!", flush=True)
             return True
