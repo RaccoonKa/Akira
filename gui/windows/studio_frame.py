@@ -541,6 +541,7 @@ class ImageMediaCard(QFrame):
         font_family: str = "Segoe UI",
         theme: str = "dark",
         state: str = "ready",
+        max_width: int = 440,
         parent=None
     ):
         super().__init__(parent)
@@ -550,6 +551,7 @@ class ImageMediaCard(QFrame):
         self.font_family = font_family
         self.current_theme = theme
         self.state = state  # "loading", "revealing", "ready", "failed"
+        self.max_width = max(200, int(max_width))
         self.error_text = ""
         self._pixmap = None
         self._hovered = False
@@ -657,15 +659,16 @@ class ImageMediaCard(QFrame):
             self._pixmap = QPixmap(self.image_path)
             if not self._pixmap.isNull():
                 orig_size = self._pixmap.size()
-                max_w, max_h = 440, 360
+                max_w = getattr(self, "max_width", 440)
+                max_h = 360 if max_w >= 400 else int(max_w * 0.82)
                 scaled = orig_size.scaled(max_w, max_h, Qt.AspectRatioMode.KeepAspectRatio)
-                card_w = max(280, scaled.width())
-                card_h = max(180, scaled.height())
+                card_w = min(max_w, max(min(280, max_w), scaled.width()))
+                card_h = max(140 if max_w < 350 else 180, scaled.height())
                 self.setFixedSize(card_w, card_h)
                 self.overlay_widget.setGeometry(0, 0, card_w, 40)
                 self.state = "ready"
                 return
-        self.setFixedSize(380, 200)
+        self.setFixedSize(min(380, getattr(self, "max_width", 380)), 200)
 
     def _copy_to_clipboard(self):
         if self._pixmap and not self._pixmap.isNull():
@@ -871,6 +874,7 @@ class AudioMediaCard(QFrame):
         font_family: str = "Segoe UI",
         theme: str = "dark",
         state: str = "ready",
+        max_width: int = 410,
         parent=None
     ):
         super().__init__(parent)
@@ -880,6 +884,7 @@ class AudioMediaCard(QFrame):
         self.font_family = font_family
         self.current_theme = theme
         self.state = state  # "loading", "ready", "failed"
+        self.max_width = max(240, int(max_width))
         self.error_text = ""
         self._hovered = False
         self._is_playing = False
@@ -966,7 +971,7 @@ class AudioMediaCard(QFrame):
         if hasattr(self, "_anim_timer") and self._anim_timer and self._anim_timer.isActive():
             self._anim_timer.stop()
         self.state = "ready"
-        self.setFixedSize(410, 72)
+        self.setFixedSize(min(410, getattr(self, "max_width", 410)), 72)
         self.play_btn.show()
         self.download_btn.show()
         self.track_widget.show()
@@ -1196,6 +1201,43 @@ class ShadowLabel(QLabel):
             self.current_theme = theme
             self.update()
 
+STUDIO_DARK_PALETTE = {
+    "happy": (45.0, 230.0, 255.0),
+    "sad": (198.0, 220.0, 255.0),
+    "angry": (352.0, 235.0, 255.0),
+    "surprise": (280.0, 220.0, 255.0),
+    "neutral": (42.0, 50.0, 220.0),
+    "other": (280.0, 220.0, 255.0),
+    "weather_rain": (212.0, 235.0, 255.0),
+    "weather_hot": (45.0, 245.0, 255.0),
+    "weather_snow": (185.0, 160.0, 255.0),
+    "weather_thunder": (280.0, 235.0, 255.0),
+    "weather_cloudy": (215.0, 60.0, 240.0),
+}
+
+STUDIO_LIGHT_PALETTE = {
+    "happy": (34.0, 245.0, 145.0),
+    "sad": (212.0, 235.0, 140.0),
+    "angry": (350.0, 240.0, 145.0),
+    "surprise": (276.0, 230.0, 140.0),
+    "neutral": (216.0, 225.0, 135.0),
+    "other": (276.0, 230.0, 140.0),
+    "weather_rain": (214.0, 245.0, 140.0),
+    "weather_hot": (26.0, 255.0, 150.0),
+    "weather_snow": (190.0, 225.0, 130.0),
+    "weather_thunder": (282.0, 235.0, 140.0),
+    "weather_cloudy": (215.0, 130.0, 125.0),
+}
+
+
+def get_studio_emotion_color(emotion: str, theme: str = "dark") -> QColor:
+    """Возвращает цвет полосы и акцента Студии для заданной эмоции и темы."""
+    pal = STUDIO_LIGHT_PALETTE if theme == "light" else STUDIO_DARK_PALETTE
+    emo_key = emotion if emotion in pal else "neutral"
+    h, s, v = pal[emo_key]
+    return QColor.fromHsv(int(h), int(s), int(v))
+
+
 class StudioUserMessage(QWidget):
     """Воздушное сообщение пользователя с неоновым рельсом справа."""
     def __init__(
@@ -1206,9 +1248,11 @@ class StudioUserMessage(QWidget):
         chat_font_family: str = None,
         theme: str = "dark",
         attached_file: str = None,
+        header_suffix: str = "",
         parent=None
     ):
         super().__init__(parent)
+        self.raw_text = text
         self.font_family = font_family
         self.chat_font_family = chat_font_family or font_family
         self.current_theme = theme
@@ -1222,6 +1266,8 @@ class StudioUserMessage(QWidget):
         content_col.setSpacing(4)
 
         display_name = user_name.strip() if user_name else "друг"
+        if header_suffix:
+            display_name = f"{display_name} · {header_suffix}"
         self.header = ShadowLabel(display_name, theme=self.current_theme)
         self.header.setObjectName("StudioUserHeader")
         self.header.setFont(QFont(self.font_family, 8))
@@ -1273,14 +1319,17 @@ class StudioAkiraStream(QWidget):
         emotion: str = "neutral",
         animate: bool = False,
         on_stream_tick=None,
+        max_media_width: int = 440,
         parent=None
     ):
         super().__init__(parent)
+        self.raw_text = text
         self.emotion_color = emotion_color
         self.emotion = emotion
         self.font_family = font_family
         self.chat_font_family = chat_font_family or font_family
         self.current_theme = theme
+        self.max_media_width = max(240, int(max_media_width))
         self.code_blocks = []
         self.text_labels = []
         self.media_cards = []
@@ -1327,6 +1376,7 @@ class StudioAkiraStream(QWidget):
                 font_family=self.font_family,
                 theme=self.current_theme,
                 state="ready",
+                max_width=getattr(self, "max_media_width", 440),
                 parent=self
             )
             self.media_cards.append(card)
@@ -1338,6 +1388,7 @@ class StudioAkiraStream(QWidget):
                 font_family=self.font_family,
                 theme=self.current_theme,
                 state="ready",
+                max_width=getattr(self, "max_media_width", 410),
                 parent=self
             )
             self.media_cards.append(card)
@@ -1432,6 +1483,19 @@ class StudioAkiraStream(QWidget):
             if hasattr(self, "_stream_timer"):
                 self._stream_timer.stop()
             self._sync_theme_refs(blocks)
+
+    def finish_immediately(self):
+        """Мгновенно завершает печать сообщения (например, перед следующим ответом)."""
+        if hasattr(self, "_stream_timer") and self._stream_timer.isActive():
+            self._stream_timer.stop()
+        if getattr(self, "_tokens", None):
+            self._streamed_text = getattr(self, "_streamed_text", "") + "".join(self._tokens)
+            self._tokens.clear()
+            final_blocks = parse_message_blocks(self._streamed_text)
+            self._apply_blocks_to_widgets(final_blocks)
+            self._sync_theme_refs(final_blocks)
+            if callable(self._on_stream_tick):
+                self._on_stream_tick()
 
     def _apply_blocks_to_widgets(self, blocks):
         for idx, (b_type, b_val) in enumerate(blocks):
@@ -3196,12 +3260,12 @@ class StudioFrame(QFrame):
     """Студия Акиры с историей диалогов, парящим меню и динамическим селектором моделей."""
     DRAWER_TARGET_WIDTH = 295
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, main_window=None):
         super().__init__(parent)
         self.setObjectName("StudioFrame")
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.current_theme = "dark"
-        self.main_window = parent
+        self.main_window = main_window if main_window is not None else parent
         self.current_session_id = None
 
         self.setMinimumWidth(0)
@@ -3226,32 +3290,8 @@ class StudioFrame(QFrame):
 
         self.setFont(QFont(self.font_family, 11))
 
-        self.dark_palette = {
-            "happy": (45.0, 230.0, 255.0),
-            "sad": (198.0, 220.0, 255.0),
-            "angry": (352.0, 235.0, 255.0),
-            "surprise": (280.0, 220.0, 255.0),
-            "neutral": (42.0, 50.0, 220.0),
-            "other": (280.0, 220.0, 255.0),
-            "weather_rain": (212.0, 235.0, 255.0),
-            "weather_hot": (45.0, 245.0, 255.0),
-            "weather_snow": (185.0, 160.0, 255.0),
-            "weather_thunder": (280.0, 235.0, 255.0),
-            "weather_cloudy": (215.0, 60.0, 240.0),
-        }
-        self.light_palette = {
-            "happy": (34.0, 245.0, 145.0),          # глубокий янтарно-медовый
-            "sad": (212.0, 235.0, 140.0),           # насыщенный сапфирово-лазурный
-            "angry": (350.0, 240.0, 145.0),         # глубокий рубиновый
-            "surprise": (276.0, 230.0, 140.0),      # насыщенный аметистовый
-            "neutral": (216.0, 225.0, 135.0),       # глубокий кобальтово-синий
-            "other": (276.0, 230.0, 140.0),
-            "weather_rain": (214.0, 245.0, 140.0),
-            "weather_hot": (26.0, 255.0, 150.0),
-            "weather_snow": (190.0, 225.0, 130.0),
-            "weather_thunder": (282.0, 235.0, 140.0),
-            "weather_cloudy": (215.0, 130.0, 125.0),
-        }
+        self.dark_palette = STUDIO_DARK_PALETTE
+        self.light_palette = STUDIO_LIGHT_PALETTE
         self.palette = self.dark_palette
         self.cur_h, self.cur_s, self.cur_v = self.palette["neutral"]
         self.target_h, self.target_s, self.target_v = self.palette["neutral"]

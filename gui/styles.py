@@ -20,6 +20,13 @@ QTextEdit#ChatHistory {
     font-size: 13px;
     line-height: 1.45;
 }
+QScrollArea#ChatHistory {
+    background: transparent;
+    border: none;
+}
+QScrollArea#ChatHistory > QWidget > QWidget {
+    background: transparent;
+}
 QLineEdit#InputField {
     background-color: #070705;
     color: #fffde7;
@@ -837,6 +844,13 @@ QTextEdit#ChatHistory {
     border: none;
     font-size: 13px;
     line-height: 1.45;
+}
+QScrollArea#ChatHistory {
+    background: transparent;
+    border: none;
+}
+QScrollArea#ChatHistory > QWidget > QWidget {
+    background: transparent;
 }
 QLineEdit#InputField {
     background-color: #ffffff;
