@@ -730,19 +730,6 @@ QLabel#StudioFilePill {
     padding: 2px 8px;
 }
 
-QPushButton#HolidayStopBtn {
-    background-color: rgba(255, 224, 130, 0.14);
-    color: #ffe082;
-    border: 1px solid rgba(255, 224, 130, 0.35);
-    border-radius: 10px;
-    padding: 2px 9px;
-    font-size: 11px;
-}
-QPushButton#HolidayStopBtn:hover {
-    background-color: rgba(255, 224, 130, 0.26);
-    border: 1px solid rgba(255, 224, 130, 0.58);
-}
-
 QLabel#StudioAkiraBody {
     color: #fffde7;
     line-height: 1.45;
@@ -1443,19 +1430,6 @@ QLabel#StudioFilePill {
     border: 1px solid rgba(15, 23, 42, 0.12);
     border-radius: 9px;
     padding: 2px 8px;
-}
-
-QPushButton#HolidayStopBtn {
-    background-color: rgba(217, 119, 6, 0.12);
-    color: #92400e;
-    border: 1px solid rgba(217, 119, 6, 0.32);
-    border-radius: 10px;
-    padding: 2px 9px;
-    font-size: 11px;
-}
-QPushButton#HolidayStopBtn:hover {
-    background-color: rgba(217, 119, 6, 0.22);
-    border: 1px solid rgba(217, 119, 6, 0.52);
 }
 
 QLabel#StudioAkiraBody {

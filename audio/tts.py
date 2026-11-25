@@ -42,6 +42,134 @@ CUSTOM_DICTIONARY = {}
 COMPILED_DICT_REGEX = None
 
 
+def expand_year_ordinals_ru(text: str) -> str:
+    """Преобразует годы (1900–2199) перед словом «год*» в правильные русские порядковые числительные."""
+    if not text:
+        return text
+
+    case_endings = {
+        "nom": ("ый", "ой"),
+        "gen": ("ого", "ого"),
+        "dat": ("ому", "ому"),
+        "inst": ("ым", "ым"),
+        "prep": ("ом", "ом"),
+    }
+    units_stems = {
+        1: ("перв", 0),
+        2: ("втор", 1),
+        4: ("четвёрт", 0),
+        5: ("пят", 0),
+        6: ("шест", 1),
+        7: ("седьм", 1),
+        8: ("восьм", 1),
+        9: ("девят", 0),
+        10: ("десят", 0),
+        11: ("одиннадцат", 0),
+        12: ("двенадцат", 0),
+        13: ("тринадцат", 0),
+        14: ("четырнадцат", 0),
+        15: ("пятнадцат", 0),
+        16: ("шестнадцат", 0),
+        17: ("семнадцат", 0),
+        18: ("восемнадцат", 0),
+        19: ("девятнадцат", 0),
+    }
+    tens_ord_stems = {
+        20: ("двадцат", 0),
+        30: ("тридцат", 0),
+        40: ("сороков", 1),
+        50: ("пятидесят", 0),
+        60: ("шестидесят", 0),
+        70: ("семидесят", 0),
+        80: ("восьмидесят", 0),
+        90: ("девяност", 0),
+    }
+    tens_card = {
+        2: "двадцать",
+        3: "тридцать",
+        4: "сорок",
+        5: "пятьдесят",
+        6: "шестьдесят",
+        7: "семьдесят",
+        8: "восемьдесят",
+        9: "девяносто",
+    }
+    hundreds_card = {
+        1: "сто",
+        2: "двести",
+        3: "триста",
+        4: "четыреста",
+        5: "пятьсот",
+        6: "шестьсот",
+        7: "семьсот",
+        8: "восемьсот",
+        9: "девятьсот",
+    }
+    three_forms = {
+        "nom": "третий",
+        "gen": "третьего",
+        "dat": "третьему",
+        "inst": "третьим",
+        "prep": "третьем",
+    }
+
+    def _ordinal_last2(n2: int, case: str) -> str:
+        if n2 == 3:
+            return three_forms[case]
+        if n2 in units_stems:
+            stem, stress = units_stems[n2]
+            return stem + case_endings[case][stress]
+        if n2 in tens_ord_stems:
+            stem, stress = tens_ord_stems[n2]
+            return stem + case_endings[case][stress]
+        t, u = divmod(n2, 10)
+        return f"{tens_card[t]} {_ordinal_last2(u, case)}"
+
+    def _year_to_words(year: int, case: str) -> str:
+        if year == 2000:
+            return "двухтысячн" + case_endings[case][0]
+        if year == 1900:
+            return "тысяча девятисот" + case_endings[case][0]
+        if year == 2100:
+            return "две тысячи сот" + case_endings[case][0]
+
+        thousands, rem = divmod(year, 1000)
+        parts = ["тысяча" if thousands == 1 else "две тысячи"]
+        h, n2 = divmod(rem, 100)
+        if h:
+            parts.append(hundreds_card[h])
+        if n2:
+            parts.append(_ordinal_last2(n2, case))
+        return " ".join(parts)
+
+    def _replace_year(m):
+        year = int(m.group(1))
+        if not (1900 <= year <= 2199):
+            return m.group(0)
+        word = m.group(2)
+        word_low = word.lower()
+        if word_low == "годом":
+            case = "inst"
+        elif word_low == "года":
+            case = "gen"
+        elif word_low == "годе":
+            case = "prep"
+        elif word_low == "году":
+            before = text[:m.start()].lower().rstrip()
+            last_tok = before.split()[-1] if before.split() else ""
+            case = "dat" if last_tok in {"к", "ко", "по"} else "prep"
+        else:
+            case = "nom"
+        return f"{_year_to_words(year, case)} {word}"
+
+    return re.sub(
+        r'\b(\d{4})(?:-(?:й|го|му|м|е))?\s+(год|года|году|годом|годе)\b',
+        _replace_year,
+        text,
+        flags=re.IGNORECASE,
+    )
+
+
 def _load_pronunciation_dictionary():
     global CUSTOM_DICTIONARY, COMPILED_DICT_REGEX
     if os.path.exists(DICT_FILE_PATH):
@@ -297,6 +425,7 @@ class TTSThread(QThread):
             else:
                 return f"{h} {minute}"
 
+        text = expand_year_ordinals_ru(text)
         text = re.sub(r'\b(\d{1,2}):(\d{2})\b', _expand_time, text)
 
         emoji_pattern = re.compile(

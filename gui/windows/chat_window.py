@@ -48,7 +48,7 @@ from core.nlp.command_parser import CommandParser
 from core.system.actions import SystemActions
 from core.vision.vision_provider import VisionThread
 from core.vision.presence_manager import PresenceManager
-from core.utils.config import get_resource_path, load_config, save_config
+from core.utils.config import get_resource_path, load_config, save_config, is_creator_key_valid
 from core.utils.holidays import (
     get_holiday_sound_path,
     evaluate_new_year_trigger,
@@ -3516,13 +3516,6 @@ class MainWindow(QWidget):
         # Горизонтальная плашка кнопок с отступом снизу в 8px до контента
         title_bar = QHBoxLayout()
         title_bar.setContentsMargins(0, 2, 6, 8)
-        self.holiday_stop_btn = QPushButton("❄ Стоп")
-        self.holiday_stop_btn.setObjectName("HolidayStopBtn")
-        self.holiday_stop_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.holiday_stop_btn.setToolTip("Остановить новогоднюю музыку (можно также сказать «хватит» или «выключи музыку»)")
-        self.holiday_stop_btn.clicked.connect(lambda: self.stop_new_year_song())
-        self.holiday_stop_btn.hide()
-        title_bar.addWidget(self.holiday_stop_btn)
         title_bar.addStretch()
 
         self.title_btns_widget = QWidget()
@@ -3983,6 +3976,7 @@ class MainWindow(QWidget):
                 mode=ny_mode,
                 year=now.year,
                 activity_summary=act_summary,
+                is_creator=is_creator_key_valid(),
             )
 
         save_config(cfg)
@@ -4203,8 +4197,6 @@ class MainWindow(QWidget):
                     pass
                 self._ny_song_playing = False
                 self._ny_song_fading_out = False
-                if hasattr(self, "holiday_stop_btn"):
-                    self.holiday_stop_btn.hide()
                 self._release_ny_ducks()
         else:
             nxt = min(self._ny_song_target_vol, cur + 0.015)
@@ -4243,8 +4235,6 @@ class MainWindow(QWidget):
         self._ny_song_audio.setVolume(0.0)
         self._ny_song_player.setSource(QUrl.fromLocalFile(song_path))
         self._ny_song_player.play()
-        if hasattr(self, "holiday_stop_btn"):
-            self.holiday_stop_btn.show()
         self._ny_song_fade_timer.start()
 
     def stop_new_year_song(self, fade_sec: float = 0.55) -> bool:
@@ -4258,8 +4248,6 @@ class MainWindow(QWidget):
                 pass
 
         if not was_playing:
-            if hasattr(self, "holiday_stop_btn"):
-                self.holiday_stop_btn.hide()
             self._release_ny_ducks()
             return False
 
@@ -4272,8 +4260,6 @@ class MainWindow(QWidget):
                     pass
             self._ny_song_playing = False
             self._ny_song_fading_out = False
-            if hasattr(self, "holiday_stop_btn"):
-                self.holiday_stop_btn.hide()
             self._release_ny_ducks()
         else:
             self._ny_song_fading_out = True
@@ -4365,6 +4351,7 @@ class MainWindow(QWidget):
                 mode=mode,
                 year=now.year,
                 activity_summary=act_summary,
+                is_creator=is_creator_key_valid(),
             )
 
         def _act2_speak():
