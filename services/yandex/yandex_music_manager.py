@@ -1,12 +1,14 @@
 import os
 import sys
 import ctypes.util
+import difflib
 import re
 import random
 import threading
 import time
 import hashlib
 import xml.etree.ElementTree as ET
+from collections import deque
 import requests
 import webbrowser
 from core.utils.config import load_config
@@ -115,6 +117,11 @@ class YandexMusicManager:
         self.watcher_thread = None
         self.stop_watcher = False
         self.is_transitioning = False
+        self._recent_track_ids = deque(maxlen=150)
+        self._wave_station = "user:onyourwave"
+        self._wave_batch_id = None
+        self._wave_last_track_id = None
+        self._last_playlist_title = None
 
     def _extract_pure_token(self, raw_token):
         if not raw_token:
@@ -214,6 +221,17 @@ class YandexMusicManager:
                 self.history.append(self.current_track)
 
             self.current_track = track
+            self._remember_track(track)
+            if self.is_radio:
+                tid = self._track_id_str(track)
+                if tid:
+                    self._wave_last_track_id = tid
+                    self._send_rotor_feedback(
+                        self._wave_station,
+                        "trackStarted",
+                        track_id=tid,
+                        batch_id=self._wave_batch_id,
+                    )
             self.player.stop()
             media = self.vlc_instance.media_new(stream_url)
             self.player.set_media(media)
@@ -267,6 +285,125 @@ class YandexMusicManager:
 
         return True if (HAS_VLC and self.player is not None) else "DOWNLOAD_NEEDED"
 
+    def _track_id_str(self, track) -> str:
+        if track is None:
+            return ""
+        inner = getattr(track, "track", None) or track
+        tid = getattr(inner, "id", None) or getattr(track, "track_id", None) or getattr(track, "id", None)
+        if tid is None:
+            return ""
+        return str(tid).split(":")[0]
+
+    def _remember_track(self, track):
+        tid = self._track_id_str(track)
+        if tid and tid not in self._recent_track_ids:
+            self._recent_track_ids.append(tid)
+
+    def _filter_unseen_tracks(self, tracks: list) -> list:
+        seen_recent = set(self._recent_track_ids)
+        cur_id = self._track_id_str(self.current_track)
+        if cur_id:
+            seen_recent.add(cur_id)
+        batch_seen = set()
+        fresh = []
+        fallback = []
+        for tr in tracks:
+            if not tr:
+                continue
+            tid = self._track_id_str(tr)
+            if tid:
+                if tid in batch_seen:
+                    continue
+                batch_seen.add(tid)
+                if tid not in seen_recent:
+                    fresh.append(tr)
+                elif tid != cur_id:
+                    fallback.append(tr)
+            else:
+                fresh.append(tr)
+        return fresh if fresh else fallback
+
+    def _send_rotor_feedback(self, station: str, event_type: str, track_id: str | None = None, batch_id: str | None = None):
+        if not self.client or not station:
+            return
+        try:
+            kwargs = {}
+            if track_id:
+                kwargs["track_id"] = track_id
+            if batch_id:
+                kwargs["batch_id"] = batch_id
+            self.client.rotor_station_feedback(station, event_type, **kwargs)
+        except Exception:
+            pass
+
+    def _fetch_wave_tracks(self, station: str = "user:onyourwave", queue_track_id: str | None = None) -> list:
+        raw_items = []
+        cur_queue = queue_track_id or self._wave_last_track_id
+        for attempt in range(2):
+            try:
+                rotor = self.client.rotor_station_tracks(station, settings2=True, queue=cur_queue)
+                if rotor:
+                    self._wave_batch_id = getattr(rotor, "batch_id", None)
+                    seq = getattr(rotor, "sequence", None) or []
+                    batch = []
+                    for item in seq:
+                        tr = getattr(item, "track", None) or item
+                        if tr:
+                            batch.append(tr)
+                    filtered = self._filter_unseen_tracks(batch)
+                    if filtered:
+                        return filtered
+                    raw_items.extend(batch)
+                    if batch and attempt == 0:
+                        last_id = self._track_id_str(batch[-1])
+                        if last_id and last_id != cur_queue:
+                            self._send_rotor_feedback(station, "trackFinished", track_id=last_id, batch_id=self._wave_batch_id)
+                            cur_queue = last_id
+                            continue
+            except Exception as e:
+                print(f"[YandexMusic Rotor Station Warning]: {e}")
+                break
+
+        if raw_items:
+            deduped = self._filter_unseen_tracks(raw_items)
+            if deduped:
+                return deduped
+
+        # 2. Fallback на плейлист «Мне нравится» (любимые треки)
+        try:
+            likes = self.client.users_likes_tracks()
+            if likes:
+                raw_likes = list(likes.tracks) if hasattr(likes, "tracks") else list(likes)
+                like_tracks = [getattr(it, "track", None) or it for it in raw_likes if it]
+                filtered_likes = self._filter_unseen_tracks(like_tracks)
+                if filtered_likes:
+                    random.shuffle(filtered_likes)
+                    return filtered_likes
+        except Exception as e:
+            print(f"[YandexMusic Likes Warning]: {e}")
+
+        # 3. Fallback на популярные треки чарта
+        try:
+            chart = self.client.chart("world")
+            if chart and hasattr(chart, "chart") and hasattr(chart.chart, "tracks"):
+                chart_tracks = [getattr(ct, "track", None) or ct for ct in chart.chart.tracks if ct]
+                filtered_chart = self._filter_unseen_tracks(chart_tracks)
+                if filtered_chart:
+                    random.shuffle(filtered_chart)
+                    return filtered_chart
+        except Exception as e:
+            print(f"[YandexMusic Chart Warning]: {e}")
+
+        return []
+
+    def _resolve_playlist_tracks(self, raw_items: list) -> list:
+        tracks = []
+        for it in raw_items or []:
+            tr = getattr(it, "track", None) or it
+            if tr is not None:
+                tracks.append(tr)
+        return tracks
+
     def play_query(self, query):
         vlc_status = self._ensure_vlc()
         if vlc_status == "SETUP_NEEDED":
@@ -286,13 +423,26 @@ class YandexMusicManager:
         def _async_play():
             try:
                 search_result = self.client.search(query)
-                if not search_result or not search_result.best or search_result.best.type != 'track':
+                track = None
+                if search_result:
+                    best = getattr(search_result, "best", None)
+                    if best and getattr(best, "type", None) == "track" and getattr(best, "result", None):
+                        track = best.result
+                    elif getattr(search_result, "tracks", None) and getattr(search_result.tracks, "results", None):
+                        track = search_result.tracks.results[0]
+
+                if not track:
                     self.is_transitioning = False
                     return
 
-                track = search_result.best.result
-                self.is_radio = False
+                # После завершения заказанного трека автоматически продолжаем «Моей волной»
+                self.is_radio = True
+                self._wave_station = "user:onyourwave"
+                self._wave_batch_id = None
                 self.queue = []
+                tid = self._track_id_str(track)
+                if tid:
+                    self._wave_last_track_id = tid
                 if self._play_track_object(track):
                     self._start_watcher()
                 else:
@@ -334,7 +484,7 @@ class YandexMusicManager:
             self.player.audio_set_volume(restore_vol)
             self.is_ducked = False
 
-    def play_my_wave(self):
+    def play_my_wave(self, station: str = "user:onyourwave"):
         vlc_status = self._ensure_vlc()
         if vlc_status == "SETUP_NEEDED":
             return (
@@ -352,51 +502,19 @@ class YandexMusicManager:
 
         def _async_wave():
             try:
-                track_items = []
-                # 1. Официальная станция «Моя волна» Яндекс Музыки
-                try:
-                    rotor = self.client.rotor_station_tracks('user:onyourwave')
-                    if rotor and hasattr(rotor, 'sequence'):
-                        for item in rotor.sequence:
-                            tr = getattr(item, 'track', None) or item
-                            if tr:
-                                track_items.append(tr)
-                except Exception as e:
-                    print(f"[YandexMusic Rotor Station Warning]: {e}")
+                prev_id = self._track_id_str(self.current_track) or self._wave_last_track_id
+                self._wave_station = station
+                self.is_radio = True
+                self.queue = []
 
-                # 2. Fallback на плейлист «Понравилось мне» (любимые треки)
-                if not track_items:
-                    try:
-                        likes = self.client.users_likes_tracks()
-                        if likes:
-                            raw_likes = list(likes.tracks) if hasattr(likes, 'tracks') else list(likes)
-                            for it in raw_likes:
-                                tr = getattr(it, 'track', None) or it
-                                if tr:
-                                    track_items.append(tr)
-                    except Exception as e:
-                        print(f"[YandexMusic Likes Warning]: {e}")
-
-                # 3. Fallback на популярные треки чарта
-                if not track_items:
-                    try:
-                        chart = self.client.chart('world')
-                        if chart and hasattr(chart, 'chart') and hasattr(chart.chart, 'tracks'):
-                            for ct in chart.chart.tracks:
-                                tr = getattr(ct, 'track', None) or ct
-                                if tr:
-                                    track_items.append(tr)
-                    except Exception as e:
-                        print(f"[YandexMusic Chart Warning]: {e}")
-
+                self._send_rotor_feedback(station, "radioStarted")
+                track_items = self._fetch_wave_tracks(station=station, queue_track_id=prev_id)
                 if not track_items:
                     self.is_transitioning = False
                     return
 
-                random.shuffle(track_items)
                 first_track = track_items[0]
                 self.queue = track_items[1:]
-                self.is_radio = True
 
                 if self._play_track_object(first_track):
                     self._start_watcher()
@@ -407,6 +525,161 @@ class YandexMusicManager:
                 self.is_transitioning = False
 
         threading.Thread(target=_async_wave, daemon=True).start()
+        return True
+
+    def play_favorites(self):
+        """Включает плейлист «Мне нравится» (Избранное) с продолжением в Мою волну."""
+        vlc_status = self._ensure_vlc()
+        if vlc_status == "SETUP_NEEDED":
+            return (
+                "Я установила VLC плеер и открыла его! Пожалуйста, подтверди начальную настройку в окне плеера "
+                "(выбери нужные галочки и нажми «Продолжить»), а затем скажи мне снова включить музыку."
+            )
+        elif vlc_status != True:
+            webbrowser.open("https://www.videolan.org/vlc/")
+            return "Для работы Яндекс Музыки нужен плеер. Открываю официальный сайт для скачивания."
+
+        if not self._init_client():
+            return "Чтобы я могла включить твоё Избранное, пожалуйста, укажи токен Яндекс Музыки в настройках Акиры!"
+
+        try:
+            likes = self.client.users_likes_tracks()
+            raw_likes = list(likes.tracks) if likes and hasattr(likes, "tracks") else (list(likes) if likes else [])
+            tracks = self._resolve_playlist_tracks(raw_likes)
+        except Exception as e:
+            print(f"[YandexMusic Favorites Error]: {e}")
+            return "Не удалось загрузить твой плейлист «Мне нравится» из Яндекс Музыки."
+
+        if not tracks:
+            return "В твоём Избранном на Яндекс Музыке пока нет лайкнутых треков."
+
+        random.shuffle(tracks)
+        self.is_transitioning = True
+        self.is_radio = True
+        self._wave_station = "user:onyourwave"
+        self.queue = tracks[1:200]
+
+        def _async_fav():
+            try:
+                if self._play_track_object(tracks[0]):
+                    self._start_watcher()
+                else:
+                    self.is_transitioning = False
+            except Exception as e:
+                print(f"[YandexMusic Favorites Play Error]: {e}")
+                self.is_transitioning = False
+
+        threading.Thread(target=_async_fav, daemon=True).start()
+        return True
+
+    @staticmethod
+    def _normalize_playlist_title(name: str) -> str:
+        return re.sub(r'[^\w\sа-яёa-z0-9]', ' ', (name or '').lower()).strip()
+
+    def _find_matching_playlist(self, playlist_name: str):
+        target_norm = self._normalize_playlist_title(playlist_name)
+        if not target_norm:
+            return None
+
+        best_pl = None
+        best_score = 0.0
+
+        # 1. Ищем среди личных плейлистов пользователя
+        try:
+            user_playlists = self.client.users_playlists_list() or []
+            for pl in user_playlists:
+                title_norm = self._normalize_playlist_title(getattr(pl, "title", ""))
+                if not title_norm:
+                    continue
+                if title_norm == target_norm:
+                    return pl
+                if target_norm in title_norm or title_norm in target_norm:
+                    score = 0.85 + 0.14 * min(len(target_norm), len(title_norm)) / max(len(target_norm), len(title_norm))
+                else:
+                    score = difflib.SequenceMatcher(None, target_norm, title_norm).ratio()
+                if score > best_score:
+                    best_score = score
+                    best_pl = pl
+        except Exception as e:
+            print(f"[YandexMusic User Playlists Warning]: {e}")
+
+        if best_pl is not None and best_score >= 0.60:
+            return best_pl
+
+        # 2. Fallback: поиск среди публичных/редакционных плейлистов Яндекса
+        try:
+            search_res = self.client.search(playlist_name, type_="playlist")
+            if search_res:
+                best = getattr(search_res, "best", None)
+                if best and getattr(best, "type", None) == "playlist" and getattr(best, "result", None):
+                    return best.result
+                pls = getattr(search_res, "playlists", None)
+                if pls and getattr(pls, "results", None):
+                    return pls.results[0]
+        except Exception as e:
+            print(f"[YandexMusic Search Playlist Warning]: {e}")
+
+        return None
+
+    def play_playlist(self, playlist_name: str):
+        """Находит и запускает плейлист пользователя или публичный плейлист по названию."""
+        vlc_status = self._ensure_vlc()
+        if vlc_status == "SETUP_NEEDED":
+            return (
+                "Я установила VLC плеер и открыла его! Пожалуйста, подтверди начальную настройку в окне плеера "
+                "(выбери нужные галочки и нажми «Продолжить»), а затем скажи мне снова включить музыку."
+            )
+        elif vlc_status != True:
+            webbrowser.open("https://www.videolan.org/vlc/")
+            return "Для работы Яндекс Музыки нужен плеер. Открываю официальный сайт для скачивания."
+
+        if not self._init_client():
+            return "Чтобы я могла включить плейлист, пожалуйста, укажи токен Яндекс Музыки в настройках Акиры!"
+
+        matched_pl = self._find_matching_playlist(playlist_name)
+        if matched_pl is None:
+            return None
+
+        try:
+            raw_tracks = []
+            if hasattr(matched_pl, "fetch_tracks"):
+                raw_tracks = matched_pl.fetch_tracks() or []
+            if not raw_tracks and getattr(matched_pl, "tracks", None):
+                raw_tracks = list(matched_pl.tracks)
+            if not raw_tracks and getattr(matched_pl, "kind", None) is not None:
+                owner = getattr(matched_pl, "owner", None)
+                uid = getattr(owner, "uid", None) if owner else None
+                full_pl = self.client.users_playlists(matched_pl.kind, user_id=uid)
+                if isinstance(full_pl, list) and full_pl:
+                    full_pl = full_pl[0]
+                if full_pl and getattr(full_pl, "tracks", None):
+                    raw_tracks = list(full_pl.tracks)
+            tracks = self._resolve_playlist_tracks(raw_tracks)
+        except Exception as e:
+            print(f"[YandexMusic Playlist Fetch Error]: {e}")
+            return None
+
+        if not tracks:
+            self._last_playlist_title = getattr(matched_pl, "title", None) or playlist_name
+            return "EMPTY"
+
+        self._last_playlist_title = getattr(matched_pl, "title", None) or playlist_name
+        self.is_transitioning = True
+        self.is_radio = True
+        self._wave_station = "user:onyourwave"
+        self.queue = tracks[1:200]
+
+        def _async_pl():
+            try:
+                if self._play_track_object(tracks[0]):
+                    self._start_watcher()
+                else:
+                    self.is_transitioning = False
+            except Exception as e:
+                print(f"[YandexMusic Playlist Play Error]: {e}")
+                self.is_transitioning = False
+
+        threading.Thread(target=_async_pl, daemon=True).start()
         return True
 
     def toggle_pause(self):
@@ -425,19 +698,41 @@ class YandexMusicManager:
         self.queue = []
         return "Музыка выключена"
 
-    def next_track(self):
+    def next_track(self, manual: bool = True):
         if not HAS_VLC or self.is_transitioning:
             return
 
         self.is_transitioning = True
 
         def _async_next():
-            if self.queue:
-                next_tr = self.queue.pop(0)
-                self._play_track_object(next_tr)
-            elif self.is_radio:
-                self.play_my_wave()
-            else:
+            try:
+                prev_id = self._track_id_str(self.current_track) or self._wave_last_track_id
+                if self.is_radio and prev_id:
+                    self._send_rotor_feedback(
+                        self._wave_station,
+                        "skip" if manual else "trackFinished",
+                        track_id=prev_id,
+                        batch_id=self._wave_batch_id,
+                    )
+
+                if self.queue:
+                    next_tr = self.queue.pop(0)
+                    if self._play_track_object(next_tr):
+                        return
+
+                if self.is_radio:
+                    if self._init_client():
+                        fresh = self._fetch_wave_tracks(
+                            station=self._wave_station,
+                            queue_track_id=prev_id,
+                        )
+                        if fresh:
+                            self.queue = fresh[1:]
+                            self._play_track_object(fresh[0])
+                            return
+                self.is_transitioning = False
+            except Exception as e:
+                print(f"[YandexMusic Next Track Error]: {e}")
                 self.is_transitioning = False
 
         threading.Thread(target=_async_next, daemon=True).start()
@@ -497,4 +792,4 @@ class YandexMusicManager:
                 continue
             state = self.player.get_state()
             if state == vlc.State.Ended:
-                self.next_track()
+                self.next_track(manual=False)

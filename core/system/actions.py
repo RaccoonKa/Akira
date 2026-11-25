@@ -67,6 +67,27 @@ MUSIC_PHRASES = [
     "Сканирую басы... Предупреждение: уровень крутости зашкаливает! *хихикает* Шучу, наслаждайся."
 ]
 
+LIKE_TRACK_PHRASES = [
+    "Лайк поставлен! Добавила трек в твоё Избранное и запоминаю твой вкус.",
+    "Есть сердечко! Кажется, у нас с тобой отличный музыкальный вайб.",
+    "Отметила трек сердечком! Я так и знала, что он тебе зайдёт.",
+    "Сохранила в любимое! Буду подбирать такую годноту почаще.",
+    "Лайкнула! Официально заношу этот трек в золотой фонд.",
+    "Готово, сердечко на месте! Отличный выбор, между прочим.",
+    "Записала в любимые треки! Одобряю твой музыкальный вкус.",
+]
+
+NEXT_TRACK_PHRASES = [
+    "Переключаю дальше",
+    "Погнали к следующему треку",
+    "Включаю следующий",
+    "Листаю дальше",
+    "Лови следующий трек",
+    "Меняю пластинку",
+    "Едем дальше",
+    "Следующий пошёл",
+]
+
 
 def _is_spotify_active():
     cfg = load_config()
@@ -424,10 +445,50 @@ class SystemActions:
         wave_exact = {
             "мою волну", "моя волна", "свою волну", "своя волна", "волну", "волна",
             "волны", "волне", "мои ладно", "мою ладно", "моя ладно", "мою главного",
-            "моя главная", "любимое", "любимую", "любимый", "любимые", "любимые треки",
-            "понравившееся", "понравившиеся", "рекомендации", "микс", "поток", "радио"
+            "моя главная", "рекомендации", "микс", "поток", "радио"
         }
         return query_clean.strip() in wave_exact
+
+    @staticmethod
+    def is_favorites_request(text_or_query: str) -> bool:
+        raw_low = re.sub(r'\s+', ' ', (text_or_query or '').lower()).strip()
+        if not raw_low:
+            return False
+        if any(neg in raw_low for neg in ("добавь в", "убери из", "удали из")):
+            return False
+        cleaned = SystemActions.clean_music_query(raw_low)
+        fav_exact = {
+            "моё любимое", "мое любимое", "мои любимые", "любимое", "любимую",
+            "любимый", "любимые", "любимая", "мои любимые", "мою любимую",
+            "мое избранное", "моё избранное", "избранное", "избранные",
+            "понравившееся", "понравившиеся", "нравится", "мне нравится",
+            "мои лайки", "лайки", "мои треки",
+        }
+        return raw_low in fav_exact or cleaned in fav_exact
+
+    @staticmethod
+    def extract_playlist_query(text: str = "", slots=None) -> str | None:
+        raw = (text or "").strip()
+        if not raw and slots:
+            raw = (slots.get("playlist") or slots.get("track") or "").strip()
+        low = raw.lower()
+        match = re.search(r'\bплейлист(?:ы|а|у|ом|е)?\b\s*(.*)$', low)
+        if not match:
+            return None
+        tail = match.group(1)
+        service_patterns = [
+            r'\b(?:в|во|на|через|по|из|с|со|для)?\s*(?:спотифа(?:й|я|ю|ем|е|йчик|йчика|йчику|йчиком|йчике)|споти(?:к|ка|ку|ком|ке|ках)?|spotify|споти)\b',
+            r'\b(?:в|во|на|через|по|из|с|со|для)?\s*(?:яндекс(?:\s*музык(?:е|у|а|ой|и))?|яндексе|яндекса|яндексу|яндексом|yandex(?:\s*music)?)\b',
+        ]
+        for pat in service_patterns:
+            tail = re.sub(pat, '', tail, flags=re.IGNORECASE)
+        for sw in (
+            r'\b(?:под|с)\s+названием\b', r'\bмой\b', r'\bмои\b', r'\bсвой\b', r'\bсвои\b',
+            r'\bна\b', r'\bпожалуйста\b', r'\bакира\b', r'\bаки\b',
+        ):
+            tail = re.sub(sw, '', tail, flags=re.IGNORECASE)
+        tail = re.sub(r'[«»"\'.,!?]+', ' ', tail)
+        return re.sub(r'\s+', ' ', tail).strip()
 
     @staticmethod
     def clean_music_query(text="", slots=None):
@@ -623,6 +684,43 @@ class SystemActions:
             if not any(w in text_low for w in yandex_keywords) and _is_spotify_active():
                 return SystemActions.play_spotify(text=text, slots=slots)
 
+        playlist_name = SystemActions.extract_playlist_query(text, slots)
+        if playlist_name is not None:
+            if not playlist_name or SystemActions.is_favorites_request(playlist_name):
+                res = ym_manager.play_favorites()
+                if isinstance(res, str):
+                    return res
+                if res is True:
+                    return random.choice([
+                        "Включаю твоё Избранное на Яндекс Музыке",
+                        "Запускаю твои любимые треки!",
+                        random.choice(MUSIC_PHRASES),
+                    ])
+                return "Не удалось включить Избранное"
+
+            res = ym_manager.play_playlist(playlist_name)
+            if res == "EMPTY":
+                title = getattr(ym_manager, "_last_playlist_title", None) or playlist_name
+                return f"В плейлисте «{title}» пока нет треков."
+            if isinstance(res, str):
+                return res
+            if res is True:
+                title = getattr(ym_manager, "_last_playlist_title", None) or playlist_name.title()
+                return f"Включаю плейлист «{title}» на Яндекс Музыке"
+            return f"Не удалось найти плейлист «{playlist_name}» в Яндекс Музыке."
+
+        if SystemActions.is_favorites_request(text_low):
+            res = ym_manager.play_favorites()
+            if isinstance(res, str):
+                return res
+            if res is True:
+                return random.choice([
+                    "Включаю твоё Избранное на Яндекс Музыке",
+                    "Запускаю твои любимые треки!",
+                    random.choice(MUSIC_PHRASES),
+                ])
+            return "Не удалось включить Избранное"
+
         query = SystemActions.clean_music_query(text, slots)
 
         if not query or SystemActions.is_wave_request(query):
@@ -659,9 +757,11 @@ class SystemActions:
     def like_yandex_track(text=""):
         if _is_spotify_active():
             spotify_manager.like_current()
-        else:
-            ym_manager.like_current()
-        return ""
+            return random.choice(LIKE_TRACK_PHRASES)
+        if not ym_manager.current_track:
+            return "Сейчас ничего не играет, чтобы поставить лайк."
+        ym_manager.like_current()
+        return random.choice(LIKE_TRACK_PHRASES)
 
     @staticmethod
     def unlike_yandex_track(text=""):
@@ -765,7 +865,7 @@ class SystemActions:
             pag = get_pyautogui()
             if pag:
                 pag.hotkey('shift', 'n')
-        return "Следующее"
+        return random.choice(NEXT_TRACK_PHRASES)
 
     @staticmethod
     def toggle_fullscreen(text=""):

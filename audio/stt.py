@@ -349,6 +349,14 @@ class STTThread(QThread):
                     pass
             return
 
+        if not self._running:
+            if _HAS_COM:
+                try:
+                    CoUninitialize()
+                except Exception:
+                    pass
+            return
+
         current_mic_id, current_mic_name = self._get_default_mic_info()
         if current_mic_name:
             print(f"[STT]: Активный микрофон: {current_mic_name}", flush=True)
@@ -543,6 +551,6 @@ class STTThread(QThread):
             self.audio_queue.put_nowait(b"")
         except Exception:
             pass
-        if not self.wait(500):
+        if not self.wait(1500):
             self.terminate()
-            self.wait(100)
+            self.wait(1000)

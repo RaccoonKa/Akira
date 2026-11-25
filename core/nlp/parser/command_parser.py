@@ -70,7 +70,6 @@ CANONICAL_USER_TEXTS = {
     "stop_zapret": "Выключи запрет",
     "shutdown": "Выключи компьютер",
     "shutdown_pc": "Выключи компьютер",
-    "play_yandex_favorites": "Включи Мою волну",
     "like_yandex_track": "Поставь лайк",
     "unlike_yandex_track": "Убери лайк",
     "media_play_pause": "Пауза / Возобновить",
@@ -560,7 +559,7 @@ class CommandParser:
                 "включ", "постав", "сыграй", "вруби", "запуст",
                 "выключ", "перезагруз", "погод", "градус", "громкост",
                 "потише", "погромче", "скрин", "залочь", "заблокируй",
-                "спотик", "спотиф", "яндекс", "музык", "трек", "песн", "запрет", "обход", "работ", "отдых"
+                "спотик", "спотиф", "яндекс", "музык", "трек", "песн", "плейлист", "избранн", "запрет", "обход", "работ", "отдых"
             ]
             if not any(
                     root in text_low for root in strict_command_roots) and not has_generic_vpn and parsed_vpn == "none":
@@ -684,10 +683,34 @@ class CommandParser:
         if any(root in text_low for root in volume_roots):
             return "set_volume"
 
+        unlike_keywords = [
+            "убери лайк", "удали лайк", "дизлайк", "дизлайкни",
+            "убери из любимого", "удали из любимого", "убери из избранного", "удали из избранного",
+            "сними лайк",
+        ]
+        for kw in unlike_keywords:
+            if kw in text_low:
+                return "unlike_yandex_track"
+
+        like_keywords = [
+            "добавь в любимое", "добавь в избранное", "поставь лайк",
+            "лайкни песню", "лайкни трек", "поставишь лайк", "лайк",
+        ]
+        for kw in like_keywords:
+            if kw in text_low:
+                return "like_yandex_track"
+
+        if "плейлист" in text_low and (
+            any(v in text_low for v in ("включ", "постав", "сыграй", "вруби", "запуст", "проиграй", "найди", "открой"))
+            or len(words) <= 6
+        ):
+            return "play_music"
+
         my_wave_triggers = [
             "волн", "валн", "мои ладно", "мою ладно", "моя ладно",
             "мою главного", "моя главная", "свою волн", "своя волн",
-            "любимо", "любиму", "мне нравит", "понравивш", "мои треки"
+            "любимо", "любиму", "любимые трек", "любимые песн", "любимая музык",
+            "избранн", "мне нравит", "понравивш", "мои лайк", "мои треки",
         ]
         if any(trig in text_low for trig in my_wave_triggers):
             return "play_yandex_favorites"
@@ -695,18 +718,6 @@ class CommandParser:
         weather_triggers = ["погод", "температур", "сколько градусов", "какой прогноз"]
         if any(wt in text_low for wt in weather_triggers):
             return "get_weather"
-
-        unlike_keywords = ["убери лайк", "удали лайк", "дизлайк", "дизлайкни", "убери из любимого", "удали из любимого",
-                           "сними лайк"]
-        for kw in unlike_keywords:
-            if kw in text_low:
-                return "unlike_yandex_track"
-
-        like_keywords = ["добавь в любимое", "добавь в избранное", "поставь лайк", "лайкни песню", "лайкни трек",
-                         "поставишь лайк", "лайк"]
-        for kw in like_keywords:
-            if kw in text_low:
-                return "like_yandex_track"
 
         play_pause_keywords = [
             "пауза", "паузу", "продолжи", "играй", "запускай", "включай",
