@@ -567,6 +567,35 @@ class TestStage8EndToEndVerification(unittest.TestCase):
         self.assertEqual(holidays.compute_new_year_poll_interval_ms(datetime.datetime(2026, 12, 31, 23, 58, 0)), 1000)
         self.assertEqual(holidays.compute_new_year_poll_interval_ms(datetime.datetime(2026, 6, 15, 12, 0, 0)), 15000)
 
+        # 1b. TTS ordinal declension for years + creator vs regular-user greetings
+        from audio.tts import expand_year_ordinals_ru
+        self.assertEqual(expand_year_ordinals_ru("С Новым 2026 годом!"), "С Новым две тысячи двадцать шестым годом!")
+        self.assertEqual(expand_year_ordinals_ru("Счастливого 2027 года!"), "Счастливого две тысячи двадцать седьмого года!")
+        self.assertEqual(expand_year_ordinals_ru("В 2023 году"), "В две тысячи двадцать третьем году")
+        self.assertEqual(expand_year_ordinals_ru("Наступает 2027 год"), "Наступает две тысячи двадцать седьмой год")
+        self.assertEqual(expand_year_ordinals_ru("В 2000 году"), "В двухтысячном году")
+
+        for _ in range(8):
+            user_msg = holidays.build_new_year_greeting(
+                user_name="Анна",
+                user_gender="female",
+                mode="midnight",
+                year=2027,
+                activity_summary="vscode python code git",
+                is_creator=False,
+            )
+            self.assertNotIn("код", user_msg.lower())
+            self.assertNotIn("компил", user_msg.lower())
+            self.assertNotIn("проект", user_msg.lower())
+        dev_msg = holidays.build_new_year_greeting(
+            user_name="Свят",
+            mode="midnight",
+            year=2027,
+            activity_summary="vscode python code git",
+            is_creator=True,
+        )
+        self.assertIn("2027", dev_msg)
+
         with tempfile.TemporaryDirectory() as tmp:
             h_dir = Path(tmp) / "holidays"
             h_dir.mkdir()
@@ -617,6 +646,7 @@ class TestStage8EndToEndVerification(unittest.TestCase):
                     with patch.object(cw_mod.datetime, "datetime") as mock_dt:
                         mock_dt.now.return_value = jan3
                         mw = cw_mod.MainWindow(_load())
+                        self.assertFalse(hasattr(mw, "holiday_stop_btn"))
                     try:
                         # Startup greeting generated warm New Year message & flagged year 2027
                         self.assertEqual(mw._pending_startup_ny_mode, "holiday_week")
