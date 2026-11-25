@@ -470,6 +470,120 @@ class Stage4VisionMediaTests(unittest.TestCase):
                 SystemActions.open_yandex_music("включи мою любимую песню кукушка", force_yandex=True)
                 mock_query.assert_called_once_with("мою любимую кукушка")
 
+    def test_12_yandex_music_crossfade_and_prefetch(self):
+        import enum
+        import types
+        from services.yandex import yandex_music_manager as ym_mod
+
+        class _FakeVlcState(enum.Enum):
+            Playing = "Playing"
+            Paused = "Paused"
+            Buffering = "Buffering"
+            Stopped = "Stopped"
+            Ended = "Ended"
+            Error = "Error"
+
+        class _FakePlayer:
+            def __init__(self, name):
+                self.name = name
+                self.state = _FakeVlcState.Stopped
+                self.vol = 100
+                self.muted = False
+                self.length = 180000
+                self.cur_time = 0
+                self.media = None
+                self.vol_history = []
+                self.stopped_calls = 0
+
+            def set_media(self, m):
+                self.media = m
+
+            def play(self):
+                self.state = _FakeVlcState.Playing
+                self.cur_time = 500
+
+            def pause(self):
+                self.state = _FakeVlcState.Paused
+
+            def stop(self):
+                self.state = _FakeVlcState.Stopped
+                self.stopped_calls += 1
+
+            def is_playing(self):
+                return self.state == _FakeVlcState.Playing
+
+            def get_state(self):
+                return self.state
+
+            def get_length(self):
+                return self.length
+
+            def get_time(self):
+                return self.cur_time
+
+            def audio_set_volume(self, v):
+                self.vol = int(v)
+                self.vol_history.append(self.vol)
+
+            def audio_get_volume(self):
+                return self.vol
+
+            def audio_set_mute(self, m):
+                self.muted = bool(m)
+
+            def audio_get_mute(self):
+                return 1 if self.muted else 0
+
+        fake_vlc = types.SimpleNamespace(State=_FakeVlcState)
+        pa = _FakePlayer("deck_a")
+        pb = _FakePlayer("deck_b")
+        pa.state = _FakeVlcState.Playing
+        pa.vol = 80
+        pa.cur_time = 175000
+
+        ym = ym_mod.YandexMusicManager()
+        ym.vlc_instance = MagicMock()
+        ym.vlc_instance.media_new.side_effect = lambda url: f"media:{url}"
+        ym.player = pa
+        ym._standby_player = pb
+        ym.normal_volume = 80
+        ym.is_radio = False
+        ym.crossfade_auto_sec = 0.6
+
+        t1 = MagicMock(id="1", title="First", track=None)
+        t2 = MagicMock(id="2", title="Second", track=None)
+        ym.current_track = t1
+
+        with patch.object(ym_mod, "vlc", fake_vlc), \
+                patch.object(ym_mod, "HAS_VLC", True), \
+                patch.object(ym_mod.time, "sleep"):
+            self.assertTrue(ym._can_crossfade(pa, pb))
+            self.assertFalse(ym._can_crossfade(pa, pa))
+
+            ok = ym._play_track_object(t2, fade_duration=0.6, preloaded_url="http://stream.test/2.mp3", is_auto=True)
+            self.assertTrue(ok)
+            # Active deck swapped cleanly to pb, old deck stopped & muted off at 0
+            self.assertIs(ym.player, pb)
+            self.assertIs(ym._standby_player, pa)
+            self.assertIs(ym.current_track, t2)
+            self.assertIn(t1, ym.history)
+            self.assertFalse(ym.is_fading)
+            self.assertGreater(pa.stopped_calls, 0)
+
+            # pb started at 0 and ramped monotonically up to 80; pa ramped monotonically down to 0
+            self.assertEqual(pb.vol_history[0], 0)
+            self.assertEqual(pb.vol_history[-1], 80)
+            self.assertEqual(pb.vol_history, sorted(pb.vol_history))
+            self.assertLess(pa.vol_history[-1], pa.vol_history[0])
+            self.assertEqual(pa.vol_history[-1], 0)
+
+            # Pause cancels active fade cleanly without leaving standby playing
+            ym.is_fading = True
+            pb.state = _FakeVlcState.Playing
+            ym.toggle_pause()
+            self.assertFalse(ym.is_fading)
+            self.assertEqual(pb.state, _FakeVlcState.Paused)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

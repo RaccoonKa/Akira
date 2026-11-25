@@ -521,6 +521,272 @@ class TestStage8EndToEndVerification(unittest.TestCase):
                 main_mod._check_linux_qt_x11_prereqs()
             self.assertEqual(se.exception.code, 1)
 
+    def test_12_fast_tokenizer_avoids_eager_torch_and_transformers_import(self):
+        script = (
+            "import sys\n"
+            "from core.nlp.parser.nlu import JointNLU\n"
+            "from core.nlp.emotion.text_emotion_classifier import TextEmotionClassifier\n"
+            "nlu = JointNLU()\n"
+            "intent, conf, _ = nlu.predict('включи музыку')\n"
+            "assert intent is not None\n"
+            "te = TextEmotionClassifier()\n"
+            "emo, _, _ = te.predict('Привет, ты молодец!')\n"
+            "assert emo in ('happy', 'angry', 'sad', 'surprise', 'neutral')\n"
+            "assert 'torch' not in sys.modules, 'torch must not be eagerly imported at startup!'\n"
+            "assert 'transformers' not in sys.modules, 'transformers must not be eagerly imported at startup!'\n"
+            "print('NO_TORCH_OK', intent, emo)\n"
+        )
+        res = __import__("subprocess").run(
+            [sys.executable, "-c", script],
+            cwd=str(ROOT_DIR),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        self.assertEqual(res.returncode, 0, res.stdout + "\n" + res.stderr)
+        self.assertIn("NO_TORCH_OK", res.stdout)
+
+    def test_13_new_year_easter_egg_trigger_and_sequence(self):
+        import datetime
+        import json
+        import tempfile
+        from core.database import chat_db as cdb
+        from core.utils import config as cfg_mod
+        from core.utils import holidays
+        from gui.windows import chat_window as cw_mod
+
+        # 1. Pure trigger date / sleep-recovery / once-per-year logic
+        self.assertIsNone(holidays.evaluate_new_year_trigger(datetime.datetime(2026, 12, 31, 23, 59, 59), 2026))
+        self.assertEqual(holidays.evaluate_new_year_trigger(datetime.datetime(2027, 1, 1, 0, 0, 1), 2026), "midnight")
+        self.assertEqual(holidays.evaluate_new_year_trigger(datetime.datetime(2027, 1, 1, 0, 22, 0), 0), "midnight")
+        self.assertEqual(holidays.evaluate_new_year_trigger(datetime.datetime(2027, 1, 1, 0, 45, 0), 2026), "holiday_week")
+        self.assertEqual(holidays.evaluate_new_year_trigger(datetime.datetime(2027, 1, 7, 21, 0, 0), 2026), "holiday_week")
+        self.assertIsNone(holidays.evaluate_new_year_trigger(datetime.datetime(2027, 1, 5, 10, 0, 0), 2027))
+        self.assertIsNone(holidays.evaluate_new_year_trigger(datetime.datetime(2027, 1, 8, 9, 0, 0), 0))
+
+        self.assertEqual(holidays.compute_new_year_poll_interval_ms(datetime.datetime(2026, 12, 31, 23, 58, 0)), 1000)
+        self.assertEqual(holidays.compute_new_year_poll_interval_ms(datetime.datetime(2026, 6, 15, 12, 0, 0)), 15000)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            h_dir = Path(tmp) / "holidays"
+            h_dir.mkdir()
+            song = h_dir / "new_year_song.mp3"
+            song.write_bytes(b"ID3test")
+            chime = h_dir / "new_year_chime.wav"
+            chime.write_bytes(b"RIFFtest")
+
+            with patch.object(holidays, "get_holiday_sounds_dir", return_value=str(h_dir)):
+                self.assertEqual(holidays.get_holiday_sound_path("new_year_song"), str(song))
+                self.assertEqual(holidays.get_holiday_sound_path("new_year_chime"), str(chime))
+                self.assertIsNone(holidays.get_holiday_sound_path("missing_track"))
+
+            # 2. Full MainWindow 3-act sequence: Jan 3 launch -> persists year, launches fireworks,
+            #    waits for speech end, starts song fade-in, stops cleanly on 'хватит' / Stop button.
+            cfg_file = Path(tmp) / "config.json"
+            init_cfg = dict(cfg_mod.DEFAULT_CONFIG)
+            init_cfg["user_name"] = "Свят"
+            init_cfg["new_year_greeted_year"] = 2026
+            cfg_file.write_text(json.dumps(init_cfg), encoding="utf-8")
+
+            def _load():
+                return json.loads(cfg_file.read_text(encoding="utf-8"))
+
+            def _save(d):
+                cfg_file.write_text(json.dumps(d), encoding="utf-8")
+
+            jan3 = datetime.datetime(2027, 1, 3, 14, 0, 0)
+            with patch.object(cdb, "get_db_path", return_value=os.path.join(tmp, "ny_studio.db")):
+                test_db = cdb.StudioChatDatabase()
+                fake_tts = MagicMock()
+                fake_tts.cached_greeting_audio = None
+                fake_chime_player = MagicMock()
+                fake_song_player = MagicMock()
+                fake_chime_audio = MagicMock()
+                fake_song_audio = MagicMock()
+                fake_song_audio.volume.return_value = 0.0
+
+                with patch.object(cw_mod, "load_config", side_effect=_load), \
+                        patch.object(cw_mod, "save_config", side_effect=_save), \
+                        patch.object(cw_mod, "STTThread", return_value=MagicMock()), \
+                        patch.object(cw_mod, "TTSThread", return_value=fake_tts), \
+                        patch.object(cw_mod, "VisionThread"), \
+                        patch.object(cw_mod, "UpdateCheckerThread"), \
+                        patch("gui.windows.studio_frame.studio_db", test_db), \
+                        patch("core.utils.config.get_user_data_path", side_effect=lambda *p: os.path.join(tmp, *p)), \
+                        patch.object(holidays, "get_holiday_sounds_dir", return_value=str(h_dir)):
+                    with patch.object(cw_mod.datetime, "datetime") as mock_dt:
+                        mock_dt.now.return_value = jan3
+                        mw = cw_mod.MainWindow(_load())
+                    try:
+                        # Startup greeting generated warm New Year message & flagged year 2027
+                        self.assertEqual(mw._pending_startup_ny_mode, "holiday_week")
+                        self.assertIn("2027", mw.initial_greeting_text)
+                        self.assertEqual(_load()["new_year_greeted_year"], 2027)
+
+                        # Subsequent check in same year does NOT retrigger
+                        self.assertIsNone(holidays.evaluate_new_year_trigger(jan3, _load()["new_year_greeted_year"]))
+
+                        mw._ny_chime_player = fake_chime_player
+                        mw._ny_chime_audio = fake_chime_audio
+                        mw._ny_song_player = fake_song_player
+                        mw._ny_song_audio = fake_song_audio
+
+                        with patch.object(cw_mod.datetime, "datetime") as mock_dt2, \
+                                patch.object(cw_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
+                            mock_dt2.now.return_value = jan3
+                            mw.play_initial_greeting()
+
+                        # Act 1 visual + chime
+                        self.assertTrue(mw.bg_frame._ny_active)
+                        self.assertGreater(len(mw.bg_frame._ny_fireworks), 0)
+                        self.assertGreater(mw.left_panel._ny_mode_until, 0.0)
+                        fake_chime_player.play.assert_called_once()
+                        # Act 2 speech started
+                        self.assertTrue(fake_tts.say.called or fake_tts.play_cached_greeting.called)
+
+                        # Act 3: on_tts_finished triggers song fade-in
+                        fake_tts._stopped = False
+                        mw._awaiting_ny_speech_end = True
+                        with patch.object(cw_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
+                            mw.on_tts_finished()
+                        self.assertTrue(mw._ny_song_playing)
+                        fake_song_player.play.assert_called_once()
+                        self.assertTrue(holidays.is_holiday_song_playing())
+
+                        # Voice/CommandParser 'хватит' stops holiday song cleanly (including from a worker thread)
+                        from core.nlp.parser.command_parser import CommandParser
+                        with patch.object(CommandParser, "_load_model"):
+                            cp = CommandParser()
+                        cp.detect_emotion = MagicMock(return_value="neutral")
+                        stop_res_box = []
+                        th_stop = __import__("threading").Thread(
+                            target=lambda: stop_res_box.append(cp.process_command("хватит", is_voice=True))
+                        )
+                        th_stop.start()
+                        th_stop.join(timeout=3.0)
+                        cw_mod.QCoreApplication.processEvents()
+                        self.assertEqual(len(stop_res_box), 1)
+                        self.assertIn("новогод", stop_res_box[0]["chat"].lower())
+                        self.assertTrue(mw._ny_song_fading_out or not mw._ny_song_playing)
+
+                        # Creator preview triggered from a background worker thread delivers on GUI thread
+                        with patch("core.utils.config.is_creator_key_valid", return_value=True), \
+                                patch.object(mw, "trigger_new_year_celebration") as m_prev:
+                            prev_box = []
+                            th_prev = __import__("threading").Thread(
+                                target=lambda: prev_box.append(cp.process_command("тест нового года", is_voice=False))
+                            )
+                            th_prev.start()
+                            th_prev.join(timeout=3.0)
+                            cw_mod.QCoreApplication.processEvents()
+                            self.assertEqual(len(prev_box), 1)
+                            m_prev.assert_called_once()
+                            self.assertTrue(m_prev.call_args.kwargs.get("is_preview"))
+                    finally:
+                        mw.shutdown()
+                        mw.close()
+
+    def test_14_yandex_crossfade_zero_startup_spike(self):
+        from enum import Enum
+        from services.yandex import yandex_music_manager as ym_mod
+
+        class _SpikeVlcState(Enum):
+            NothingSpecial = 0
+            Playing = 3
+            Buffering = 2
+            Paused = 4
+            Ended = 6
+            Stopped = 5
+            Error = 7
+
+        class _FakeVlc:
+            State = _SpikeVlcState
+
+        class _SimSpikeDeck:
+            """Эмулирует баг libVLC: при открытии потока после play() сбрасывает volume=100 и mute=False."""
+            def __init__(self, state=_SpikeVlcState.Stopped):
+                self.state = state
+                self.vol = 0
+                self.muted = False
+                self.cur_time = 0
+                self.polls = 0
+                self.unmuted_history = []
+
+            def get_state(self):
+                return self.state
+
+            def stop(self):
+                self.state = _SpikeVlcState.Stopped
+
+            def pause(self):
+                self.state = _SpikeVlcState.Paused
+
+            def is_playing(self):
+                return self.state == _SpikeVlcState.Playing
+
+            def set_media(self, m):
+                self.media = m
+
+            def play(self):
+                self.state = _SpikeVlcState.Playing
+                self.polls = 0
+                self.cur_time = 0
+                # Симуляция асинхронного сброса громкости libVLC на 100% сразу после старта
+                self.muted = False
+                self.vol = 100
+
+            def audio_set_mute(self, m):
+                self.muted = bool(m)
+
+            def audio_get_mute(self):
+                return self.muted
+
+            def audio_set_volume(self, v):
+                self.vol = int(v)
+                if not self.muted:
+                    self.unmuted_history.append(self.vol)
+
+            def audio_get_volume(self):
+                return self.vol
+
+            def get_length(self):
+                return 180000
+
+            def get_time(self):
+                self.polls += 1
+                if self.polls >= 3:
+                    self.cur_time = 50
+                return self.cur_time
+
+        pa = _SimSpikeDeck(state=_SpikeVlcState.Playing)
+        pa.vol = 100
+        pa.cur_time = 172000
+        pb = _SimSpikeDeck(state=_SpikeVlcState.Stopped)
+
+        ym = ym_mod.YandexMusicManager()
+        ym.vlc_instance = MagicMock()
+        ym.vlc_instance.media_new.side_effect = lambda url: f"media:{url}"
+        ym.player = pa
+        ym._standby_player = pb
+        ym.normal_volume = 100
+        ym.is_radio = False
+        ym.crossfade_auto_sec = 0.8
+
+        t1 = MagicMock(id="1", title="TrackA", track=None)
+        t2 = MagicMock(id="2", title="TrackB", track=None)
+        ym.current_track = t1
+
+        with patch.object(ym_mod, "vlc", _FakeVlc), \
+                patch.object(ym_mod, "HAS_VLC", True), \
+                patch.object(ym_mod.time, "sleep"):
+            ok = ym._play_track_object(t2, fade_duration=0.8, preloaded_url="http://cdn/2.mp3", is_auto=True)
+            self.assertTrue(ok)
+            self.assertEqual(pb.unmuted_history[0], 0)
+            self.assertEqual(pb.unmuted_history[-1], 100)
+            # Ни одного скачка вверх-вниз (монотонный рост без спайка на 100 в начале!)
+            self.assertEqual(pb.unmuted_history, sorted(pb.unmuted_history))
+            self.assertEqual(pa.vol, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -591,6 +591,286 @@ class TestStage6GuiCrossplatform(unittest.TestCase):
                     mw.shutdown()
                     mw.close()
 
+    def test_12_crossplatform_file_dialog_helpers(self):
+        from PyQt6.QtWidgets import QDialog, QFileDialog
+        from gui import ui_helpers
+        from gui.windows import chat_window as cw_mod
+        from gui.windows.studio_frame import StudioFloatingDock
+
+        # Verify no raw QFileDialog.get* remains outside ui_helpers
+        gui_dir = ROOT_DIR / "gui"
+        raw_re = re.compile(r"QFileDialog\.get(?:OpenFileName|OpenFileNames|SaveFileName)\(")
+        for py_file in gui_dir.rglob("*.py"):
+            rel = py_file.relative_to(ROOT_DIR).as_posix()
+            if rel == "gui/ui_helpers.py":
+                continue
+            self.assertIsNone(raw_re.search(py_file.read_text(encoding="utf-8")), f"Raw QFileDialog in {rel}")
+
+        host = QWidget()
+        host.current_theme = "dark"
+        child = QWidget(host)
+        child.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+        # Linux: uses non-native Qt QFileDialog with opaque styling and parent.window()
+        with patch.object(ui_helpers.sys, "platform", "linux"):
+            dlg = ui_helpers._prepare_linux_file_dialog(
+                child,
+                "Выберите файл для Акиры",
+                "",
+                "Все файлы (*)",
+                QFileDialog.AcceptMode.AcceptOpen,
+                QFileDialog.FileMode.ExistingFile,
+            )
+            self.assertTrue(dlg.testOption(QFileDialog.Option.DontUseNativeDialog))
+            self.assertFalse(dlg.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground))
+            self.assertEqual(dlg.windowModality(), Qt.WindowModality.ApplicationModal)
+            self.assertIs(dlg.parent(), host)
+
+            with patch.object(QFileDialog, "exec", return_value=int(QDialog.DialogCode.Accepted)), \
+                    patch.object(QFileDialog, "selectedFiles", return_value=["/tmp/demo.txt"]):
+                self.assertEqual(ui_helpers.open_file_dialog(child, "Open"), "/tmp/demo.txt")
+                self.assertEqual(ui_helpers.open_files_dialog(child, "Multi"), ["/tmp/demo.txt"])
+                self.assertEqual(ui_helpers.save_file_dialog(child, "Save", "out.py"), "/tmp/demo.txt")
+
+        # Windows: keeps native Windows dialog calls via resolved top-level parent
+        with patch.object(ui_helpers.sys, "platform", "win32"), \
+                patch.object(QFileDialog, "getOpenFileName", return_value=("C:/a.txt", "")) as m_open, \
+                patch.object(QFileDialog, "getOpenFileNames", return_value=(["C:/b.txt"], "")) as m_multi, \
+                patch.object(QFileDialog, "getSaveFileName", return_value=("C:/c.py", "")) as m_save:
+            self.assertEqual(ui_helpers.open_file_dialog(child, "Open"), "C:/a.txt")
+            self.assertEqual(ui_helpers.open_files_dialog(child, "Multi"), ["C:/b.txt"])
+            self.assertEqual(ui_helpers.save_file_dialog(child, "Save", "c.py"), "C:/c.py")
+            self.assertIs(m_open.call_args.args[0], host)
+            self.assertIs(m_multi.call_args.args[0], host)
+            self.assertIs(m_save.call_args.args[0], host)
+
+        # ChatFrame & StudioFloatingDock attach handlers wire through open_file_dialog
+        cf = cw_mod.ChatFrame()
+        with patch.object(cw_mod, "open_file_dialog", return_value="/tmp/note.md") as m_cf:
+            cf.select_file()
+            m_cf.assert_called_once()
+            self.assertEqual(cf.attached_file, "/tmp/note.md")
+            self.assertIn("note.md", cf.file_label.text())
+
+        dock = StudioFloatingDock(font_family="Sans Serif")
+        with patch("gui.windows.studio_frame.open_files_dialog", return_value=["/tmp/code.py"]) as m_dock:
+            dock._select_file()
+            m_dock.assert_called_once()
+            self.assertEqual(dock.attached_file, "/tmp/code.py")
+            self.assertEqual(dock.attached_files, ["/tmp/code.py"])
+            chip = dock.attachments_layout.itemAt(0).widget()
+            self.assertIn("code.py", chip.name_lbl.text())
+
+    def test_13_linux_minimize_does_not_reset_opacity_or_hit_panel(self):
+        from gui.windows import chat_window as cw_mod
+
+        class _MinimizeProbe(cw_mod.MainWindow):
+            def __init__(self):
+                QWidget.__init__(self)
+                self.NORMAL_WIDTH = 380
+                self.EXTENDED_WIDTH = 880
+                self.WINDOW_HEIGHT = 560
+                self.window_mode = "normal"
+                self.resize(self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
+                self._is_animating_window = False
+                self._window_ready = True
+                self.mini_window = None
+                self.min_calls = 0
+
+            def _check_and_reveal(self):
+                pass
+
+            def showMinimized(self):
+                self.min_calls += 1
+                self.setWindowState(Qt.WindowState.WindowMinimized)
+
+        host = _MinimizeProbe()
+        try:
+            avail = self.app.primaryScreen().availableGeometry()
+            max_safe_y = max(avail.y(), avail.y() + avail.height() - host.WINDOW_HEIGHT)
+            host.move(avail.x() + avail.width() - 400, avail.y() + avail.height() - host.WINDOW_HEIGHT - 20)
+
+            with patch.object(cw_mod, "is_wayland", return_value=False):
+                # 1. Closing/minimize anim stays strictly inside availableGeometry (never bounces off WM strut)
+                host.minimize_animated()
+                pos_anim = host.closing_anim.animationAt(0)
+                op_anim = host.closing_anim.animationAt(1)
+                self.assertLessEqual(pos_anim.endValue().y(), max_safe_y)
+                self.assertEqual(op_anim.endValue(), 0.0)
+
+                # Simulate finished animation cleanly without resetting opacity back to 1.0 on X11
+                host.closing_anim.stop()
+                host.setWindowOpacity(0.0)
+                host.closing_anim.finished.emit()
+                self.app.processEvents()
+                self.assertEqual(host.min_calls, 1)
+                self.assertFalse(host._is_animating_window)
+                self.assertEqual(host.windowOpacity(), 0.0)
+
+                # 2. Restoring from WindowMinimized state animates back smoothly
+                with patch.object(host, "show_animated") as m_show:
+                    host.setWindowState(Qt.WindowState.WindowActive)
+                    self.app.processEvents()
+                    m_show.assert_called_once_with(from_minimize=True)
+
+                # 3. Opening anim also starts safely inside availableGeometry
+                host.show_animated(from_minimize=True)
+                open_pos = host.opening_anim.animationAt(0)
+                open_op = host.opening_anim.animationAt(1)
+                self.assertLessEqual(open_pos.startValue().y(), max_safe_y)
+                self.assertEqual(open_op.endValue(), 1.0)
+                host.opening_anim.stop()
+        finally:
+            host.close()
+
+    def test_14_studio_multi_file_attachments_limit_and_db_isolation(self):
+        import sqlite3
+        import tempfile
+        from core.database import chat_db as cdb
+        from core.nlp.generative.media_provider import MediaProvider
+        from core.nlp.parser.command_parser import CommandParser
+        from core.utils.attachments import MAX_STUDIO_ATTACHMENTS, parse_attached_files, serialize_attached_files
+        from gui.windows.studio_frame import StudioFloatingDock, StudioUserMessage
+
+        # 1. Serialization helper round-trips 1 and N files up to MAX_STUDIO_ATTACHMENTS (10)
+        self.assertEqual(serialize_attached_files([]), "")
+        self.assertEqual(serialize_attached_files(["/tmp/one.py"]), "/tmp/one.py")
+        many_paths = [f"/tmp/file_{i}.py" for i in range(12)]
+        self.assertEqual(len(parse_attached_files(many_paths)), MAX_STUDIO_ATTACHMENTS)
+        ser = serialize_attached_files(many_paths[:5])
+        self.assertTrue(ser.startswith("["))
+        self.assertEqual(parse_attached_files(ser), many_paths[:5])
+
+        # 2. Patched get_db_path gets an isolated DB instance without touching personal_data/sql/studio_chats.db,
+        #    and delete_session compacts session IDs contiguously (1..N) while preserving messages.
+        real_db_path = cdb.studio_db.db_path
+        before_conn = sqlite3.connect(real_db_path)
+        try:
+            before_seq = before_conn.execute("SELECT name, seq FROM sqlite_sequence ORDER BY name").fetchall()
+        finally:
+            before_conn.close()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_db_file = os.path.join(tmp, "isolated_studio.db")
+            with patch.object(cdb, "get_db_path", return_value=tmp_db_file):
+                test_db = cdb.StudioChatDatabase()
+                self.assertEqual(os.path.abspath(test_db.db_path), os.path.abspath(tmp_db_file))
+                self.assertIsNot(test_db, cdb.studio_db)
+
+                s1 = test_db.create_session("First")
+                s2 = test_db.create_session("Second")
+                s3 = test_db.create_session("Third")
+                self.assertEqual([s1, s2, s3], [1, 2, 3])
+                test_db.add_message(s2, "user", "Msg in second", attached_file=ser)
+                test_db.add_message(s3, "user", "Msg in third")
+
+                id_map = test_db.delete_session(s1)
+                self.assertEqual(id_map.get(s2), 1)
+                self.assertEqual(id_map.get(s3), 2)
+                rem_ids = sorted(r["id"] for r in test_db.get_sessions())
+                self.assertEqual(rem_ids, [1, 2])
+                msgs_1 = test_db.get_messages(1)
+                self.assertEqual(len(msgs_1), 1)
+                self.assertEqual(msgs_1[0]["attached_file"], ser)
+
+                # Creating next session uses compacted ID 3 instead of shifting to 4+
+                s_next = test_db.create_session("Next")
+                self.assertEqual(s_next, 3)
+
+        after_conn = sqlite3.connect(real_db_path)
+        try:
+            after_seq = after_conn.execute("SELECT name, seq FROM sqlite_sequence ORDER BY name").fetchall()
+        finally:
+            after_conn.close()
+        self.assertEqual(before_seq, after_seq)
+
+        # 3. StudioFloatingDock supports up to 10 attachments incrementally + chip removal + StudioUserMessage pills
+        dock = StudioFloatingDock(font_family="Sans Serif")
+        added, dropped = dock.add_attachments([f"/tmp/f_{i}.py" for i in range(6)])
+        self.assertEqual((added, dropped), (6, 0))
+        self.assertEqual(len(dock.attached_files), 6)
+        self.assertIn("6/10", dock.attach_count_lbl.text())
+
+        # Adding duplicate + 6 more clamps cleanly at 10
+        added2, dropped2 = dock.add_attachments(["/tmp/f_0.py"] + [f"/tmp/extra_{i}.md" for i in range(6)])
+        self.assertEqual(added2, 4)
+        self.assertEqual(dropped2, 2)
+        self.assertEqual(len(dock.attached_files), 10)
+        self.assertFalse(dock.attach_btn.isEnabled())
+
+        dock.remove_attachment("/tmp/f_2.py")
+        self.assertEqual(len(dock.attached_files), 9)
+        self.assertTrue(dock.attach_btn.isEnabled())
+
+        msg_w = StudioUserMessage(
+            "Проверь файлы",
+            user_name="Свят",
+            font_family="Sans Serif",
+            attached_file=serialize_attached_files([f"/tmp/a_{i}.py" for i in range(5)]),
+        )
+        self.assertEqual(len(msg_w.file_pills), 5)
+
+        emitted = []
+        dock.submit_requested.connect(lambda t, f, m: emitted.append((t, f, m)))
+        dock.input_edit.setPlainText("Сравни код")
+        dock._submit()
+        self.assertEqual(len(emitted), 1)
+        self.assertEqual(len(parse_attached_files(emitted[0][1])), 9)
+        self.assertEqual(len(dock.attached_files), 0)
+
+        # 4. CommandParser parses multi-file context & MediaProvider supports multiple ref images
+        with tempfile.TemporaryDirectory() as tmp:
+            p1 = Path(tmp) / "alpha.py"
+            p2 = Path(tmp) / "beta.cs"
+            p1.write_text("print('alpha')", encoding="utf-8")
+            p2.write_text("class Beta {}", encoding="utf-8")
+
+            fake_llm = MagicMock()
+            fake_llm.ask_with_context.return_value = "Оба файла изучены!"
+            fake_llm.memory = MagicMock()
+            with patch.object(CommandParser, "_load_model"):
+                parser = CommandParser()
+            parser.llm = fake_llm
+            parser.detect_emotion = MagicMock(return_value="neutral")
+
+            res = parser.process_command(
+                "Сравни",
+                is_voice=False,
+                attached_file=serialize_attached_files([str(p1), str(p2)]),
+            )
+            self.assertIn("Оба файла", res["chat"])
+            ctx_arg = fake_llm.ask_with_context.call_args.args[1]
+            self.assertIn("alpha.py", ctx_arg)
+            self.assertIn("beta.cs", ctx_arg)
+            self.assertIn("print('alpha')", ctx_arg)
+            self.assertIn("class Beta {}", ctx_arg)
+
+            # MediaProvider multi-image payload check
+            import base64
+            img1 = Path(tmp) / "ref1.png"
+            img2 = Path(tmp) / "ref2.png"
+            tiny_png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=")
+            img1.write_bytes(tiny_png)
+            img2.write_bytes(tiny_png)
+
+            mp = MediaProvider()
+            captured_payloads = []
+
+            def _fake_post(url, headers=None, json=None, timeout=None):
+                captured_payloads.append(json)
+                resp = MagicMock(status_code=200)
+                resp.json.return_value = {"data": [{"b64_json": base64.b64encode(tiny_png).decode("ascii")}]}
+                return resp
+
+            with patch.object(mp, "_get_api_key", return_value="test-key"), \
+                    patch("core.nlp.generative.media_provider.get_user_data_path", side_effect=lambda *p: os.path.join(tmp, *p)), \
+                    patch("core.nlp.generative.media_provider.requests.post", side_effect=_fake_post):
+                out_img = mp.generate_image("Смешай стили", ref_image_path=[str(img1), str(img2)])
+                self.assertTrue(os.path.exists(out_img))
+                content_parts = captured_payloads[0]["messages"][0]["content"]
+                img_parts = [c for c in content_parts if c.get("type") == "image_url"]
+                self.assertEqual(len(img_parts), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
