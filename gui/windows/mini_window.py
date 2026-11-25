@@ -74,6 +74,7 @@ class AkiraMiniMicWidget(QWidget):
         self.listening_hue = 0.0
         self.music_flow_hue = 0.0
         self.sound_presence = 0.0
+        self._ny_mode_until = 0.0
 
         self.dark_palette = {
             "happy": (45.0, 230.0, 255.0),
@@ -205,6 +206,12 @@ class AkiraMiniMicWidget(QWidget):
         self.boost = 2.2
         self.target_impulse = 0.6
 
+    def set_new_year_mode(self, enabled: bool, duration_sec: float = 22.0):
+        import time as _time
+        self._ny_mode_until = (_time.monotonic() + float(duration_sec)) if enabled else 0.0
+        if enabled:
+            self.trigger_wake_effect()
+
     def on_audio_data(self, impulse: float, hue: float, is_music: bool):
         if self.is_speaking or self.is_listening or self.is_processing:
             self.target_impulse = 0.0
@@ -249,6 +256,18 @@ class AkiraMiniMicWidget(QWidget):
             target_s = 220.0
             target_v = 110.0 if self.current_theme == "light" else 255.0
             color_rate = 0.08 * self.speed_mult
+        elif getattr(self, "_ny_mode_until", 0.0) > 0:
+            import time as _time
+            if _time.monotonic() < self._ny_mode_until:
+                blend = (math.sin(self.pulse * 2.2) + 1.0) * 0.5
+                target_h = 42.0 + (190.0 - 42.0) * blend
+                target_s = 215.0 if self.current_theme == "light" else 190.0
+                target_v = 165.0 if self.current_theme == "light" else 255.0
+                color_rate = 0.06 * self.speed_mult
+            else:
+                self._ny_mode_until = 0.0
+                target_h, target_s, target_v = self.emotion_palette.get(self.target_emotion, self.emotion_palette["neutral"])
+                color_rate = 0.03 * self.speed_mult
         elif self.target_emotion != "neutral":
             target_h, target_s, target_v = self.emotion_palette[self.target_emotion]
             color_rate = 0.045 * self.speed_mult

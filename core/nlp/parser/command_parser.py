@@ -6,17 +6,13 @@ os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
 
 import re
 import threading
 import random
 import numpy as np
 from datetime import datetime, timedelta
-try:
-    from transformers.utils import logging as tf_logging
-    tf_logging.set_verbosity_error()
-except Exception:
-    pass
 from core.system.actions import SystemActions, zapret_manager
 from services.vpn.vpn_manager import VpnManager
 from core.utils.config import load_config
@@ -1118,6 +1114,51 @@ class CommandParser:
                 "is_whisper": is_whisper
             }
 
+        from core.utils.holidays import (
+            is_holiday_song_playing,
+            request_stop_holiday_song,
+            request_new_year_preview,
+        )
+        if is_holiday_song_playing():
+            holiday_stop_triggers = [
+                "стоп", "хватит", "выключи", "заткнись", "отключи",
+                "тихо", "молчи", "выруби", "останови"
+            ]
+            words_clean = set(re.findall(r'\w+', text_low))
+            if any(w in words_clean or w in text_low for w in holiday_stop_triggers) and (
+                len(words_clean) <= 5
+                or any(m in text_low for m in ("музык", "песн", "мелод", "звук", "новый год", "новогод"))
+            ):
+                request_stop_holiday_song()
+                ans = "Хорошо, выключаю новогоднюю мелодию ✨"
+                return {
+                    "user_display": user_display,
+                    "chat": ans,
+                    "voice": "",
+                    "emotion": "happy",
+                    "is_whisper": is_whisper
+                }
+
+        if any(
+            p in text_low
+            for p in (
+                "тест нового года",
+                "тест новый год",
+                "новогодняя пасхалка",
+                "проверка нового года",
+                "проверь новый год",
+            )
+        ):
+            from core.utils.config import is_creator_key_valid
+            if is_creator_key_valid() and request_new_year_preview():
+                return {
+                    "user_display": user_display,
+                    "chat": "",
+                    "voice": "",
+                    "emotion": "happy",
+                    "is_whisper": is_whisper
+                }
+
         if self.reminder_manager.is_ringing:
             stop_triggers = ["стоп", "хватит", "выключи", "заткнись", "отключи", "тихо", "молчи", "выруби"]
             snooze_triggers = ["отложи", "еще пять минут", "ещё пять минут", "позже", "дай поспать", "перенеси"]
@@ -1457,18 +1498,45 @@ class CommandParser:
                 }
 
         if attached_file:
-            file_text = self.doc_parser.parse_file(attached_file)
+            from core.utils.attachments import parse_attached_files
+            attached_paths = parse_attached_files(attached_file)
+            if attached_paths:
+                total_budget = 42000
+                per_file_cap = max(3500, total_budget // len(attached_paths))
+                parsed_blocks = []
+                file_names = []
+                any_content = False
 
-            if len(file_text) > 15000:
-                file_text = file_text[:15000] + "\n\n... [Текст обрезан из-за лимита токенов]"
+                for idx, path in enumerate(attached_paths, start=1):
+                    fname = os.path.basename(path)
+                    file_names.append(fname)
+                    raw_text = (self.doc_parser.parse_file(path) or "").strip()
+                    if raw_text:
+                        any_content = True
+                        if len(raw_text) > per_file_cap:
+                            raw_text = raw_text[:per_file_cap] + "\n\n... [Фрагмент обрезан из-за лимита контекста]"
+                        block = f"=== ФАЙЛ {idx}/{len(attached_paths)}: {fname} ===\n{raw_text}"
+                    else:
+                        block = f"=== ФАЙЛ {idx}/{len(attached_paths)}: {fname} ===\n[Не удалось извлечь текст из файла]"
+                    parsed_blocks.append(block)
 
-            if file_text.strip():
-                prompt = text if text else "Изучи этот документ и расскажи кратко, о чем он."
-                ans = self.llm.ask_with_context(prompt, file_text)
-                return {"user_display": user_display, "chat": ans, "voice": ans, "emotion": emotion, "is_whisper": is_whisper}
-            else:
-                msg = "Не удалось распознать текст в этом файле."
-                return {"user_display": user_display, "chat": msg, "voice": msg, "emotion": emotion, "is_whisper": is_whisper}
+                if any_content:
+                    combined_text = "\n\n".join(parsed_blocks)
+                    default_prompt = (
+                        "Изучи этот документ и расскажи кратко, о чем он."
+                        if len(attached_paths) == 1
+                        else f"Изучи эти файлы ({len(attached_paths)} шт.), сопоставь их и расскажи кратко, о чем они."
+                    )
+                    prompt = text if text else default_prompt
+                    ans = self.llm.ask_with_context(prompt, combined_text, file_names=file_names)
+                    return {"user_display": user_display, "chat": ans, "voice": ans, "emotion": emotion, "is_whisper": is_whisper}
+                else:
+                    msg = (
+                        "Не удалось распознать текст в этом файле."
+                        if len(attached_paths) == 1
+                        else "Не удалось распознать текст ни в одном из прикреплённых файлов."
+                    )
+                    return {"user_display": user_display, "chat": msg, "voice": msg, "emotion": emotion, "is_whisper": is_whisper}
 
         if re.search(r'\b(?:отмени(?:ть)?|удали(?:ть)?|сбрось|сбросить|убери|выключи)\s+(?:все\s+)?таймер[а-я]*\b', text_low):
             removed = self.reminder_manager.cancel_timers()

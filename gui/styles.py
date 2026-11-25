@@ -724,6 +724,23 @@ QLabel#StudioUserBody {
 }
 QLabel#StudioFilePill {
     color: #ded7c4;
+    background-color: rgba(222, 215, 196, 0.08);
+    border: 1px solid rgba(222, 215, 196, 0.16);
+    border-radius: 9px;
+    padding: 2px 8px;
+}
+
+QPushButton#HolidayStopBtn {
+    background-color: rgba(255, 224, 130, 0.14);
+    color: #ffe082;
+    border: 1px solid rgba(255, 224, 130, 0.35);
+    border-radius: 10px;
+    padding: 2px 9px;
+    font-size: 11px;
+}
+QPushButton#HolidayStopBtn:hover {
+    background-color: rgba(255, 224, 130, 0.26);
+    border: 1px solid rgba(255, 224, 130, 0.58);
 }
 
 QLabel#StudioAkiraBody {
@@ -735,6 +752,48 @@ QFrame#StudioFloatingDock {
     background-color: rgba(12, 13, 16, 0.88);
     border: 1px solid rgba(120, 115, 95, 0.32);
     border-radius: 14px;
+}
+QScrollArea#StudioAttachmentsScroll {
+    background: transparent;
+    border: none;
+}
+QScrollArea#StudioAttachmentsScroll QScrollBar:horizontal {
+    height: 3px;
+    background: transparent;
+    margin: 0px;
+}
+QScrollArea#StudioAttachmentsScroll QScrollBar::handle:horizontal {
+    background: rgba(222, 215, 196, 0.32);
+    border-radius: 1px;
+    min-width: 24px;
+}
+QScrollArea#StudioAttachmentsScroll QScrollBar::add-line:horizontal,
+QScrollArea#StudioAttachmentsScroll QScrollBar::sub-line:horizontal {
+    width: 0px;
+}
+QFrame#StudioAttachmentChip {
+    background-color: rgba(222, 215, 196, 0.10);
+    border: 1px solid rgba(222, 215, 196, 0.20);
+    border-radius: 9px;
+}
+QFrame#StudioAttachmentChip:hover {
+    background-color: rgba(222, 215, 196, 0.15);
+    border: 1px solid rgba(222, 215, 196, 0.34);
+}
+QLabel#StudioAttachCountLabel {
+    color: rgba(222, 215, 196, 0.72);
+    padding: 0px 4px;
+}
+QPushButton#StudioAttachClearBtn {
+    background-color: rgba(222, 215, 196, 0.08);
+    color: rgba(222, 215, 196, 0.75);
+    border: none;
+    border-radius: 8px;
+    padding: 1px 6px;
+}
+QPushButton#StudioAttachClearBtn:hover {
+    background-color: rgba(255, 82, 82, 0.22);
+    color: #ff8a80;
 }
 QTextEdit#StudioInputEdit {
     background: transparent;
@@ -1380,6 +1439,23 @@ QLabel#StudioUserBody {
 }
 QLabel#StudioFilePill {
     color: #1e2430;
+    background-color: rgba(15, 23, 42, 0.06);
+    border: 1px solid rgba(15, 23, 42, 0.12);
+    border-radius: 9px;
+    padding: 2px 8px;
+}
+
+QPushButton#HolidayStopBtn {
+    background-color: rgba(217, 119, 6, 0.12);
+    color: #92400e;
+    border: 1px solid rgba(217, 119, 6, 0.32);
+    border-radius: 10px;
+    padding: 2px 9px;
+    font-size: 11px;
+}
+QPushButton#HolidayStopBtn:hover {
+    background-color: rgba(217, 119, 6, 0.22);
+    border: 1px solid rgba(217, 119, 6, 0.52);
 }
 
 QLabel#StudioAkiraBody {
@@ -1390,6 +1466,48 @@ QLabel#StudioAkiraBody {
 QFrame#StudioFloatingDock {
     background: transparent;
     border: none;
+}
+QScrollArea#StudioAttachmentsScroll {
+    background: transparent;
+    border: none;
+}
+QScrollArea#StudioAttachmentsScroll QScrollBar:horizontal {
+    height: 3px;
+    background: transparent;
+    margin: 0px;
+}
+QScrollArea#StudioAttachmentsScroll QScrollBar::handle:horizontal {
+    background: rgba(15, 23, 42, 0.25);
+    border-radius: 1px;
+    min-width: 24px;
+}
+QScrollArea#StudioAttachmentsScroll QScrollBar::add-line:horizontal,
+QScrollArea#StudioAttachmentsScroll QScrollBar::sub-line:horizontal {
+    width: 0px;
+}
+QFrame#StudioAttachmentChip {
+    background-color: rgba(15, 23, 42, 0.07);
+    border: 1px solid rgba(15, 23, 42, 0.14);
+    border-radius: 9px;
+}
+QFrame#StudioAttachmentChip:hover {
+    background-color: rgba(15, 23, 42, 0.11);
+    border: 1px solid rgba(15, 23, 42, 0.24);
+}
+QLabel#StudioAttachCountLabel {
+    color: #475569;
+    padding: 0px 4px;
+}
+QPushButton#StudioAttachClearBtn {
+    background-color: rgba(15, 23, 42, 0.06);
+    color: #475569;
+    border: none;
+    border-radius: 8px;
+    padding: 1px 6px;
+}
+QPushButton#StudioAttachClearBtn:hover {
+    background-color: rgba(229, 57, 53, 0.16);
+    color: #c62828;
 }
 QTextEdit#StudioInputEdit {
     background: transparent;

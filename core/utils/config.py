@@ -80,6 +80,7 @@ DEFAULT_CONFIG = {
     "is_game_mode": False,
     "is_mini_mode": False,
     "is_whisper_mode": False,
+    "new_year_greeted_year": 0,
     "work_apps": [
         "https://github.com"
     ],

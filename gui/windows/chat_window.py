@@ -14,14 +14,18 @@ import psutil
 from services.telegram.telegram_bot import TelegramBotThread
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QTextEdit, QLineEdit, QFrame, QFileDialog, QGridLayout,
+    QTextEdit, QLineEdit, QFrame, QGridLayout,
     QGraphicsOpacityEffect, QSizePolicy, QApplication
 )
 from PyQt6.QtCore import (
     Qt, QPoint, QRect, QRectF, QTimer, QPropertyAnimation, QVariantAnimation,
     QEasingCurve, QParallelAnimationGroup, QThread, pyqtSignal, QEvent,
-    QSize, QPointF, QByteArray, QAbstractNativeEventFilter, QCoreApplication
+    QSize, QPointF, QByteArray, QAbstractNativeEventFilter, QCoreApplication, QUrl
 )
+try:
+    from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+except Exception:
+    QMediaPlayer = QAudioOutput = None
 from PyQt6.QtGui import (
     QPainter, QPen, QColor, QLinearGradient, QRadialGradient, QGradient,
     QBrush, QPainterPath, QFont, QFontDatabase, QGuiApplication,
@@ -45,6 +49,13 @@ from core.system.actions import SystemActions
 from core.vision.vision_provider import VisionThread
 from core.vision.presence_manager import PresenceManager
 from core.utils.config import get_resource_path, load_config, save_config
+from core.utils.holidays import (
+    get_holiday_sound_path,
+    evaluate_new_year_trigger,
+    compute_new_year_poll_interval_ms,
+    build_new_year_greeting,
+    register_holiday_audio_hooks,
+)
 from core.utils.updater import UpdateCheckerThread
 if sys.platform == "win32":
     try:
@@ -62,6 +73,7 @@ from gui.ui_helpers import (
     handle_drag_press,
     handle_drag_move,
     handle_drag_release,
+    open_file_dialog,
 )
 
 if sys.platform == "win32":
@@ -588,6 +600,7 @@ class AkiraMicWidget(QFrame):
         self.listening_hue = 0.0
         self.music_flow_hue = 0.0
         self.sound_presence = 0.0
+        self._ny_mode_until = 0.0
 
         self.dark_palette = {
             "happy": (45.0, 230.0, 255.0),
@@ -744,6 +757,11 @@ class AkiraMicWidget(QFrame):
         self.boost = 2.2
         self.target_impulse = 0.6
 
+    def set_new_year_mode(self, enabled: bool, duration_sec: float = 22.0):
+        self._ny_mode_until = (time.monotonic() + float(duration_sec)) if enabled else 0.0
+        if enabled:
+            self.trigger_wake_effect()
+
     def on_audio_data(self, impulse: float, hue: float, is_music: bool):
         if self.is_speaking or self.is_listening or self.is_processing:
             self.target_impulse = 0.0
@@ -790,6 +808,17 @@ class AkiraMicWidget(QFrame):
             target_s = 230.0
             target_v = 135.0 if self.current_theme == "light" else 255.0
             color_rate = 0.08 * self.speed_mult
+        elif getattr(self, "_ny_mode_until", 0.0) > 0:
+            if time.monotonic() < self._ny_mode_until:
+                blend = (math.sin(self.pulse * 2.2) + 1.0) * 0.5
+                target_h = 42.0 + (190.0 - 42.0) * blend
+                target_s = 220.0 if self.current_theme == "light" else 195.0
+                target_v = 205.0 if self.current_theme == "light" else 255.0
+                color_rate = 0.06 * self.speed_mult
+            else:
+                self._ny_mode_until = 0.0
+                target_h, target_s, target_v = self.emotion_palette.get(self.target_emotion, self.emotion_palette["neutral"])
+                color_rate = 0.03 * self.speed_mult
         elif self.target_emotion != "neutral":
             target_h, target_s, target_v = self.emotion_palette[self.target_emotion]
             color_rate = 0.045 * self.speed_mult
@@ -1673,11 +1702,11 @@ class ChatFrame(QFrame):
         self.thinking_anim.start()
 
     def select_file(self):
-        path, _ = QFileDialog.getOpenFileName(
+        path = open_file_dialog(
             self,
             "Выберите файл для Акиры",
             "",
-            "Все поддерживаемые файлы (*.txt *.pdf *.docx *.png *.jpg *.jpeg *.bmp *.webp *.md *.py *.json *.csv *.log);;Изображения (*.png *.jpg *.jpeg *.bmp *.webp);;Тексты и Документы (*.txt *.pdf *.docx *.md *.py *.json *.csv *.log)"
+            "Все поддерживаемые файлы (*.txt *.pdf *.docx *.png *.jpg *.jpeg *.bmp *.webp *.md *.py *.json *.csv *.log);;Изображения (*.png *.jpg *.jpeg *.bmp *.webp);;Тексты и Документы (*.txt *.pdf *.docx *.md *.py *.json *.csv *.log);;Все файлы (*)"
         )
         if path:
             self.attached_file = path
@@ -1763,6 +1792,13 @@ class BackgroundFrame(QFrame):
         self.speed_mult = 1.0
         self._reveal_width = None
         self._reveal_anchor_right = True
+        self._ny_active = False
+        self._ny_start_time = 0.0
+        self._ny_end_time = 0.0
+        self._ny_snowflakes = []
+        self._ny_fireworks = []
+        self._ny_next_burst_time = 0.0
+        self._ny_bursts_left = 0
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.animate_bg)
         self.timer.start(16)
@@ -1837,12 +1873,124 @@ class BackgroundFrame(QFrame):
         interval = max(1, int(1000 / fps))
         self.timer.setInterval(interval)
 
+    def _spawn_firework_burst(self):
+        vr = self.visible_rect()
+        vw = max(120, vr.width())
+        vh = max(120, self.height())
+        cx = vr.x() + random.uniform(vw * 0.20, vw * 0.80)
+        cy = random.uniform(vh * 0.14, vh * 0.48)
+        palette = (
+            ("#d97706", "#0284c7", "#e11d48", "#f59e0b")
+            if self.current_theme == "light"
+            else ("#ffe082", "#80deea", "#ffab91", "#ffffff")
+        )
+        main_hex = random.choice(palette)
+        accent_hex = random.choice(palette)
+        sparks = []
+        count = 26
+        for idx in range(count):
+            angle = (2.0 * math.pi * idx / count) + random.uniform(-0.12, 0.12)
+            speed = random.uniform(1.4, 3.6)
+            sparks.append({
+                "x": cx,
+                "y": cy,
+                "vx": math.cos(angle) * speed,
+                "vy": math.sin(angle) * speed,
+                "life": 1.0,
+                "decay": random.uniform(0.014, 0.024),
+                "size": random.uniform(1.6, 3.0),
+                "color": main_hex if idx % 2 == 0 else accent_hex,
+            })
+        self._ny_fireworks.append(sparks)
+
+    def start_new_year_effect(self, duration_sec: float = 22.0):
+        now_m = time.monotonic()
+        self._ny_active = True
+        self._ny_start_time = now_m
+        self._ny_end_time = now_m + max(4.0, float(duration_sec))
+        self._ny_bursts_left = 5
+        self._ny_next_burst_time = now_m + 1.15
+        self._ny_fireworks.clear()
+        self._ny_snowflakes.clear()
+
+        vr = self.visible_rect()
+        vw = max(160, vr.width())
+        vh = max(160, self.height())
+        for _ in range(44):
+            self._ny_snowflakes.append({
+                "x": vr.x() + random.uniform(8, vw - 8),
+                "y": random.uniform(-40, vh),
+                "vy": random.uniform(0.55, 1.45),
+                "phase": random.uniform(0.0, math.pi * 2.0),
+                "sway_speed": random.uniform(0.025, 0.055),
+                "size": random.uniform(1.6, 3.4),
+                "alpha": random.randint(90, 210),
+            })
+
+        self._spawn_firework_burst()
+        self._spawn_firework_burst()
+        self.update()
+
+    def stop_new_year_effect(self):
+        self._ny_active = False
+        self._ny_bursts_left = 0
+        self._ny_fireworks.clear()
+        self._ny_snowflakes.clear()
+        self.update()
+
     def animate_bg(self):
         self.wave_phase += 0.005 * self.speed_mult
         for star in self.stars:
             star['phase'] += star['speed'] * self.speed_mult
         for d in self.dust_cloud:
             d['twinkle_phase'] += d['twinkle_speed'] * self.speed_mult
+
+        if self._ny_active:
+            now_m = time.monotonic()
+            vr = self.visible_rect()
+            vw = max(160, vr.width())
+            vh = max(160, self.height())
+
+            if self._ny_bursts_left > 0 and now_m >= self._ny_next_burst_time:
+                self._spawn_firework_burst()
+                self._ny_bursts_left -= 1
+                self._ny_next_burst_time = now_m + random.uniform(1.1, 1.9)
+
+            remaining = self._ny_end_time - now_m
+            fading_out = remaining <= 2.5
+
+            alive_flakes = []
+            for fl in self._ny_snowflakes:
+                fl["phase"] += fl["sway_speed"] * self.speed_mult
+                fl["y"] += fl["vy"] * self.speed_mult
+                fl["x"] += math.sin(fl["phase"]) * 0.45 * self.speed_mult
+                if fl["y"] > vh + 8:
+                    if fading_out:
+                        continue
+                    fl["y"] = -6.0
+                    fl["x"] = vr.x() + random.uniform(8, vw - 8)
+                alive_flakes.append(fl)
+            self._ny_snowflakes = alive_flakes
+
+            alive_bursts = []
+            for burst in self._ny_fireworks:
+                alive_sparks = []
+                for sp in burst:
+                    sp["x"] += sp["vx"] * self.speed_mult
+                    sp["y"] += sp["vy"] * self.speed_mult
+                    sp["vx"] *= math.pow(0.975, self.speed_mult)
+                    sp["vy"] = sp["vy"] * math.pow(0.975, self.speed_mult) + 0.032 * self.speed_mult
+                    sp["life"] -= sp["decay"] * self.speed_mult
+                    if sp["life"] > 0.02:
+                        alive_sparks.append(sp)
+                if alive_sparks:
+                    alive_bursts.append(alive_sparks)
+            self._ny_fireworks = alive_bursts
+
+            if now_m >= self._ny_end_time and not self._ny_fireworks:
+                self._ny_active = False
+                self._ny_snowflakes.clear()
+
         self.update()
 
     def _get_bezier_point(self, p0, p1, p2, p3, t):
@@ -1946,6 +2094,37 @@ class BackgroundFrame(QFrame):
             painter.setBrush(QBrush(col))
             painter.drawEllipse(QRectF(px - sz / 2.0, py - sz / 2.0, sz, sz))
 
+        if self._ny_active:
+            now_m = time.monotonic()
+            fade_mult = 1.0
+            if now_m > (self._ny_end_time - 2.5):
+                fade_mult = max(0.0, min(1.0, (self._ny_end_time - now_m) / 2.5))
+
+            for fl in self._ny_snowflakes:
+                if fl["x"] < vr_x - 8 or fl["x"] > vr_x + vr_w + 8:
+                    continue
+                alpha = int(fl["alpha"] * fade_mult)
+                if alpha <= 2:
+                    continue
+                snow_col = (
+                    QColor(96, 165, 250, alpha)
+                    if self.current_theme == "light"
+                    else QColor(240, 249, 255, alpha)
+                )
+                painter.setBrush(QBrush(snow_col))
+                s = fl["size"]
+                painter.drawEllipse(QRectF(fl["x"] - s / 2.0, fl["y"] - s / 2.0, s, s))
+
+            for burst in self._ny_fireworks:
+                for sp in burst:
+                    if sp["x"] < vr_x - 8 or sp["x"] > vr_x + vr_w + 8:
+                        continue
+                    sp_col = QColor(sp["color"])
+                    sp_col.setAlpha(int(max(0, min(255, 245 * sp["life"] * fade_mult))))
+                    painter.setBrush(QBrush(sp_col))
+                    sz_s = sp["size"] * (0.55 + 0.45 * sp["life"])
+                    painter.drawEllipse(QRectF(sp["x"] - sz_s / 2.0, sp["y"] - sz_s / 2.0, sz_s, sz_s))
+
         glass_pen = QPen(
             QColor(255, 255, 255, 140) if self.current_theme == "light" else QColor(222, 215, 196, 35),
             1.0
@@ -2041,6 +2220,9 @@ class ThemeRevealOverlay(QWidget):
 
 
 class MainWindow(QWidget):
+    _ny_preview_requested = pyqtSignal()
+    _ny_stop_requested = pyqtSignal()
+
     def __init__(self, config):
         super().__init__()
         self.config = config
@@ -2090,6 +2272,21 @@ class MainWindow(QWidget):
 
         self._warmup_ready = False
         self._window_ready = False
+        self._pending_startup_ny_mode = None
+        self._ny_celebrating = False
+        self._awaiting_ny_speech_end = False
+        self._ny_seq = 0
+        self._ny_ducked_audio = False
+        self._ny_chime_player = None
+        self._ny_chime_audio = None
+        self._ny_song_player = None
+        self._ny_song_audio = None
+        self._ny_song_playing = False
+        self._ny_song_fading_out = False
+        self._ny_song_target_vol = 0.72
+        self._ny_song_fade_timer = QTimer(self)
+        self._ny_song_fade_timer.setInterval(45)
+        self._ny_song_fade_timer.timeout.connect(self._step_new_year_song_fade)
 
         self.init_ui()
         app = QGuiApplication.instance()
@@ -2136,6 +2333,17 @@ class MainWindow(QWidget):
             if hasattr(self, "mini_window"):
                 self.mini_window.mini_mic.set_emotion("happy")
             self.update_title_icons()
+
+        self._ny_preview_requested.connect(self._on_ny_preview_signal, Qt.ConnectionType.QueuedConnection)
+        self._ny_stop_requested.connect(self._on_ny_stop_signal, Qt.ConnectionType.QueuedConnection)
+        register_holiday_audio_hooks(
+            is_playing_fn=self._is_holiday_song_active,
+            stop_fn=self._stop_holiday_song_threadsafe,
+            preview_fn=self._trigger_new_year_preview,
+        )
+        self.ny_check_timer = QTimer(self)
+        self.ny_check_timer.timeout.connect(self._check_live_new_year)
+        self.ny_check_timer.start(compute_new_year_poll_interval_ms())
         self._init_dwm_iconic_thumbnail()
 
     def _init_dwm_iconic_thumbnail(self):
@@ -2429,13 +2637,15 @@ class MainWindow(QWidget):
     def changeEvent(self, event):
         if event.type() == QEvent.Type.WindowStateChange:
             if not getattr(self, '_is_animating_window', False):
-                if self.windowState() == Qt.WindowState.WindowNoState and event.oldState() == Qt.WindowState.WindowMinimized:
-                    self.show_animated()
+                was_min = bool(event.oldState() & Qt.WindowState.WindowMinimized)
+                is_min = bool(self.windowState() & Qt.WindowState.WindowMinimized)
+                if was_min and not is_min:
+                    self.show_animated(from_minimize=True)
         super().changeEvent(event)
 
     def bring_to_front(self):
-        if not self.isVisible() or self.isMinimized():
-            self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized | Qt.WindowState.WindowActive)
+        if not self.isVisible() or self.isMinimized() or self.windowOpacity() < 0.99:
+            self.setWindowState((self.windowState() & ~Qt.WindowState.WindowMinimized) | Qt.WindowState.WindowActive)
             self.showNormal()
         self.raise_()
         self.activateWindow()
@@ -2478,7 +2688,7 @@ class MainWindow(QWidget):
                 pass
         return False, 0
     
-    def show_animated(self):
+    def show_animated(self, from_minimize: bool = False):
         if getattr(self, 'is_mini_mode', False) and hasattr(self, 'mini_window'):
             screen = QGuiApplication.primaryScreen().availableGeometry()
             x = screen.right() - 460 - 20
@@ -2486,6 +2696,9 @@ class MainWindow(QWidget):
             self.mini_window.show_at(x, y)
             self._window_ready = True
             self._check_and_reveal()
+            return
+
+        if hasattr(self, 'opening_anim') and self.opening_anim.state() == QPropertyAnimation.State.Running:
             return
 
         if hasattr(self, 'closing_anim') and self.closing_anim.state() == QPropertyAnimation.State.Running:
@@ -2508,15 +2721,18 @@ class MainWindow(QWidget):
         y = avail.y() + avail.height() - h - 20
 
         def _on_opened():
+            if sys.platform != "win32":
+                self.setWindowOpacity(1.0)
             self._is_animating_window = False
             self._window_ready = True
             self._check_and_reveal()
 
         if sys.platform != "win32" and is_wayland():
-            if not self.isVisible() or self.isMinimized():
-                self.setWindowState(Qt.WindowState.WindowNoState)
+            if not self.isVisible() or self.isMinimized() or from_minimize:
+                self.setWindowState((self.windowState() & ~Qt.WindowState.WindowMinimized) | Qt.WindowState.WindowNoState)
                 self.setWindowOpacity(0.0)
-                super().showNormal()
+                if not self.isVisible():
+                    super().showNormal()
             self.raise_()
             self.activateWindow()
 
@@ -2531,7 +2747,7 @@ class MainWindow(QWidget):
 
         if sys.platform == "win32":
             start_y = avail.y() + avail.height() + 50
-            if not self.isVisible() or self.isMinimized():
+            if not self.isVisible() or self.isMinimized() or from_minimize:
                 self.setWindowState(Qt.WindowState.WindowNoState)
                 self.move(x, start_y)
                 super().showNormal()
@@ -2560,27 +2776,34 @@ class MainWindow(QWidget):
             self.opening_anim.start()
             return
 
-        # Linux X11 (Cinnamon): стартуем внутри рабочей области (не за нижней панелью), + плавное появление
-        start_y = min(y + 36, max(y, avail.y() + avail.height() - 48))
-        if not self.isVisible() or self.isMinimized():
-            self.setWindowState(Qt.WindowState.WindowNoState)
+        # Linux X11 (Cinnamon): стартуем строго внутри рабочей области (не пересекая нижнюю панель WM)
+        max_safe_y = max(avail.y(), avail.y() + avail.height() - h)
+        start_y = min(y + 20, max_safe_y)
+        was_hidden_or_min = not self.isVisible() or self.isMinimized() or from_minimize
+        if was_hidden_or_min:
+            self.setWindowState((self.windowState() & ~Qt.WindowState.WindowMinimized) | Qt.WindowState.WindowNoState)
             self.setWindowOpacity(0.0)
             self.move(x, start_y)
-            super().showNormal()
+            if not self.isVisible():
+                super().showNormal()
+        else:
+            start_y = min(self.y(), max_safe_y)
 
+        start_op = float(self.windowOpacity()) if self.windowOpacity() < 0.99 else 0.0
+        self.setWindowOpacity(start_op)
         self.raise_()
         self.activateWindow()
 
         anim_pos = QPropertyAnimation(self, b"pos")
-        anim_pos.setDuration(320)
+        anim_pos.setDuration(280)
         anim_pos.setEasingCurve(QEasingCurve.Type.OutCubic)
         anim_pos.setStartValue(QPoint(x, start_y))
         anim_pos.setEndValue(QPoint(x, y))
 
         anim_op = QPropertyAnimation(self, b"windowOpacity")
-        anim_op.setDuration(320)
+        anim_op.setDuration(280)
         anim_op.setEasingCurve(QEasingCurve.Type.OutCubic)
-        anim_op.setStartValue(0.0)
+        anim_op.setStartValue(start_op)
         anim_op.setEndValue(1.0)
 
         self.opening_anim = QParallelAnimationGroup(self)
@@ -2599,14 +2822,19 @@ class MainWindow(QWidget):
         self._is_animating_window = True
 
         def _on_closed():
-            self._is_animating_window = False
-            action_func()
-            if sys.platform != "win32":
-                self.setWindowOpacity(1.0)
+            try:
+                action_func()
+                if sys.platform != "win32":
+                    # Не возвращаем opacity=1.0 сразу после showMinimized()/hide(): на X11/Cinnamon WM
+                    # окно при сворачивании остаётся видимым на экране во время анимации WM,
+                    # из-за чего мгновенный сброс opacity создаёт телепортацию обратно и повторное скрытие.
+                    self.setWindowOpacity(0.0)
+            finally:
+                self._is_animating_window = False
 
         if sys.platform != "win32" and is_wayland():
             self.closing_anim = QPropertyAnimation(self, b"windowOpacity")
-            self.closing_anim.setDuration(250)
+            self.closing_anim.setDuration(240)
             self.closing_anim.setEasingCurve(QEasingCurve.Type.InCubic)
             self.closing_anim.setStartValue(float(self.windowOpacity()))
             self.closing_anim.setEndValue(0.0)
@@ -2627,17 +2855,19 @@ class MainWindow(QWidget):
             self.closing_anim.start()
             return
 
-        full = QGuiApplication.primaryScreen().geometry()
-        target_y = min(self.y() + 36, max(self.y(), full.y() + full.height() - 48))
+        avail = QGuiApplication.primaryScreen().availableGeometry()
+        win_h = self.height() if self.height() > 0 else self.WINDOW_HEIGHT
+        max_safe_y = max(avail.y(), avail.y() + avail.height() - win_h)
+        target_y = min(self.y() + 20, max(self.y(), max_safe_y))
 
         anim_pos = QPropertyAnimation(self, b"pos")
-        anim_pos.setDuration(260)
+        anim_pos.setDuration(240)
         anim_pos.setEasingCurve(QEasingCurve.Type.InCubic)
         anim_pos.setStartValue(self.pos())
         anim_pos.setEndValue(QPoint(self.x(), target_y))
 
         anim_op = QPropertyAnimation(self, b"windowOpacity")
-        anim_op.setDuration(260)
+        anim_op.setDuration(240)
         anim_op.setEasingCurve(QEasingCurve.Type.InCubic)
         anim_op.setStartValue(float(self.windowOpacity()))
         anim_op.setEndValue(0.0)
@@ -3286,6 +3516,13 @@ class MainWindow(QWidget):
         # Горизонтальная плашка кнопок с отступом снизу в 8px до контента
         title_bar = QHBoxLayout()
         title_bar.setContentsMargins(0, 2, 6, 8)
+        self.holiday_stop_btn = QPushButton("❄ Стоп")
+        self.holiday_stop_btn.setObjectName("HolidayStopBtn")
+        self.holiday_stop_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.holiday_stop_btn.setToolTip("Остановить новогоднюю музыку (можно также сказать «хватит» или «выключи музыку»)")
+        self.holiday_stop_btn.clicked.connect(lambda: self.stop_new_year_song())
+        self.holiday_stop_btn.hide()
+        title_bar.addWidget(self.holiday_stop_btn)
         title_bar.addStretch()
 
         self.title_btns_widget = QWidget()
@@ -3651,6 +3888,13 @@ class MainWindow(QWidget):
             self.shutdown()
         except Exception as e:
             print(f"[Shutdown Error]: {e}")
+        if hasattr(self, 'ny_check_timer') and self.ny_check_timer and self.ny_check_timer.isActive():
+            self.ny_check_timer.stop()
+        if hasattr(self, '_ny_song_fade_timer') and self._ny_song_fade_timer and self._ny_song_fade_timer.isActive():
+            self._ny_song_fade_timer.stop()
+        self.stop_new_year_song(fade_sec=0.0)
+        register_holiday_audio_hooks(None, None, None)
+
         volume_ducker.force_restore()
         activity_tracker.stop()
         app = QApplication.instance()
@@ -3720,6 +3964,27 @@ class MainWindow(QWidget):
 
         cfg["last_launch_date"] = today_str
         cfg["daily_launch_count"] = 1 if is_first_launch_today else (daily_count + 1)
+
+        ny_mode = evaluate_new_year_trigger(now, cfg.get("new_year_greeted_year", 0))
+        if ny_mode is not None:
+            self._pending_startup_ny_mode = ny_mode
+            cfg["new_year_greeted_year"] = now.year
+            save_config(cfg)
+            if isinstance(self.config, dict):
+                self.config.update(cfg)
+            act_summary = ""
+            try:
+                act_summary = activity_tracker.get_recent_summary_text()
+            except Exception:
+                act_summary = ""
+            return build_new_year_greeting(
+                user_name=user_name,
+                user_gender=user_gender,
+                mode=ny_mode,
+                year=now.year,
+                activity_summary=act_summary,
+            )
+
         save_config(cfg)
         if isinstance(self.config, dict):
             self.config.update(cfg)
@@ -3841,8 +4106,292 @@ class MainWindow(QWidget):
     def play_initial_greeting(self):
         if getattr(self, "_is_shutting_down", False):
             return
+        pending_ny = getattr(self, "_pending_startup_ny_mode", None)
+        if pending_ny:
+            self._pending_startup_ny_mode = None
+            self.trigger_new_year_celebration(
+                mode=pending_ny,
+                greeting_override=getattr(self, "initial_greeting_text", None),
+                use_cached_speech=True,
+                save_year=False,
+            )
+            return
         if not self.is_muted:
             self.tts_thread.play_cached_greeting()
+
+    def _is_holiday_song_active(self) -> bool:
+        return bool(getattr(self, "_ny_song_playing", False))
+
+    def _on_ny_preview_signal(self):
+        self.trigger_new_year_celebration(
+            mode="midnight",
+            use_cached_speech=False,
+            save_year=False,
+            is_preview=True,
+        )
+
+    def _on_ny_stop_signal(self):
+        self.stop_new_year_song()
+
+    def _stop_holiday_song_threadsafe(self) -> bool:
+        was_playing = bool(getattr(self, "_ny_song_playing", False))
+        if QThread.currentThread() == self.thread():
+            return self.stop_new_year_song()
+        if was_playing:
+            self._ny_stop_requested.emit()
+        return was_playing
+
+    def _trigger_new_year_preview(self) -> bool:
+        if QThread.currentThread() == self.thread():
+            QTimer.singleShot(10, self._on_ny_preview_signal)
+        else:
+            self._ny_preview_requested.emit()
+        return True
+
+    def _init_holiday_players(self):
+        if QMediaPlayer is None or QAudioOutput is None:
+            return
+        if self._ny_chime_player is None:
+            try:
+                self._ny_chime_audio = QAudioOutput(self)
+                self._ny_chime_player = QMediaPlayer(self)
+                self._ny_chime_player.setAudioOutput(self._ny_chime_audio)
+            except Exception:
+                self._ny_chime_player = None
+                self._ny_chime_audio = None
+
+        if self._ny_song_player is None:
+            try:
+                self._ny_song_audio = QAudioOutput(self)
+                self._ny_song_player = QMediaPlayer(self)
+                self._ny_song_player.setAudioOutput(self._ny_song_audio)
+                self._ny_song_player.mediaStatusChanged.connect(self._on_ny_song_media_status)
+            except Exception:
+                self._ny_song_player = None
+                self._ny_song_audio = None
+
+    def _on_ny_song_media_status(self, status):
+        if QMediaPlayer is not None and status == QMediaPlayer.MediaStatus.EndOfMedia:
+            self.stop_new_year_song(fade_sec=0.0)
+
+    def _release_ny_ducks(self):
+        if getattr(self, "_ny_ducked_audio", False):
+            self._ny_ducked_audio = False
+            try:
+                from core.system.actions import ym_manager
+                ym_manager.unduck()
+            except Exception:
+                pass
+            try:
+                volume_ducker.restore()
+            except Exception:
+                pass
+
+    def _step_new_year_song_fade(self):
+        if self._ny_song_audio is None or self._ny_song_player is None:
+            self._ny_song_fade_timer.stop()
+            return
+        cur = float(self._ny_song_audio.volume())
+        if self._ny_song_fading_out:
+            nxt = max(0.0, cur - 0.075)
+            self._ny_song_audio.setVolume(nxt)
+            if nxt <= 0.005:
+                self._ny_song_fade_timer.stop()
+                try:
+                    self._ny_song_player.stop()
+                except Exception:
+                    pass
+                self._ny_song_playing = False
+                self._ny_song_fading_out = False
+                if hasattr(self, "holiday_stop_btn"):
+                    self.holiday_stop_btn.hide()
+                self._release_ny_ducks()
+        else:
+            nxt = min(self._ny_song_target_vol, cur + 0.015)
+            self._ny_song_audio.setVolume(nxt)
+            if nxt >= self._ny_song_target_vol - 0.002:
+                self._ny_song_fade_timer.stop()
+
+    def _start_new_year_song(self):
+        if getattr(self, "_is_shutting_down", False) or getattr(self, "is_muted", False):
+            self._release_ny_ducks()
+            return
+
+        song_path = get_holiday_sound_path("new_year_song")
+        if not song_path:
+            self._release_ny_ducks()
+            return
+
+        self._init_holiday_players()
+        if self._ny_song_player is None or self._ny_song_audio is None:
+            self._release_ny_ducks()
+            return
+
+        try:
+            from core.system.actions import ym_manager
+            ym_manager.duck(factor=0.08)
+        except Exception:
+            pass
+        try:
+            volume_ducker.duck(factor=0.12)
+            self._ny_ducked_audio = True
+        except Exception:
+            pass
+
+        self._ny_song_fading_out = False
+        self._ny_song_playing = True
+        self._ny_song_audio.setVolume(0.0)
+        self._ny_song_player.setSource(QUrl.fromLocalFile(song_path))
+        self._ny_song_player.play()
+        if hasattr(self, "holiday_stop_btn"):
+            self.holiday_stop_btn.show()
+        self._ny_song_fade_timer.start()
+
+    def stop_new_year_song(self, fade_sec: float = 0.55) -> bool:
+        was_playing = bool(getattr(self, "_ny_song_playing", False))
+        self._awaiting_ny_speech_end = False
+
+        if self._ny_chime_player is not None:
+            try:
+                self._ny_chime_player.stop()
+            except Exception:
+                pass
+
+        if not was_playing:
+            if hasattr(self, "holiday_stop_btn"):
+                self.holiday_stop_btn.hide()
+            self._release_ny_ducks()
+            return False
+
+        if fade_sec <= 0 or self._ny_song_audio is None or self._ny_song_player is None:
+            self._ny_song_fade_timer.stop()
+            if self._ny_song_player is not None:
+                try:
+                    self._ny_song_player.stop()
+                except Exception:
+                    pass
+            self._ny_song_playing = False
+            self._ny_song_fading_out = False
+            if hasattr(self, "holiday_stop_btn"):
+                self.holiday_stop_btn.hide()
+            self._release_ny_ducks()
+        else:
+            self._ny_song_fading_out = True
+            self._ny_song_fade_timer.start()
+        return True
+
+    def _check_live_new_year(self):
+        if getattr(self, "_is_shutting_down", False) or getattr(self, "_ny_celebrating", False):
+            return
+        now = datetime.datetime.now()
+        target_interval = compute_new_year_poll_interval_ms(now)
+        if hasattr(self, "ny_check_timer") and self.ny_check_timer.interval() != target_interval:
+            self.ny_check_timer.setInterval(target_interval)
+
+        cfg = load_config()
+        ny_mode = evaluate_new_year_trigger(now, cfg.get("new_year_greeted_year", 0))
+        if ny_mode is not None:
+            self.trigger_new_year_celebration(mode=ny_mode, use_cached_speech=False, save_year=True)
+
+    def trigger_new_year_celebration(
+        self,
+        mode: str = "midnight",
+        greeting_override: str | None = None,
+        use_cached_speech: bool = False,
+        save_year: bool = True,
+        is_preview: bool = False,
+    ):
+        if getattr(self, "_is_shutting_down", False):
+            return
+
+        now = datetime.datetime.now()
+        cfg = load_config()
+        if save_year and not is_preview:
+            cfg["new_year_greeted_year"] = now.year
+            save_config(cfg)
+            if isinstance(self.config, dict):
+                self.config.update(cfg)
+
+        self._ny_seq += 1
+        my_seq = self._ny_seq
+        self._ny_celebrating = True
+        self._awaiting_ny_speech_end = False
+
+        # Акт 1: Приглушаем фоновую музыку и синхронно запускаем салют, снег и бой курантов
+        try:
+            from core.system.actions import ym_manager
+            ym_manager.duck(factor=0.18)
+        except Exception:
+            pass
+        try:
+            volume_ducker.duck(factor=0.22)
+            self._ny_ducked_audio = True
+        except Exception:
+            pass
+
+        if hasattr(self, "bg_frame"):
+            self.bg_frame.start_new_year_effect(duration_sec=22.0)
+        if hasattr(self, "left_panel"):
+            self.left_panel.set_new_year_mode(True, duration_sec=22.0)
+            self.left_panel.set_emotion("happy")
+        if hasattr(self, "mini_window"):
+            self.mini_window.mini_mic.set_new_year_mode(True, duration_sec=22.0)
+            self.mini_window.mini_mic.set_emotion("happy")
+
+        chime_path = get_holiday_sound_path("new_year_chime")
+        chime_delay_ms = 650
+        if chime_path and not getattr(self, "is_muted", False):
+            self._init_holiday_players()
+            if self._ny_chime_player is not None and self._ny_chime_audio is not None:
+                try:
+                    self._ny_chime_audio.setVolume(0.78)
+                    self._ny_chime_player.setSource(QUrl.fromLocalFile(chime_path))
+                    self._ny_chime_player.play()
+                    chime_delay_ms = 2600
+                except Exception:
+                    chime_delay_ms = 650
+
+        if greeting_override:
+            greeting_text = greeting_override
+        else:
+            act_summary = ""
+            try:
+                act_summary = activity_tracker.get_recent_summary_text()
+            except Exception:
+                act_summary = ""
+            greeting_text = build_new_year_greeting(
+                user_name=cfg.get("user_name", "друг"),
+                user_gender=cfg.get("user_gender", "male"),
+                mode=mode,
+                year=now.year,
+                activity_summary=act_summary,
+            )
+
+        def _act2_speak():
+            if my_seq != self._ny_seq or getattr(self, "_is_shutting_down", False):
+                return
+            self._ny_celebrating = False
+
+            if hasattr(self, "chat_history"):
+                if hasattr(self.chat_history, "stream_message"):
+                    self.chat_history.stream_message(greeting_text, emotion="happy")
+                    self.chat_history.finish_active_stream()
+                else:
+                    self.chat_history.append(f"Акира: {greeting_text}\n")
+
+            if not getattr(self, "is_muted", False):
+                self._awaiting_ny_speech_end = True
+                if (
+                    use_cached_speech
+                    and getattr(self.tts_thread, "cached_greeting_audio", None) is not None
+                ):
+                    self.tts_thread.play_cached_greeting()
+                else:
+                    self.speak_reply(greeting_text)
+            else:
+                self._release_ny_ducks()
+
+        QTimer.singleShot(chime_delay_ms, _act2_speak)
 
     def start_vision(self):
         if getattr(self, "_is_shutting_down", False):
@@ -3972,6 +4521,12 @@ class MainWindow(QWidget):
         if hasattr(self, 'mini_window'):
             self.mini_window.mini_mic.set_processing(False)
             self.mini_window.mini_mic.set_speaking(False)
+        if getattr(self, "_awaiting_ny_speech_end", False):
+            self._awaiting_ny_speech_end = False
+            if not getattr(self.tts_thread, "_stopped", False):
+                QTimer.singleShot(120, self._start_new_year_song)
+            else:
+                self._release_ny_ducks()
         if getattr(self, 'pending_followup', False):
             self.pending_followup = False
             if not getattr(self, 'is_game_mode', False):
@@ -4139,6 +4694,13 @@ class MainWindow(QWidget):
                     t.stop()
             except Exception:
                 pass
+
+        if hasattr(self, 'ny_check_timer') and self.ny_check_timer and self.ny_check_timer.isActive():
+            self.ny_check_timer.stop()
+        if hasattr(self, '_ny_song_fade_timer') and self._ny_song_fade_timer and self._ny_song_fade_timer.isActive():
+            self._ny_song_fade_timer.stop()
+        self.stop_new_year_song(fade_sec=0.0)
+        register_holiday_audio_hooks(None, None, None)
 
         volume_ducker.force_restore()
         activity_tracker.stop()

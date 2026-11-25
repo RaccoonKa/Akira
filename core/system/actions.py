@@ -742,9 +742,11 @@ class SystemActions:
 
     @staticmethod
     def stop_music(text=""):
+        from core.utils.holidays import request_stop_holiday_song
+        stopped_holiday = request_stop_holiday_song()
         ym_manager.stop()
         spotify_manager.stop()
-        return "Выключаю музыку"
+        return "Выключаю новогоднюю музыку" if stopped_holiday else "Выключаю музыку"
 
     @staticmethod
     def stop_movie(text=""):
