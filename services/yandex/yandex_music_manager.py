@@ -2,6 +2,7 @@ import os
 import sys
 import ctypes.util
 import difflib
+import math
 import re
 import random
 import threading
@@ -52,7 +53,7 @@ class YandexMusicManager:
         args = [
             "--no-video",
             "--quiet",
-            "--network-caching=3000",
+            "--network-caching=1200",
             "--no-qt-privacy-ask",
             "--no-qt-error-dialogs",
         ]
@@ -88,27 +89,43 @@ class YandexMusicManager:
             return False
 
         try:
+            old_primary = getattr(self, "player", None)
+            old_standby = getattr(self, "_standby_player", None)
+            for p in (old_primary, old_standby):
+                if p is not None:
+                    try:
+                        p.stop()
+                    except Exception:
+                        pass
+
             self.vlc_instance = vlc.Instance(*self._build_vlc_args())
             if not self.vlc_instance:
                 self.player = None
+                self._standby_player = None
                 return False
             self.player = self.vlc_instance.media_player_new()
+            self._standby_player = self.vlc_instance.media_player_new()
             if self.player:
                 self.player.audio_set_volume(self.normal_volume)
+                if self._standby_player:
+                    self._standby_player.audio_set_volume(0)
                 return True
             return False
         except Exception as e:
             print(f"[YandexMusic Init VLC Warning]: {e}")
             self.vlc_instance = None
             self.player = None
+            self._standby_player = None
             return False
 
     def __init__(self):
         self.client = None
         self.normal_volume = 100
         self.is_ducked = False
+        self._duck_factor = 0.2
         self.vlc_instance = None
         self.player = None
+        self._standby_player = None
         self.reinit_vlc()
         self.queue = []
         self.history = []
@@ -117,6 +134,16 @@ class YandexMusicManager:
         self.watcher_thread = None
         self.stop_watcher = False
         self.is_transitioning = False
+        self.is_fading = False
+        self.crossfade_auto_sec = 4.5
+        self.crossfade_manual_sec = 1.5
+        self.crossfade_stop_sec = 0.35
+        self._play_lock = threading.RLock()
+        self._play_seq = 0
+        self._duck_seq = 0
+        self._preloaded_next = None
+        self._preloading_for_id = None
+        self._crossfade_triggered_for_id = None
         self._recent_track_ids = deque(maxlen=150)
         self._wave_station = "user:onyourwave"
         self._wave_batch_id = None
@@ -201,49 +228,332 @@ class YandexMusicManager:
             print(f"[YandexMusic Stream Error]: {e}")
         return None
 
-    def _play_track_object(self, track):
+    def _effective_volume(self, base_volume: int | None = None) -> int:
+        base = self.normal_volume if base_volume is None else max(0, min(100, int(base_volume)))
+        if self.is_ducked:
+            return max(1, int(round(base * self._duck_factor))) if base > 0 else 0
+        return base
+
+    @staticmethod
+    def _is_real_vlc_player(player) -> bool:
+        if not HAS_VLC or vlc is None or player is None:
+            return False
+        try:
+            return isinstance(player.get_state(), vlc.State)
+        except Exception:
+            return False
+
+    def _can_crossfade(self, old_player, standby_player) -> bool:
+        if not self._is_real_vlc_player(old_player) or not self._is_real_vlc_player(standby_player):
+            return False
+        if old_player is standby_player:
+            return False
+        try:
+            state = old_player.get_state()
+            return state in (vlc.State.Playing, vlc.State.Buffering)
+        except Exception:
+            return False
+
+    @staticmethod
+    def _unwrap_track(track):
+        if hasattr(track, 'track') and track.track:
+            track = track.track
+        if hasattr(track, 'fetch_track') and not hasattr(track, 'get_download_info'):
+            track = track.fetch_track()
+        return track
+
+    def _commit_active_track(self, track):
+        if self.current_track:
+            self.history.append(self.current_track)
+        self.current_track = track
+        self._remember_track(track)
+        self._preloaded_next = None
+        self._preloading_for_id = None
+        self._crossfade_triggered_for_id = None
+        if self.is_radio:
+            tid = self._track_id_str(track)
+            if tid:
+                self._wave_last_track_id = tid
+                self._send_rotor_feedback(
+                    self._wave_station,
+                    "trackStarted",
+                    track_id=tid,
+                    batch_id=self._wave_batch_id,
+                )
+
+    def _play_single_deck(self, track, stream_url: str, my_seq: int) -> bool:
+        with self._play_lock:
+            if my_seq != self._play_seq or not HAS_VLC or not self.player or not self.vlc_instance:
+                self.is_transitioning = False
+                return False
+            self._commit_active_track(track)
+            target_vol = self._effective_volume()
+            self.player.stop()
+            media = self.vlc_instance.media_new(stream_url)
+            self.player.set_media(media)
+            self.player.audio_set_mute(False)
+            self.player.audio_set_volume(target_vol)
+            self.player.play()
+            self.is_fading = False
+
+        # VLC может сбросить громкость при инициализации аудиопотока после play(), поэтому удерживаем target_vol
+        deadline = time.perf_counter() + 0.55
+        while time.perf_counter() < deadline:
+            if my_seq != self._play_seq or self.stop_watcher or not self.player:
+                break
+            try:
+                self.player.audio_set_mute(False)
+                self.player.audio_set_volume(self._effective_volume())
+            except Exception:
+                pass
+            time.sleep(0.02)
+        self.is_transitioning = False
+        return True
+
+    @staticmethod
+    def _clamp_player_silent(player):
+        """Удерживает плеер в тишине на этапе открытия аудиопотока libVLC."""
+        try:
+            if not player.audio_get_mute():
+                player.audio_set_mute(True)
+        except Exception:
+            pass
+        try:
+            if player.audio_get_volume() != 0:
+                player.audio_set_volume(0)
+        except Exception:
+            pass
+
+    def _crossfade_to_track(
+        self,
+        track,
+        stream_url: str,
+        fade_sec: float,
+        my_seq: int,
+        old_player,
+        new_player,
+        is_auto: bool = False,
+    ) -> bool:
+        with self._play_lock:
+            if my_seq != self._play_seq or not self.vlc_instance:
+                if my_seq == self._play_seq:
+                    self.is_transitioning = False
+                return False
+            try:
+                new_player.stop()
+            except Exception:
+                pass
+            media = self.vlc_instance.media_new(stream_url)
+            new_player.set_media(media)
+            try:
+                new_player.audio_set_mute(True)
+            except Exception:
+                pass
+            new_player.audio_set_volume(0)
+            new_player.play()
+
+        # Ждём реального старта декодирования/аудиовывода нового трека, непрерывно фиксируя mute=True и volume=0,
+        # чтобы libVLC при создании PulseAudio/WASAPI sink-input не пробил на 100% перед началом кроссфейда.
+        wait_deadline = time.perf_counter() + 6.5
+        started_ok = False
+        while time.perf_counter() < wait_deadline:
+            self._clamp_player_silent(new_player)
+            if my_seq != self._play_seq or self.stop_watcher:
+                with self._play_lock:
+                    if new_player is not self.player:
+                        try:
+                            new_player.stop()
+                            new_player.audio_set_mute(False)
+                        except Exception:
+                            pass
+                    if my_seq == self._play_seq:
+                        self.is_transitioning = False
+                return False
+            try:
+                st = new_player.get_state()
+                cur_t = new_player.get_time()
+                if st in (vlc.State.Error, vlc.State.Ended):
+                    break
+                if st == vlc.State.Playing and cur_t is not None and cur_t > 25:
+                    # Дополнительная фиксация тишины после открытия аудиовывода
+                    for _ in range(3):
+                        self._clamp_player_silent(new_player)
+                        time.sleep(0.008)
+                    started_ok = True
+                    break
+            except Exception:
+                break
+            time.sleep(0.008)
+
+        if not started_ok:
+            with self._play_lock:
+                if new_player is not self.player:
+                    try:
+                        new_player.stop()
+                        new_player.audio_set_mute(False)
+                    except Exception:
+                        pass
+            return self._play_single_deck(track, stream_url, my_seq)
+
+        # Подстраиваем длительность кроссфейда под фактический остаток старого трека
+        actual_fade = max(0.35, float(fade_sec))
+        old_still_active = False
+        try:
+            old_state = old_player.get_state()
+            old_still_active = old_state not in (vlc.State.Ended, vlc.State.Stopped, vlc.State.Error)
+        except Exception:
+            old_still_active = False
+
+        if is_auto:
+            try:
+                old_len = old_player.get_length()
+                old_time = old_player.get_time()
+                if old_still_active and old_len and old_len > 0 and old_time is not None and old_time >= 0:
+                    rem_sec = (old_len - old_time) / 1000.0
+                    if rem_sec > 0.5:
+                        actual_fade = min(actual_fade, max(0.9, rem_sec - 0.12))
+                    else:
+                        actual_fade = min(actual_fade, 1.2)
+                elif not old_still_active:
+                    actual_fade = min(actual_fade, 1.2)
+            except Exception:
+                pass
+
+        with self._play_lock:
+            if my_seq != self._play_seq or self.stop_watcher:
+                if new_player is not self.player:
+                    try:
+                        new_player.stop()
+                        new_player.audio_set_mute(False)
+                    except Exception:
+                        pass
+                if my_seq == self._play_seq:
+                    self.is_transitioning = False
+                return False
+
+            try:
+                old_start_raw = int(old_player.audio_get_volume())
+            except Exception:
+                old_start_raw = self._effective_volume()
+            old_start_vol = old_start_raw if old_start_raw > 0 else self._effective_volume()
+
+            self._commit_active_track(track)
+            self.player = new_player
+            self._standby_player = old_player
+            self.is_transitioning = False
+            self.is_fading = True
+
+            # Снимаем mute только при гарантированно нулевой громкости
+            try:
+                new_player.audio_set_volume(0)
+                new_player.audio_set_mute(False)
+                new_player.audio_set_volume(0)
+            except Exception:
+                pass
+
+        step_dt = 0.04
+        steps = max(10, int(round(actual_fade / step_dt)))
+        smooth_target = float(self._effective_volume())
+        for idx in range(1, steps + 1):
+            if my_seq != self._play_seq or self.stop_watcher:
+                break
+            try:
+                if new_player.get_state() == vlc.State.Paused:
+                    break
+            except Exception:
+                pass
+
+            progress = idx / steps
+            desired_target = float(self._effective_volume())
+            # Плавное следование за изменением target (например, при unduck речи во время кроссфейда)
+            smooth_target += (desired_target - smooth_target) * 0.25
+
+            in_gain = math.sin(progress * (math.pi / 2.0)) ** 1.15
+            out_gain = math.cos(progress * (math.pi / 2.0)) ** 1.35
+
+            in_vol = int(round(smooth_target * in_gain))
+            cap_target = int(round(max(desired_target, smooth_target)))
+            if cap_target > 0:
+                in_vol = max(0, min(100, min(cap_target, in_vol)))
+
+            old_ceiling = min(old_start_vol, desired_target) if self.is_ducked else old_start_vol
+            out_vol = max(0, int(round(old_ceiling * out_gain)))
+
+            try:
+                if new_player.audio_get_mute():
+                    new_player.audio_set_mute(False)
+                new_player.audio_set_volume(in_vol)
+            except Exception:
+                pass
+
+            try:
+                if old_player.get_state() not in (vlc.State.Ended, vlc.State.Stopped, vlc.State.Error):
+                    old_player.audio_set_volume(out_vol)
+            except Exception:
+                pass
+
+            time.sleep(step_dt)
+
+        with self._play_lock:
+            if my_seq == self._play_seq:
+                try:
+                    new_player.audio_set_mute(False)
+                    new_player.audio_set_volume(self._effective_volume())
+                except Exception:
+                    pass
+                if old_player is not self.player:
+                    try:
+                        old_player.audio_set_volume(0)
+                        old_player.stop()
+                        old_player.audio_set_mute(False)
+                    except Exception:
+                        pass
+                self.is_fading = False
+        return True
+
+    def _play_track_object(
+        self,
+        track,
+        fade_duration: float | None = None,
+        preloaded_url: str | None = None,
+        is_auto: bool = False,
+    ):
         if not HAS_VLC or not self.player:
             self.is_transitioning = False
             return False
 
         try:
-            if hasattr(track, 'track') and track.track:
-                track = track.track
-            if hasattr(track, 'fetch_track') and not hasattr(track, 'get_download_info'):
-                track = track.fetch_track()
-
-            stream_url = self._get_direct_stream_url(track)
+            track = self._unwrap_track(track)
+            stream_url = preloaded_url or self._get_direct_stream_url(track)
             if not stream_url:
                 self.is_transitioning = False
                 return False
 
-            if self.current_track:
-                self.history.append(self.current_track)
+            with self._play_lock:
+                self._play_seq += 1
+                my_seq = self._play_seq
+                old_player = self.player
+                standby_player = self._standby_player
 
-            self.current_track = track
-            self._remember_track(track)
-            if self.is_radio:
-                tid = self._track_id_str(track)
-                if tid:
-                    self._wave_last_track_id = tid
-                    self._send_rotor_feedback(
-                        self._wave_station,
-                        "trackStarted",
-                        track_id=tid,
-                        batch_id=self._wave_batch_id,
-                    )
-            self.player.stop()
-            media = self.vlc_instance.media_new(stream_url)
-            self.player.set_media(media)
-            self.player.audio_set_volume(self.normal_volume)
-            self.player.play()
-            time.sleep(0.4)
-            self.player.audio_set_volume(self.normal_volume)
-            self.is_transitioning = False
-            return True
+            fade_sec = (
+                self.crossfade_manual_sec if fade_duration is None else max(0.0, float(fade_duration))
+            )
+            if self._can_crossfade(old_player, standby_player) and fade_sec > 0.0:
+                return self._crossfade_to_track(
+                    track=track,
+                    stream_url=stream_url,
+                    fade_sec=fade_sec,
+                    my_seq=my_seq,
+                    old_player=old_player,
+                    new_player=standby_player,
+                    is_auto=is_auto,
+                )
+
+            return self._play_single_deck(track, stream_url, my_seq)
         except Exception as e:
             print(f"[YandexMusic Play Error]: {e}")
             self.is_transitioning = False
+            self.is_fading = False
             return False
 
     def _ensure_vlc(self):
@@ -455,23 +765,35 @@ class YandexMusicManager:
         return f"Ищу {query}"
 
     def set_volume(self, volume: int):
-        val = max(0, min(100, volume))
+        val = max(0, min(100, int(volume)))
         self.normal_volume = val
-        if HAS_VLC and self.player:
-            self.player.audio_set_volume(val)
+        if HAS_VLC and self.player and not self.is_fading:
+            self.player.audio_set_volume(self._effective_volume())
 
     def duck(self, factor: float = 0.2):
-        if not HAS_VLC or not self.player or not self.player.is_playing():
+        self._duck_seq += 1
+        if not HAS_VLC or not self.player:
+            return
+        if not (self.player.is_playing() or self.is_fading or self.is_transitioning):
             return
         if not self.is_ducked:
-            current = self.player.audio_get_volume()
-            if current > 0:
-                self.normal_volume = current
+            if not self.is_fading:
+                current = self.player.audio_get_volume()
+                if current > 0:
+                    self.normal_volume = current
+            self._duck_factor = factor
             self.is_ducked = True
-            target = max(1, int(self.normal_volume * factor))
+            target = self._effective_volume()
             self.player.audio_set_volume(target)
+            if self.is_fading and self._standby_player:
+                try:
+                    if self._standby_player.audio_get_volume() > target:
+                        self._standby_player.audio_set_volume(target)
+                except Exception:
+                    pass
         else:
-            target = max(1, int(self.normal_volume * factor))
+            self._duck_factor = min(self._duck_factor, factor)
+            target = self._effective_volume()
             if target < self.player.audio_get_volume():
                 self.player.audio_set_volume(target)
 
@@ -480,9 +802,48 @@ class YandexMusicManager:
             self.is_ducked = False
             return
         if self.is_ducked:
-            restore_vol = self.normal_volume if level is None else level
-            self.player.audio_set_volume(restore_vol)
+            self._duck_seq += 1
+            my_duck_seq = self._duck_seq
             self.is_ducked = False
+            restore_vol = self.normal_volume if level is None else max(0, min(100, int(level)))
+            if level is not None:
+                self.normal_volume = restore_vol
+            if self.is_fading:
+                return
+
+            player = self.player
+            if not self._is_real_vlc_player(player):
+                player.audio_set_volume(restore_vol)
+                return
+
+            try:
+                cur_vol = max(0, int(player.audio_get_volume()))
+            except Exception:
+                cur_vol = 0
+            if cur_vol >= restore_vol or restore_vol <= 0:
+                try:
+                    player.audio_set_volume(restore_vol)
+                except Exception:
+                    pass
+                return
+
+            def _smooth_restore():
+                steps = 10
+                for idx in range(1, steps + 1):
+                    if my_duck_seq != self._duck_seq or self.is_ducked or self.is_fading:
+                        return
+                    if player is not self.player:
+                        return
+                    try:
+                        if player.get_state() not in (vlc.State.Playing, vlc.State.Buffering):
+                            return
+                        v = int(round(cur_vol + (restore_vol - cur_vol) * (idx / steps)))
+                        player.audio_set_volume(v)
+                    except Exception:
+                        return
+                    time.sleep(0.035)
+
+            threading.Thread(target=_smooth_restore, daemon=True).start()
 
     def play_my_wave(self, station: str = "user:onyourwave"):
         vlc_status = self._ensure_vlc()
@@ -685,28 +1046,127 @@ class YandexMusicManager:
     def toggle_pause(self):
         if not HAS_VLC or not self.player:
             return
+        if self.is_fading:
+            with self._play_lock:
+                self._play_seq += 1
+                self.is_fading = False
+                if self._standby_player:
+                    try:
+                        self._standby_player.stop()
+                    except Exception:
+                        pass
+                try:
+                    self.player.audio_set_volume(self._effective_volume())
+                except Exception:
+                    pass
         if self.player.is_playing():
             self.player.pause()
         else:
             self.player.play()
 
     def stop(self):
-        if HAS_VLC and self.player:
-            self.player.stop()
+        with self._play_lock:
+            self._play_seq += 1
+            self.is_fading = False
+            self.is_transitioning = False
+            self._preloaded_next = None
+            self._preloading_for_id = None
+            self._crossfade_triggered_for_id = None
+            primary = self.player
+            standby = self._standby_player
+
+        if standby is not None:
+            try:
+                standby.stop()
+            except Exception:
+                pass
+
+        if HAS_VLC and primary:
+            if self._is_real_vlc_player(primary) and primary.is_playing() and self.crossfade_stop_sec > 0:
+                try:
+                    start_vol = max(0, int(primary.audio_get_volume()))
+                    if start_vol > 0:
+                        for idx in range(5, -1, -1):
+                            primary.audio_set_volume(int(round(start_vol * (idx / 6.0))))
+                            time.sleep(self.crossfade_stop_sec / 6.0)
+                except Exception:
+                    pass
+            primary.stop()
+            if self._is_real_vlc_player(primary):
+                try:
+                    primary.audio_set_volume(self._effective_volume())
+                except Exception:
+                    pass
+
         self.stop_watcher = True
         self.current_track = None
         self.queue = []
         return "Музыка выключена"
 
-    def next_track(self, manual: bool = True):
-        if not HAS_VLC or self.is_transitioning:
+    def _pop_next_candidate(self, prev_id: str | None = None):
+        if self.queue:
+            return self.queue.pop(0)
+        if self.is_radio and self._init_client():
+            fresh = self._fetch_wave_tracks(
+                station=self._wave_station,
+                queue_track_id=prev_id,
+            )
+            if fresh:
+                self.queue = fresh[1:]
+                return fresh[0]
+        return None
+
+    def _prefetch_next_for(self, for_track_id: str):
+        def _worker():
+            try:
+                if self._track_id_str(self.current_track) != for_track_id:
+                    return
+                candidate = None
+                if self.queue:
+                    candidate = self.queue[0]
+                elif self.is_radio and self._init_client():
+                    fresh = self._fetch_wave_tracks(
+                        station=self._wave_station,
+                        queue_track_id=for_track_id,
+                    )
+                    if fresh:
+                        with self._play_lock:
+                            if not self.queue:
+                                self.queue = fresh
+                                candidate = self.queue[0]
+                            else:
+                                candidate = self.queue[0]
+                if not candidate or self._track_id_str(self.current_track) != for_track_id:
+                    return
+                candidate = self._unwrap_track(candidate)
+                url = self._get_direct_stream_url(candidate)
+                if url and self._track_id_str(self.current_track) == for_track_id:
+                    self._preloaded_next = (for_track_id, candidate, url)
+            except Exception as e:
+                print(f"[YandexMusic Prefetch Warning]: {e}")
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def next_track(self, manual: bool = True, fade_duration: float | None = None, expected_from_id: str | None = None):
+        if not HAS_VLC:
+            return
+        if not manual and self.is_transitioning:
             return
 
         self.is_transitioning = True
+        use_fade = (
+            (self.crossfade_manual_sec if manual else self.crossfade_auto_sec)
+            if fade_duration is None
+            else float(fade_duration)
+        )
 
         def _async_next():
             try:
                 prev_id = self._track_id_str(self.current_track) or self._wave_last_track_id
+                if expected_from_id and prev_id != expected_from_id:
+                    self.is_transitioning = False
+                    return
+
                 if self.is_radio and prev_id:
                     self._send_rotor_feedback(
                         self._wave_station,
@@ -715,21 +1175,30 @@ class YandexMusicManager:
                         batch_id=self._wave_batch_id,
                     )
 
-                if self.queue:
-                    next_tr = self.queue.pop(0)
-                    if self._play_track_object(next_tr):
+                preloaded_url = None
+                next_tr = None
+                cached = self._preloaded_next
+                if cached and cached[0] == prev_id and cached[1] is not None and cached[2]:
+                    cached_tid = self._track_id_str(cached[1])
+                    if self.queue and self._track_id_str(self.queue[0]) == cached_tid:
+                        next_tr = self.queue.pop(0)
+                    else:
+                        next_tr = cached[1]
+                    preloaded_url = cached[2]
+                    self._preloaded_next = None
+
+                if next_tr is None:
+                    next_tr = self._pop_next_candidate(prev_id=prev_id)
+
+                if next_tr is not None:
+                    if self._play_track_object(
+                        next_tr,
+                        fade_duration=use_fade,
+                        preloaded_url=preloaded_url,
+                        is_auto=not manual,
+                    ):
                         return
 
-                if self.is_radio:
-                    if self._init_client():
-                        fresh = self._fetch_wave_tracks(
-                            station=self._wave_station,
-                            queue_track_id=prev_id,
-                        )
-                        if fresh:
-                            self.queue = fresh[1:]
-                            self._play_track_object(fresh[0])
-                            return
                 self.is_transitioning = False
             except Exception as e:
                 print(f"[YandexMusic Next Track Error]: {e}")
@@ -738,7 +1207,7 @@ class YandexMusicManager:
         threading.Thread(target=_async_next, daemon=True).start()
 
     def prev_track(self):
-        if not HAS_VLC or self.is_transitioning:
+        if not HAS_VLC:
             return
 
         self.is_transitioning = True
@@ -748,7 +1217,7 @@ class YandexMusicManager:
                 prev_tr = self.history.pop()
                 if self.current_track:
                     self.queue.insert(0, self.current_track)
-                self._play_track_object(prev_tr)
+                self._play_track_object(prev_tr, fade_duration=self.crossfade_manual_sec)
             else:
                 self.is_transitioning = False
 
@@ -785,11 +1254,47 @@ class YandexMusicManager:
 
     def _watch_loop(self):
         while not self.stop_watcher:
-            time.sleep(0.5)
+            time.sleep(0.25)
             if not HAS_VLC or not self.player:
                 break
-            if self.is_transitioning:
+            player = self.player
+            try:
+                state = player.get_state()
+            except Exception:
                 continue
-            state = self.player.get_state()
+
             if state == vlc.State.Ended:
-                self.next_track(manual=False)
+                if not self.is_transitioning and not self.is_fading:
+                    self.next_track(manual=False, fade_duration=0.0)
+                continue
+
+            if state == vlc.State.Playing and not self.is_transitioning and not self.is_fading:
+                cur_id = self._track_id_str(self.current_track)
+                if not cur_id:
+                    continue
+                try:
+                    total_ms = player.get_length()
+                    cur_ms = player.get_time()
+                except Exception:
+                    continue
+                if total_ms is None or cur_ms is None or total_ms < 15000 or cur_ms < 0:
+                    continue
+
+                remaining_ms = total_ms - cur_ms
+                if remaining_ms <= 16000 and self._preloading_for_id != cur_id:
+                    self._preloading_for_id = cur_id
+                    self._prefetch_next_for(cur_id)
+
+                trigger_ms = int(self.crossfade_auto_sec * 1000) + 2500
+                if (
+                    remaining_ms <= trigger_ms
+                    and cur_ms >= 3000
+                    and self._crossfade_triggered_for_id != cur_id
+                    and self._can_crossfade(player, self._standby_player)
+                ):
+                    self._crossfade_triggered_for_id = cur_id
+                    self.next_track(
+                        manual=False,
+                        fade_duration=self.crossfade_auto_sec,
+                        expected_from_id=cur_id,
+                    )
