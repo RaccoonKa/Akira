@@ -2,7 +2,7 @@ import os
 import json
 import numpy as np
 import onnxruntime as ort
-from transformers import AutoTokenizer
+from core.nlp.fast_tokenizer import load_fast_tokenizer
 from core.utils.config import get_resource_path
 from core.utils.onnx_runtime import create_onnx_session
 
@@ -17,7 +17,7 @@ class JointNLU:
             self.id2intent = {int(k): v for k, v in cfg["id2intent"].items()}
             self.id2slot = {int(k): v for k, v in cfg["id2slot"].items()}
 
-        self.tokenizer = AutoTokenizer.from_pretrained(full_model_dir, local_files_only=True)
+        self.tokenizer = load_fast_tokenizer(full_model_dir)
 
         onnx_model_path = os.path.join(full_model_dir, "model_quant.onnx")
         self.session, _ = create_onnx_session(onnx_model_path, ort_module=ort, prefer_gpu=True)

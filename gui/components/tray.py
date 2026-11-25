@@ -58,7 +58,7 @@ class SystemTray(QSystemTrayIcon):
         self.activated.connect(self.on_tray_activated)
 
     def show_window(self):
-        if hasattr(self.window, "setWindowOpacity"):
+        if hasattr(self.window, "setWindowOpacity") and not hasattr(self.window, "show_animated"):
             self.window.setWindowOpacity(1.0)
         self.window.setWindowState((self.window.windowState() & ~Qt.WindowState.WindowMinimized) | Qt.WindowState.WindowActive)
         if hasattr(self.window, "bring_to_front"):

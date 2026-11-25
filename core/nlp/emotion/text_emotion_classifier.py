@@ -1,7 +1,7 @@
 import os
 import numpy as np
 import onnxruntime as ort
-from transformers import PreTrainedTokenizerFast, AutoTokenizer
+from core.nlp.fast_tokenizer import load_fast_tokenizer
 from core.utils.config import get_resource_path
 from core.utils.onnx_runtime import create_onnx_session
 
@@ -36,16 +36,7 @@ class TextEmotionClassifier:
             return True
 
         try:
-            tokenizer_json_path = os.path.join(self.model_dir, "tokenizer.json")
-            tokenizer_config_path = os.path.join(self.model_dir, "tokenizer_config.json")
-
-            if os.path.exists(tokenizer_json_path):
-                self.tokenizer = PreTrainedTokenizerFast(
-                    tokenizer_file=tokenizer_json_path,
-                    tokenizer_config_file=tokenizer_config_path if os.path.exists(tokenizer_config_path) else None
-                )
-            else:
-                self.tokenizer = AutoTokenizer.from_pretrained(self.model_dir, local_files_only=True)
+            self.tokenizer = load_fast_tokenizer(self.model_dir)
 
             if getattr(self.tokenizer, "pad_token", None) is None:
                 self.tokenizer.pad_token = "[PAD]"

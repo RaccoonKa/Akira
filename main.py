@@ -156,11 +156,8 @@ else:
     if not hasattr(sys.modules["unittest"], "mock"):
         sys.modules["unittest"].mock = sys.modules["unittest.mock"]
 
-# Предварительная инициализация PyTorch для исключения циклических импортов в подмодулях
-try:
-    import torch
-except Exception:
-    pass
+# PyTorch (и его тяжёлые CUDA-библиотеки) загружаются лениво только при вызове ASRCorrector / torchaudio,
+# чтобы не расходовать лишние ~370-440 МБ ОЗУ на старте, когда все основные модели уже работают на ONNX.
 
 # Мост для устаревших путей импорта модулей (core.nlp.asr_corrector)
 if "core.nlp.asr_corrector" not in sys.modules:
