@@ -375,7 +375,7 @@ def _check_linux_qt_x11_prereqs():
 
 def main():
     if sys.platform == "win32":
-        myappid = 'svetozar.akira.voiceassistant.5.0.0'
+        myappid = 'svetozar.akira.voiceassistant.5.1.0'
         try:
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
         except Exception:

@@ -1,7 +1,7 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="Akira"
            Manufacturer="Svetozar (RaccoonKa)"
-           Version="5.0.0"
+           Version="5.1.0"
            UpgradeCode="4F82C9E4-1B18-4E4D-B5F2-81D6C7892301"
            Scope="perMachine">
 

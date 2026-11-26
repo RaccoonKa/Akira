@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Version-5.0.0-blueviolet?style=flat-square" alt="Version 5.0.0"/>
+  <img src="https://img.shields.io/badge/Version-5.1.0-blueviolet?style=flat-square" alt="Version 5.1.0"/>
   <img src="https://img.shields.io/badge/Python-3.11%20%7C%203.12-blue?style=flat-square&logo=python" alt="Python Version"/>
   <img src="https://img.shields.io/badge/GUI-PyQt6-gold?style=flat-square&logo=qt" alt="PyQt6"/>
   <img src="https://img.shields.io/badge/Inference-ONNX%20Runtime%20%7C%20CUDA%20%7C%20DirectML-orange?style=flat-square" alt="ONNX Runtime"/>

@@ -65,4 +65,4 @@ google-auth-oauthlib>=1.1.0
 
 # Полезные команды для сборки:
 # python build_nuitka.py
-# wix build Package.wxs -arch x64 -out dist/Akira-Setup-v5.0.0.msi
+# wix build Package.wxs -arch x64 -out dist/Akira-Setup-v5.1.0.msi

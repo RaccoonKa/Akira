@@ -179,7 +179,7 @@ class TestStage7BuildAndUpdater(unittest.TestCase):
             os.chmod(bin_path, 0o755)
 
             # Build real .deb package and inspect with dpkg-deb
-            deb_path = build_linux.build_deb(str(app_dir), str(dist_dir), version_str="5.0.0")
+            deb_path = build_linux.build_deb(str(app_dir), str(dist_dir), version_str="5.1.0")
             self.assertIsNotNone(deb_path)
             self.assertTrue(Path(deb_path).is_file())
 
@@ -195,7 +195,7 @@ class TestStage7BuildAndUpdater(unittest.TestCase):
             self.assertIn("/usr/share/icons/hicolor/256x256/apps/akira.png", contents)
 
             # Build portable .tar.gz
-            tar_path = build_linux.build_tarball(str(app_dir), str(dist_dir), version_str="5.0.0")
+            tar_path = build_linux.build_tarball(str(app_dir), str(dist_dir), version_str="5.1.0")
             self.assertTrue(Path(tar_path).is_file())
             with tarfile.open(tar_path, "r:gz") as tf:
                 names = tf.getnames()
@@ -214,7 +214,7 @@ class TestStage7BuildAndUpdater(unittest.TestCase):
             self.assertTrue((appdir_root / "opt" / "Akira" / "Akira").is_file())
 
             with patch("build_linux.shutil.which", return_value=None):
-                self.assertIsNone(build_linux.build_appimage(str(app_dir), str(dist_dir), "5.0.0"))
+                self.assertIsNone(build_linux.build_appimage(str(app_dir), str(dist_dir), "5.1.0"))
 
     def test_06_updater_crossplatform_selection_and_apply(self):
         from core.utils import updater

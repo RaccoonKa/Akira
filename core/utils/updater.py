@@ -7,7 +7,7 @@ import requests
 from packaging import version
 from PyQt6.QtCore import QThread, pyqtSignal
 
-CURRENT_VERSION = "5.0.0"
+CURRENT_VERSION = "5.1.0"
 GITHUB_REPO = "RaccoonKa/Akira"
 
 

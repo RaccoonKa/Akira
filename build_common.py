@@ -59,7 +59,7 @@ def get_app_version() -> str:
             return match.group(1).strip()
     except Exception:
         pass
-    return "5.0.0"
+    return "5.1.0"
 
 
 def step(title: str):
