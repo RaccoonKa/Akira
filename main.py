@@ -298,6 +298,7 @@ def _build_multi_size_icon(icon_path: str) -> QIcon:
     icon = QIcon()
     if not icon_path or not os.path.exists(icon_path):
         return icon
+    from PyQt6.QtCore import Qt
     from PyQt6.QtGui import QPixmap
     pix = QPixmap(icon_path)
     if pix.isNull():
@@ -317,6 +318,7 @@ def apply_native_linux_icon(win_id: int, icon_path: str):
         return
     try:
         import struct as _struct
+        from PyQt6.QtCore import Qt
         from PyQt6.QtGui import QImage
         from Xlib import display, Xatom
 
