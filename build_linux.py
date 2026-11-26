@@ -451,11 +451,51 @@ def build_appimage(
     return output_appimage
 
 
+GITHUB_RELEASE_CHUNK_BYTES = 1850 * 1024 * 1024  # ~1.81 GiB (< 2 GiB GitHub Releases limit)
+
+
+def split_file_for_github_release(
+    file_path: str,
+    max_bytes: int = GITHUB_RELEASE_CHUNK_BYTES,
+) -> list[str]:
+    """Разбивает файл > max_bytes на части .part01, .part02... для лимита GitHub Releases (2 ГБ)."""
+    if not file_path or not os.path.isfile(file_path):
+        return []
+    if os.path.getsize(file_path) <= max_bytes:
+        return [file_path]
+
+    parts: list[str] = []
+    chunk_buf = 8 * 1024 * 1024
+    with open(file_path, "rb") as src:
+        idx = 1
+        while True:
+            part_path = f"{file_path}.part{idx:02d}"
+            written = 0
+            with open(part_path, "wb") as dst:
+                while written < max_bytes:
+                    to_read = min(chunk_buf, max_bytes - written)
+                    data = src.read(to_read)
+                    if not data:
+                        break
+                    dst.write(data)
+                    written += len(data)
+            if written == 0:
+                if os.path.exists(part_path):
+                    os.remove(part_path)
+                break
+            parts.append(part_path)
+            idx += 1
+            if written < max_bytes:
+                break
+    return parts
+
+
 def package_linux_release(
     pkg_format: str = "all",
     app_dir: str = OUTPUT_APP_DIR,
     dist_dir: str = DIST_DIR,
     version_str: str | None = None,
+    split_large: bool = True,
 ) -> dict[str, str | None]:
     results: dict[str, str | None] = {}
     fmt = (pkg_format or "all").lower()
@@ -465,6 +505,14 @@ def package_linux_release(
         results["tar"] = build_tarball(app_dir, dist_dir, version_str)
     if fmt in ("all", "appimage"):
         results["appimage"] = build_appimage(app_dir, dist_dir, version_str)
+
+    if split_large:
+        for key, path in list(results.items()):
+            if path and os.path.isfile(path) and os.path.getsize(path) > GITHUB_RELEASE_CHUNK_BYTES:
+                parts = split_file_for_github_release(path)
+                print(f"[GitHub Release Split] {os.path.basename(path)} -> {len(parts)} частей (.part01..):")
+                for p in parts:
+                    print(f"  - {p}")
     return results
 
 

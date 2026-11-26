@@ -312,6 +312,69 @@ class TestStage7BuildAndUpdater(unittest.TestCase):
                 self.assertEqual(Path(resolved), real_dir / "assets" / "marker.txt")
                 self.assertTrue(Path(resolved).is_file())
 
+    def test_08_multipart_release_split_and_download(self):
+        import build_linux
+        from core.utils import updater
+
+        with tempfile.TemporaryDirectory(prefix="akira_s7_split_") as tmp:
+            src_file = Path(tmp) / "akira_5.1.0_amd64.deb"
+            payload = b"ABCD1234" * 100 + b"TAIL"
+            src_file.write_bytes(payload)
+
+            parts = build_linux.split_file_for_github_release(str(src_file), max_bytes=300)
+            self.assertEqual(len(parts), 3)
+            self.assertTrue(all(Path(p).is_file() for p in parts))
+            self.assertEqual(Path(parts[0]).name, "akira_5.1.0_amd64.deb.part01")
+            self.assertEqual(Path(parts[2]).name, "akira_5.1.0_amd64.deb.part03")
+
+            # Deliberately out-of-order assets from GitHub API
+            assets = [
+                {"name": "akira_5.1.0_amd64.deb.part03", "browser_download_url": "https://example.com/p3"},
+                {"name": "akira_5.1.0_amd64.deb.part01", "browser_download_url": "https://example.com/p1"},
+                {"name": "akira_5.1.0_amd64.deb.part02", "browser_download_url": "https://example.com/p2"},
+            ]
+            joined_url, base_name = updater.select_release_asset(assets, target_platform="linux", in_appimage=False)
+            self.assertEqual(base_name, "akira_5.1.0_amd64.deb")
+            self.assertEqual(
+                joined_url.splitlines(),
+                ["https://example.com/p1", "https://example.com/p2", "https://example.com/p3"],
+            )
+            self.assertEqual(updater.get_update_filename(joined_url, base_name), "Akira_Update.deb")
+
+            part_map = {
+                "https://example.com/p1": Path(parts[0]).read_bytes(),
+                "https://example.com/p2": Path(parts[1]).read_bytes(),
+                "https://example.com/p3": Path(parts[2]).read_bytes(),
+            }
+
+            class _FakeResp:
+                def __init__(self, data: bytes):
+                    self._data = data
+                    self.headers = {"content-length": str(len(data))}
+
+                def raise_for_status(self):
+                    return None
+
+                def iter_content(self, chunk_size=65536):
+                    for i in range(0, len(self._data), chunk_size):
+                        yield self._data[i : i + chunk_size]
+
+            finished_paths = []
+            errors = []
+            progress_vals = []
+            with patch("core.utils.updater.tempfile.gettempdir", return_value=tmp), \
+                    patch("core.utils.updater.requests.get", side_effect=lambda url, **kw: _FakeResp(part_map[url])):
+                dl = updater.DownloaderThread(joined_url)
+                dl.download_finished.connect(finished_paths.append)
+                dl.error_occurred.connect(errors.append)
+                dl.progress_changed.connect(progress_vals.append)
+                dl.run()
+
+            self.assertEqual(errors, [])
+            self.assertEqual(len(finished_paths), 1)
+            self.assertEqual(Path(finished_paths[0]).read_bytes(), payload)
+            self.assertEqual(progress_vals[-1], 100)
+
 
 if __name__ == "__main__":
     unittest.main()

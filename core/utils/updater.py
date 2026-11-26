@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -9,20 +10,21 @@ from PyQt6.QtCore import QThread, pyqtSignal
 
 CURRENT_VERSION = "5.1.0"
 GITHUB_REPO = "RaccoonKa/Akira"
+_PART_SUFFIX_RE = re.compile(r"^(?P<base>.+?)\.part(?P<num>\d+)$", re.IGNORECASE)
 
 
 def is_running_in_appimage() -> bool:
     return bool(os.environ.get("APPIMAGE"))
 
 
-def select_release_asset(
+def select_release_assets(
     assets: list[dict],
     target_platform: str | None = None,
     in_appimage: bool | None = None,
-) -> tuple[str | None, str | None]:
-    """Подбирает подходящий файл релиза GitHub под текущую ОС и тип установки."""
+) -> tuple[list[str], str | None]:
+    """Подбирает URL (один файл или список .part01, .part02...) и базовое имя ассета релиза GitHub."""
     if not assets:
-        return None, None
+        return [], None
 
     plat = target_platform or sys.platform
     if plat == "win32":
@@ -40,9 +42,40 @@ def select_release_asset(
             name = (asset.get("name") or "").strip()
             url = asset.get("browser_download_url")
             if url and name.lower().endswith(ext):
-                return url, name
+                return [url], name
 
-    return None, None
+        # Поиск многотомного файла формата <base><ext>.part01, .part02, ...
+        grouped_parts: dict[str, list[tuple[int, str]]] = {}
+        for asset in assets:
+            name = (asset.get("name") or "").strip()
+            url = asset.get("browser_download_url")
+            if not url or not name:
+                continue
+            m = _PART_SUFFIX_RE.match(name)
+            if not m:
+                continue
+            base_name = m.group("base")
+            if base_name.lower().endswith(ext):
+                grouped_parts.setdefault(base_name, []).append((int(m.group("num")), url))
+
+        if grouped_parts:
+            base_name, parts = next(iter(grouped_parts.items()))
+            parts.sort(key=lambda item: item[0])
+            return [u for _, u in parts], base_name
+
+    return [], None
+
+
+def select_release_asset(
+    assets: list[dict],
+    target_platform: str | None = None,
+    in_appimage: bool | None = None,
+) -> tuple[str | None, str | None]:
+    """Подбирает подходящий файл релиза GitHub (для многотомных частей возвращает URL через \\n)."""
+    urls, name = select_release_assets(assets, target_platform=target_platform, in_appimage=in_appimage)
+    if not urls:
+        return None, None
+    return "\n".join(urls), name
 
 
 def get_update_filename(download_url: str, asset_name: str = "") -> str:
@@ -88,26 +121,34 @@ class DownloaderThread(QThread):
 
     def run(self):
         try:
-            filename = get_update_filename(self.download_url, self.asset_name)
-            temp_path = os.path.join(tempfile.gettempdir(), filename)
+            urls = [u.strip() for u in self.download_url.splitlines() if u.strip()]
+            if not urls:
+                raise ValueError("Пустой URL для загрузки обновления")
 
-            resp = requests.get(self.download_url, stream=True, timeout=15)
-            resp.raise_for_status()
-            total_size = int(resp.headers.get("content-length", 0))
-            downloaded = 0
+            filename = get_update_filename(urls[0], self.asset_name)
+            temp_path = os.path.join(tempfile.gettempdir(), filename)
+            part_count = len(urls)
 
             with open(temp_path, "wb") as f:
-                for chunk in resp.iter_content(chunk_size=65536):
-                    if chunk:
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        if total_size > 0:
-                            percent = int((downloaded / total_size) * 100)
-                            self.progress_changed.emit(percent)
+                for idx, part_url in enumerate(urls):
+                    resp = requests.get(part_url, stream=True, timeout=15)
+                    resp.raise_for_status()
+                    total_size = int(resp.headers.get("content-length", 0))
+                    downloaded = 0
+
+                    for chunk in resp.iter_content(chunk_size=65536):
+                        if chunk:
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            if total_size > 0:
+                                part_frac = min(1.0, downloaded / total_size)
+                                percent = int(((idx + part_frac) / part_count) * 100)
+                                self.progress_changed.emit(min(100, percent))
 
             if sys.platform != "win32" and temp_path.lower().endswith(".appimage"):
                 os.chmod(temp_path, 0o755)
 
+            self.progress_changed.emit(100)
             self.download_finished.emit(temp_path)
         except Exception as e:
             self.error_occurred.emit(str(e))
