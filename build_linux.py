@@ -213,7 +213,12 @@ def prepare_deb_staging(
 
     desktop_path = os.path.join(apps_dir, "akira.desktop")
     with open(desktop_path, "w", encoding="utf-8") as f:
-        f.write(render_desktop_entry(exec_cmd="/opt/Akira/Akira %U", icon_name="akira"))
+        f.write(
+            render_desktop_entry(
+                exec_cmd="/opt/Akira/Akira %U",
+                icon_name="/usr/share/icons/hicolor/256x256/apps/akira.png",
+            )
+        )
     os.chmod(desktop_path, 0o644)
 
     if os.path.isfile(LINUX_ICON_PATH):
@@ -328,7 +333,7 @@ def _render_install_sh() -> str:
         '$SUDO cp -a "$SCRIPT_DIR/Akira" "$TARGET_DIR"\n'
         '$SUDO chmod +x "$TARGET_DIR/Akira"\n'
         '$SUDO ln -sf "$TARGET_DIR/Akira" "$BIN_LINK"\n'
-        'sed "s|Exec=/opt/Akira/Akira|Exec=$TARGET_DIR/Akira|g" "$SCRIPT_DIR/akira.desktop" | $SUDO tee "$DESKTOP_DIR/akira.desktop" >/dev/null\n'
+        'sed -e "s|Exec=/opt/Akira/Akira|Exec=$TARGET_DIR/Akira|g" -e "s|^Icon=akira$|Icon=$ICON_DIR/akira.png|" "$SCRIPT_DIR/akira.desktop" | $SUDO tee "$DESKTOP_DIR/akira.desktop" >/dev/null\n'
         'if [ -f "$SCRIPT_DIR/Akira/assets/icon/png/akira_icon.png" ]; then\n'
         '    $SUDO cp "$SCRIPT_DIR/Akira/assets/icon/png/akira_icon.png" "$ICON_DIR/akira.png"\n'
         "fi\n"

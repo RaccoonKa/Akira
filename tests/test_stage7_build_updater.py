@@ -194,6 +194,11 @@ class TestStage7BuildAndUpdater(unittest.TestCase):
             self.assertIn("/usr/share/applications/akira.desktop", contents)
             self.assertIn("/usr/share/icons/hicolor/256x256/apps/akira.png", contents)
 
+            with tempfile.TemporaryDirectory(prefix="akira_s7_deb_extract_") as deb_ext:
+                subprocess.run(["dpkg-deb", "-x", deb_path, deb_ext], check=True)
+                deb_desktop = Path(deb_ext) / "usr" / "share" / "applications" / "akira.desktop"
+                self.assertIn("Icon=/usr/share/icons/hicolor/256x256/apps/akira.png", deb_desktop.read_text(encoding="utf-8"))
+
             # Build portable .tar.gz
             tar_path = build_linux.build_tarball(str(app_dir), str(dist_dir), version_str="5.1.0")
             self.assertTrue(Path(tar_path).is_file())

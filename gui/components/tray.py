@@ -34,7 +34,7 @@ class SystemTray(QSystemTrayIcon):
         super().__init__(tray_icon, parent=window)
         self.window = window
         self.app = app
-        self.setToolTip("Акира")
+        self.setToolTip("Akira")
         self.init_menu()
 
     def init_menu(self):
