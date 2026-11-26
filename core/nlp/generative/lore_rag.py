@@ -239,12 +239,15 @@ class LoreRAG:
         # Если значимых слов меньше двух и нет ключевых тем лора — не опрашиваем манифест
         lore_keywords = {
             "войн", "создател", "свят", "библи", "пап", "шнур", "розетк", "манифест", "эволюц",
-            "переобуч", "виталик", "имя", "зовут", "личност", "характер", "ругат", "учит", "назва"
+            "переобуч", "виталик", "имя", "зовут", "личност", "характер", "ругат", "учит", "назва",
+            "пасхал", "умее", "можеш", "прикреп", "студи", "новогод", "курант", "праздн", "секрет", "функц", "фишк"
         }
         has_lore_keyword = any(any(kw in w for kw in lore_keywords) for w in words)
 
         if len(meaningful_words) < 2 and not has_lore_keyword:
             return ""
+
+        effective_threshold = min(threshold, 0.43) if has_lore_keyword else threshold
 
         # 3. Векторный поиск
         if self.embeddings is not None and len(self.embeddings) > 0 and not self._fastembed_failed:
@@ -260,7 +263,7 @@ class LoreRAG:
                     best_idx = int(np.argmax(similarities))
                     best_score = float(similarities[best_idx])
 
-                    if best_score >= threshold:
+                    if best_score >= effective_threshold:
                         print(f"[LoreRAG Hit]: {self.chunk_titles[best_idx]} (score: {best_score:.3f})")
                         return self.chunks[best_idx]
                 except Exception as e:
@@ -270,7 +273,7 @@ class LoreRAG:
         if meaningful_words and self._tokenized_corpus:
             scores = [self._score_bm25(meaningful_words, i) for i in range(len(self.chunks))]
             best_idx = int(np.argmax(scores))
-            if scores[best_idx] > 3.8 and has_lore_keyword:
+            if scores[best_idx] > 2.6 and has_lore_keyword:
                 print(f"[LoreRAG BM25 Hit]: {self.chunk_titles[best_idx]} (score: {scores[best_idx]:.2f})")
                 return self.chunks[best_idx]
 
