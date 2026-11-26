@@ -106,9 +106,11 @@ class YandexMusicManager:
             self.player = self.vlc_instance.media_player_new()
             self._standby_player = self.vlc_instance.media_player_new()
             if self.player:
+                self.player.audio_set_mute(False)
                 self.player.audio_set_volume(self.normal_volume)
                 if self._standby_player:
-                    self._standby_player.audio_set_volume(0)
+                    self._standby_player.audio_set_mute(False)
+                    self._standby_player.audio_set_volume(self.normal_volume)
                 return True
             return False
         except Exception as e:
@@ -198,12 +200,16 @@ class YandexMusicManager:
 
             # 1. Официальный метод yandex_music с валидной криптоподписью
             if hasattr(best_info, 'get_direct_link') and callable(getattr(best_info, 'get_direct_link')):
-                try:
-                    direct = best_info.get_direct_link()
-                    if direct:
-                        return direct
-                except Exception as e:
-                    print(f"[YandexMusic get_direct_link Warning]: {e}")
+                for attempt in range(2):
+                    try:
+                        direct = best_info.get_direct_link()
+                        if direct:
+                            return direct
+                    except Exception as e:
+                        if attempt == 1:
+                            print(f"[YandexMusic get_direct_link Warning]: {e}")
+                        else:
+                            time.sleep(0.2)
 
             if hasattr(best_info, 'direct_link') and best_info.direct_link:
                 return best_info.direct_link
@@ -211,19 +217,26 @@ class YandexMusicManager:
             # 2. Ручной расчет по протоколу Yandex с валидным SIGN_SALT
             download_url = getattr(best_info, 'download_info_url', None)
             if download_url:
-                resp = requests.get(download_url, timeout=5)
-                if resp.status_code == 200:
-                    xml_root = ET.fromstring(resp.text)
-                    host = xml_root.findtext('host')
-                    path = xml_root.findtext('path')
-                    ts = xml_root.findtext('ts')
-                    s = xml_root.findtext('s')
+                for attempt in range(2):
+                    try:
+                        resp = requests.get(download_url, timeout=10)
+                        if resp.status_code == 200:
+                            xml_root = ET.fromstring(resp.text)
+                            host = xml_root.findtext('host')
+                            path = xml_root.findtext('path')
+                            ts = xml_root.findtext('ts')
+                            s = xml_root.findtext('s')
 
-                    if host and path and ts and s:
-                        sign_salt = "XGRlBW9FXlekgbPrRHuSiA"
-                        secret = f"{sign_salt}{path[1:]}{s}"
-                        md5_hash = hashlib.md5(secret.encode('utf-8')).hexdigest()
-                        return f"https://{host}/get-mp3/{md5_hash}/{ts}{path}"
+                            if host and path and ts and s:
+                                sign_salt = "XGRlBW9FXlekgbPrRHuSiA"
+                                secret = f"{sign_salt}{path[1:]}{s}"
+                                md5_hash = hashlib.md5(secret.encode('utf-8')).hexdigest()
+                                return f"https://{host}/get-mp3/{md5_hash}/{ts}{path}"
+                    except Exception as e:
+                        if attempt == 1:
+                            print(f"[YandexMusic Stream Fetch Retry Error]: {e}")
+                        else:
+                            time.sleep(0.2)
         except Exception as e:
             print(f"[YandexMusic Stream Error]: {e}")
         return None
@@ -296,19 +309,46 @@ class YandexMusicManager:
             self.player.play()
             self.is_fading = False
 
-        # VLC может сбросить громкость при инициализации аудиопотока после play(), поэтому удерживаем target_vol
-        deadline = time.perf_counter() + 0.55
-        while time.perf_counter() < deadline:
-            if my_seq != self._play_seq or self.stop_watcher or not self.player:
+        # Ждём реального открытия аудиовывода (выхода из Opening) и только затем фиксируем target_vol,
+        # чтобы VLC/PulseAudio не оставили громкость 0% или отложенный duck после долгого буфера.
+        open_deadline = time.perf_counter() + 6.5
+        hold_deadline = None
+        while time.perf_counter() < open_deadline:
+            if my_seq != self._play_seq or not self.player:
                 break
             try:
+                st = self.player.get_state()
+                if st in (vlc.State.Error, vlc.State.Ended):
+                    self.is_transitioning = False
+                    return False
                 self.player.audio_set_mute(False)
                 self.player.audio_set_volume(self._effective_volume())
+                if st == vlc.State.Playing:
+                    if hold_deadline is None:
+                        hold_deadline = time.perf_counter() + 0.45
+                    elif time.perf_counter() >= hold_deadline:
+                        break
             except Exception:
                 pass
-            time.sleep(0.02)
+            time.sleep(0.025)
         self.is_transitioning = False
         return True
+
+    def _start_first_playable_track(self, tracks: list) -> bool:
+        """Пытается запустить первый доступный трек из списка (до 3 попыток, если первый битый/недоступен)."""
+        if not tracks:
+            self.is_transitioning = False
+            return False
+
+        candidates = list(tracks)
+        max_tries = min(3, len(candidates))
+        for idx in range(max_tries):
+            self.queue = candidates[idx + 1:]
+            if self._play_track_object(candidates[idx]):
+                self._start_watcher()
+                return True
+        self.is_transitioning = False
+        return False
 
     @staticmethod
     def _clamp_player_silent(player):
@@ -828,6 +868,27 @@ class YandexMusicManager:
                 return
 
             def _smooth_restore():
+                # Если поток ещё открывается (Opening), сперва ждём открытия аудиовывода
+                wait_open_end = time.perf_counter() + 4.5
+                while time.perf_counter() < wait_open_end:
+                    if my_duck_seq != self._duck_seq or self.is_ducked or self.is_fading or player is not self.player:
+                        return
+                    try:
+                        st = player.get_state()
+                        if st in (vlc.State.Playing, vlc.State.Buffering):
+                            break
+                        if st in (vlc.State.Stopped, vlc.State.Ended, vlc.State.Error):
+                            return
+                    except Exception:
+                        return
+                    time.sleep(0.04)
+
+                try:
+                    start_v = int(player.audio_get_volume())
+                except Exception:
+                    start_v = -1
+                base_v = cur_vol if start_v < 0 else max(0, min(restore_vol, start_v))
+
                 steps = 10
                 for idx in range(1, steps + 1):
                     if my_duck_seq != self._duck_seq or self.is_ducked or self.is_fading:
@@ -835,9 +896,11 @@ class YandexMusicManager:
                     if player is not self.player:
                         return
                     try:
-                        if player.get_state() not in (vlc.State.Playing, vlc.State.Buffering):
+                        st = player.get_state()
+                        if st in (vlc.State.Stopped, vlc.State.Ended, vlc.State.Error):
                             return
-                        v = int(round(cur_vol + (restore_vol - cur_vol) * (idx / steps)))
+                        player.audio_set_mute(False)
+                        v = int(round(base_v + (restore_vol - base_v) * (idx / steps)))
                         player.audio_set_volume(v)
                     except Exception:
                         return
@@ -859,6 +922,7 @@ class YandexMusicManager:
         if not self._init_client():
             return "Чтобы я могла запустить Мою волну, пожалуйста, укажи токен Яндекс Музыки в настройках Акиры!"
 
+        self.stop_watcher = False
         self.is_transitioning = True
 
         def _async_wave():
@@ -870,17 +934,13 @@ class YandexMusicManager:
 
                 self._send_rotor_feedback(station, "radioStarted")
                 track_items = self._fetch_wave_tracks(station=station, queue_track_id=prev_id)
+                if not track_items and prev_id:
+                    track_items = self._fetch_wave_tracks(station=station, queue_track_id=None)
                 if not track_items:
                     self.is_transitioning = False
                     return
 
-                first_track = track_items[0]
-                self.queue = track_items[1:]
-
-                if self._play_track_object(first_track):
-                    self._start_watcher()
-                else:
-                    self.is_transitioning = False
+                self._start_first_playable_track(track_items)
             except Exception as e:
                 print(f"[YandexMusic Wave Error]: {e}")
                 self.is_transitioning = False
@@ -915,17 +975,15 @@ class YandexMusicManager:
             return "В твоём Избранном на Яндекс Музыке пока нет лайкнутых треков."
 
         random.shuffle(tracks)
+        self.stop_watcher = False
         self.is_transitioning = True
         self.is_radio = True
         self._wave_station = "user:onyourwave"
-        self.queue = tracks[1:200]
+        chosen = tracks[:200]
 
         def _async_fav():
             try:
-                if self._play_track_object(tracks[0]):
-                    self._start_watcher()
-                else:
-                    self.is_transitioning = False
+                self._start_first_playable_track(chosen)
             except Exception as e:
                 print(f"[YandexMusic Favorites Play Error]: {e}")
                 self.is_transitioning = False
@@ -1025,17 +1083,15 @@ class YandexMusicManager:
             return "EMPTY"
 
         self._last_playlist_title = getattr(matched_pl, "title", None) or playlist_name
+        self.stop_watcher = False
         self.is_transitioning = True
         self.is_radio = True
         self._wave_station = "user:onyourwave"
-        self.queue = tracks[1:200]
+        chosen = tracks[:200]
 
         def _async_pl():
             try:
-                if self._play_track_object(tracks[0]):
-                    self._start_watcher()
-                else:
-                    self.is_transitioning = False
+                self._start_first_playable_track(chosen)
             except Exception as e:
                 print(f"[YandexMusic Playlist Play Error]: {e}")
                 self.is_transitioning = False
@@ -1263,12 +1319,22 @@ class YandexMusicManager:
             except Exception:
                 continue
 
-            if state == vlc.State.Ended:
+            if state in (vlc.State.Ended, vlc.State.Error):
                 if not self.is_transitioning and not self.is_fading:
                     self.next_track(manual=False, fade_duration=0.0)
                 continue
 
             if state == vlc.State.Playing and not self.is_transitioning and not self.is_fading:
+                try:
+                    expected_vol = self._effective_volume()
+                    if expected_vol > 0:
+                        if player.audio_get_mute():
+                            player.audio_set_mute(False)
+                        cur_vol = player.audio_get_volume()
+                        if cur_vol is not None and 0 <= cur_vol < max(1, expected_vol - 5):
+                            player.audio_set_volume(expected_vol)
+                except Exception:
+                    pass
                 cur_id = self._track_id_str(self.current_track)
                 if not cur_id:
                     continue
