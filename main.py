@@ -293,6 +293,62 @@ def get_app_icon_path():
 def get_ico_path():
     return get_app_icon_path()
 
+def _build_multi_size_icon(icon_path: str) -> QIcon:
+    """Создаёт QIcon с набором масштабированных размеров для корректного отображения на панели задач и в трее."""
+    icon = QIcon()
+    if not icon_path or not os.path.exists(icon_path):
+        return icon
+    from PyQt6.QtGui import QPixmap
+    pix = QPixmap(icon_path)
+    if pix.isNull():
+        icon.addFile(icon_path)
+        return icon
+    for sz in (16, 24, 32, 48, 64, 128, 256):
+        scaled = pix.scaled(sz, sz, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        icon.addPixmap(scaled)
+    return icon
+
+
+def apply_native_linux_icon(win_id: int, icon_path: str):
+    """Записывает X11-свойство _NET_WM_ICON (48x48 и 128x128 ARGB) для гарантированной иконки в панели задач."""
+    if sys.platform == "win32" or not win_id or not icon_path or not os.path.exists(icon_path):
+        return
+    if not os.environ.get("DISPLAY"):
+        return
+    try:
+        import struct as _struct
+        from PyQt6.QtGui import QImage
+        from Xlib import display, Xatom
+
+        base_img = QImage(icon_path)
+        if base_img.isNull():
+            return
+
+        data = []
+        for sz in (48, 128):
+            scaled = base_img.scaled(
+                sz, sz,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            ).convertToFormat(QImage.Format.Format_ARGB32)
+            w, h = scaled.width(), scaled.height()
+            data.append(w)
+            data.append(h)
+            raw = bytes(scaled.constBits().asarray(w * h * 4))
+            data.extend(_struct.unpack(f"<{w * h}I", raw))
+
+        disp = display.Display()
+        try:
+            win = disp.create_resource_object("window", int(win_id))
+            atom = disp.intern_atom("_NET_WM_ICON")
+            win.change_property(atom, Xatom.CARDINAL, 32, data)
+            disp.sync()
+        finally:
+            disp.close()
+    except Exception:
+        pass
+
+
 def apply_native_windows_icon(hwnd, icon_path):
     if sys.platform != "win32" or not icon_path or not os.path.exists(icon_path):
         return
@@ -406,7 +462,7 @@ def main():
     server.listen(server_name)
 
     ico_path = get_app_icon_path()
-    app_icon = QIcon(ico_path) if ico_path else QIcon()
+    app_icon = _build_multi_size_icon(ico_path)
     app.setWindowIcon(app_icon)
 
     config = load_config()
@@ -420,6 +476,8 @@ def main():
         if sys.platform == "win32":
             wizard_hwnd = int(wizard.winId())
             apply_native_windows_icon(wizard_hwnd, ico_path)
+        else:
+            apply_native_linux_icon(int(wizard.winId()), ico_path)
 
         wizard.exec()
         config = load_config()
@@ -438,12 +496,16 @@ def main():
     if sys.platform == "win32":
         hwnd = int(window.winId())
         apply_native_windows_icon(hwnd, ico_path)
+    else:
+        apply_native_linux_icon(int(window.winId()), ico_path)
 
     window.show()
     window.bring_to_front()
     if sys.platform == "win32":
         hwnd = int(window.winId())
         apply_native_windows_icon(hwnd, ico_path)
+    else:
+        apply_native_linux_icon(int(window.winId()), ico_path)
 
     tray = SystemTray(window, app)
     tray.show()

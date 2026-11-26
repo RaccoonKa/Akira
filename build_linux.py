@@ -191,12 +191,14 @@ def prepare_deb_staging(
     usr_bin = os.path.join(staging_dir, "usr", "bin")
     apps_dir = os.path.join(staging_dir, "usr", "share", "applications")
     icon_dir = os.path.join(staging_dir, "usr", "share", "icons", "hicolor", "256x256", "apps")
+    pixmaps_dir = os.path.join(staging_dir, "usr", "share", "pixmaps")
 
     os.makedirs(debian_dir, exist_ok=True)
     os.makedirs(os.path.dirname(opt_akira), exist_ok=True)
     os.makedirs(usr_bin, exist_ok=True)
     os.makedirs(apps_dir, exist_ok=True)
     os.makedirs(icon_dir, exist_ok=True)
+    os.makedirs(pixmaps_dir, exist_ok=True)
 
     shutil.copytree(app_dir, opt_akira, symlinks=True, dirs_exist_ok=True)
     app_bin = os.path.join(opt_akira, "Akira")
@@ -218,6 +220,9 @@ def prepare_deb_staging(
         dst_icon = os.path.join(icon_dir, "akira.png")
         shutil.copy2(LINUX_ICON_PATH, dst_icon)
         os.chmod(dst_icon, 0o644)
+        dst_pixmap = os.path.join(pixmaps_dir, "akira.png")
+        shutil.copy2(LINUX_ICON_PATH, dst_pixmap)
+        os.chmod(dst_pixmap, 0o644)
 
     depends_line = ", ".join(DEBIAN_DEPENDS)
     control_content = (
