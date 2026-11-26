@@ -5,17 +5,17 @@
 </p>
 
 <p align="center">
-  <b>Autonomous AI Voice Assistant & Desktop Studio for Windows</b><br>
-  Combines offline neural TTS with whisper mode, local ONNX vision & biometrics, torrent cinema, and Telegram PC hub.
+  <b>Cross-Platform Autonomous AI Voice Assistant & Desktop Studio for Windows and Linux</b><br>
+  Combines offline neural TTS with whisper mode, local ONNX vision & biometrics, torrent cinema, Yandex Music crossfade, and Telegram PC hub.
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Version-5.0.0-blueviolet?style=flat-square" alt="Version 5.0.0"/>
   <img src="https://img.shields.io/badge/Python-3.11%20%7C%203.12-blue?style=flat-square&logo=python" alt="Python Version"/>
   <img src="https://img.shields.io/badge/GUI-PyQt6-gold?style=flat-square&logo=qt" alt="PyQt6"/>
-  <img src="https://img.shields.io/badge/Inference-ONNX%20Runtime%20%7C%20DirectML-orange?style=flat-square" alt="ONNX Runtime"/>
+  <img src="https://img.shields.io/badge/Inference-ONNX%20Runtime%20%7C%20CUDA%20%7C%20DirectML-orange?style=flat-square" alt="ONNX Runtime"/>
   <img src="https://img.shields.io/badge/TTS-Piper%20(INT8)-green?style=flat-square" alt="Piper TTS"/>
-  <img src="https://img.shields.io/badge/Platform-Windows-0078D6?style=flat-square&logo=windows" alt="Platform"/>
+  <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-0078D6?style=flat-square&logo=linux" alt="Platform"/>
   <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/"><img src="https://img.shields.io/badge/License-CC%20BY--NC--ND%204.0-lightgrey?style=flat-square" alt="License: CC BY-NC-ND 4.0"/></a>
 </p>
 
@@ -42,16 +42,16 @@ Unlike traditional cloud assistants, Akira utilizes a **hybrid privacy-first arc
 * **Voiceprint & Speaker Verification:** Biometric acoustic identification verifying the owner's voice and filtering out background voices from teammates or speakers.
 
 ### 🎨 Akira Studio, Media Generation & Dynamic Model Switching
-* **Interactive Desktop Studio:** Modern PyQt6 workspace with dynamic chat history drawer, real-time title generation, and inline message management.
-* **AI Image & Art Synthesis:** Text-to-Image and Image-to-Image generation powered by RouterAI with a custom 60 FPS "digital ether" loading shimmer, progressive scan-line revelation, and inline media viewer with copy/save actions.
+* **Interactive Desktop Studio:** Modern PyQt6 workspace with smooth inertial scrolling (in both main chat and Studio), unified jitter-free window expansion, dynamic chat history drawer with automatic session ID compaction in SQLite, and real-time title generation.
+* **Multi-File Attachments (Up to 10 Files):** Attach **up to 10 files simultaneously** in Studio via paperclip or Drag & Drop (code, PDF, DOCX, logs, images) displayed in a compact Gemini-style chip strip, while the compact main chat supports 1-file quick analysis.
+* **AI Image & Art Synthesis:** Text-to-Image and Image-to-Image generation (including multi-image references) powered by RouterAI with a custom 60 FPS "digital ether" loading shimmer, progressive scan-line revelation, and inline media viewer with copy/save actions.
 * **Neural Music Generation:** High-fidelity stereo music and song synthesis with an animated real-time soundwave visualizer, built-in mini-player with interactive waveform seek bar, timestamp display, and one-click MP3 export.
-* **Floating Emotional Shimmer Wave:** Seamless thinking status with a moving dynamic gradient that synchronizes with Akira's active emotional state.
-* **Multi-LLM Integration:** Fluid switching between models (Sber GigaChat, DeepSeek, OpenAI GPT-4o, Google Gemini, RouterAI) for dialogs and creative coding assistance.
+* **Multi-LLM Integration & Guards:** Fluid switching between GigaChat, DeepSeek, and Gemini (`Hikari`, `Kasumi`, `Ginga`, `Uchū`), enforced Russian response guard for non-Russian drafts, system prompt leak protection with warm in-character replies, and lazy ONNX tokenization keeping RAM lean.
 
 ### 🎬 Torrent Streaming Cinema & Media Hub
 * **Direct Torrent Streaming:** Instant playback of movies and TV series via TorrServer without waiting for the full file to download.
 * **VLC Automation:** Voice-controlled episode switching, subtitle toggles, audio track/dubbing changes, playback speed adjustment, and precise time seeking.
-* **Music & Media Control:** Native support for Yandex Music ("My Wave", likes/dislikes), Spotify, YouTube auto-fullscreen, and global media keys.
+* **Yandex Music & Media Control:** Native Yandex Music integration ("My Wave" without repeats, "Favorites / Liked", launching playlists by name, auto-continuing with "My Wave" after single-track requests), dual-deck equal-power crossfade without startup volume spikes, Spotify, YouTube auto-fullscreen, and global media keys.
 
 ### 📱 Remote Telegram Hub & File Bridge
 * **Remote Management Hub:** Control your desktop from smartphone via Telegram bot with categorized command keyboards.
@@ -69,9 +69,12 @@ Unlike traditional cloud assistants, Akira utilizes a **hybrid privacy-first arc
 * **VPN Client Automation:** Voice-driven connection management for **Browsec**, **Sota Connect**, **Happ**, **V2Ray/Xray**, and **WireGuard**.
 * **Zapret (winws) Strategies:** Voice-activated DPI bypass switching with auto-recovery across VPN network changes.
 
-### 🎮 Games, Reminders & Time Management
+### 🎮 Games, Comfort Modes, Auto-Updates & New Year Easter Egg
 * **Voice Games:** Play *Cities*, *Believe or Not* trivia, and detective *Danetki* riddles with interactive LLM refereeing.
+* **Persistent Game Mode & Mini Mode:** Game mode persists across restarts until manually disabled; Mini Mode offers a compact floating orb.
 * **Alarms, Timers & Reminders:** Natural language date/time parsing with background timers, wake-up alarms, and missed reminder tracking.
+* **3-Act New Year Easter Egg:** Triggers at midnight (`Dec 31 -> Jan 1`, including `00:00–00:29` wake-up) or once on first launch during `Jan 1–7`: gently ducks music, launches snowfall & fireworks with chimes, speaks a personalized greeting (separate warm variants for regular users and the developer, with proper Russian ordinal year pronunciation), and fades in a holiday song (stoppable via `"хватит"` / `"стоп"` / `"выключи музыку"`).
+* **Cross-Platform Auto-Updater & Data Safety:** Checks GitHub Releases and installs `.msi` on Windows or `.deb` / `.AppImage` / `.tar.gz` on Linux while preserving all user configs and SQLite chats in `%APPDATA%\Akira` / `~/.local/share/Akira`.
 
 ---
 
@@ -150,16 +153,16 @@ This project is licensed under the **[CC BY-NC-ND 4.0](https://creativecommons.o
 * **Биометрия голоса (Speaker Verification):** Идентификация тембра владельца, отсекающая посторонние голоса и звуки из колонок.
 
 ### 🎨 Студия Акиры, генерация медиа и выбор нейросетей
-* **Интерактивное рабочее пространство:** Современный интерфейс на PyQt6 с боковой шторкой истории диалогов, нейросетевой генерацией названий чатов и быстрым управлением сессиями.
-* **Генерация артов и иллюстраций:** Создание изображений по текстовому промпту (Text-to-Image) и на основе прикреплённого кадра (Image-to-Image) через RouterAI с 60 FPS эффектом «цифрового эфира», сканирующей анимацией проявления и карточкой просмотра с функциями копирования и сохранения.
-* **Нейросетевая генерация музыки:** Создание 48 kHz стереокомпозиций с живым волновым эквалайзером в цвет текущей эмоции Акиры, встроенным интерактивным мини-плеером с перемоткой по аудиоволне и экспортом в MP3.
-* **Парящий статус размышлений с бегущей волной:** Анимированный статус размышлений без рамочек, меняющий цвет градиента в тон текущей эмоции Акиры.
-* **Мульти-LLM ядро:** Возможность переключения между GigaChat, DeepSeek, OpenAI, Gemini и RouterAI для решения аналитических, кодерских и творческих задач.
+* **Интерактивное рабочее пространство:** Современный интерфейс на PyQt6 с плавным инерционным скроллом (в основном чате и Студии), плавным единым раскрытием окна без мерцаний, боковой шторкой истории с авто-упорядочиванием ID диалогов в SQLite и нейросетевой генерацией заголовков.
+* **Мульти-прикрепление до 10 файлов:** В Студии к одному сообщению можно прикрепить **до 10 файлов сразу** (скрепкой `📎` или Drag & Drop: код, PDF, DOCX, логи, изображения) в компактной ленте чипов, а в обычном чате доступен быстрый разбор 1 файла.
+* **Генерация артов и иллюстраций:** Создание изображений по текстовому промпту (Text-to-Image) и по нескольким референсам (Image-to-Image) через RouterAI с 60 FPS эффектом «цифрового эфира», сканирующей анимацией проявления и карточкой просмотра.
+* **Нейросетевая генерация музыки:** Создание 48 kHz стереокомпозиций с живым волновым эквалайзером в цвет текущей эмоции Акиры, встроенным мини-плеером с перемоткой по аудиоволне и экспортом в MP3.
+* **Мульти-LLM ядро и защита диалога:** Переключение между GigaChat, DeepSeek и Gemini (`Hikari`, `Kasumi`, `Ginga`, `Uchū`), контроль русского языка в ответах, защита от выдачи системного промпта с тёплой реакцией Акиры, а также ленивый ONNX-токенизатор для экономии ОЗУ.
 
 ### 🎬 Торрент-кинотеатр и мультимедиа
 * **Потоковый просмотр торрентов:** Воспроизведение фильмов и сериалов через TorrServer без необходимости предварительного скачивания файлов на диск.
 * **Управление плеером VLC:** Голосовое переключение серий, выбор аудиодорожек и озвучек, управление субтитрами, регулировка скорости и точная перемотка.
-* **Музыка и стриминг:** Встроенная поддержка Яндекс Музыки («Моя волна», управление лайками), Spotify и авторазворачивание YouTube-видео на весь экран.
+* **Яндекс Музыка и стриминг:** Запуск «Моей волны» без повторов, плейлиста «Избранное / Моё любимое», любых плейлистов по названию, продолжение «Моей волной» после заказанного трека, плавный кроссфейд между треками без скачков громкости, а также Spotify и авторазворачивание YouTube на весь экран.
 
 ### 📱 Удалённый Telegram-хаб и передача файлов
 * **Центр управления в смартфоне:** Удобная навигация по категориям (Мониторинг, Питание, Закачки, Возможности) через Telegram-бота.
@@ -177,9 +180,12 @@ This project is licensed under the **[CC BY-NC-ND 4.0](https://creativecommons.o
 * **Автоматизация VPN-клиентов:** Голосовое подключение и управление туннелями для **Browsec**, **Sota Connect**, **Happ**, **V2Ray/Xray** и **WireGuard**.
 * **Стратегии Zapret (winws):** Быстрое переключение конфигураций обхода DPI с автоматическим сохранением стабильного соединения при смене сетевых маршрутов.
 
-### 🎮 Игры, таймеры и управление временем
+### 🎮 Игры, режимы комфорта, автообновление и пасхалки
 * **Голосовые игры:** Полноценные сессии в «Города», «Верю — не верю» и «Данетки» с судейством через LLM.
+* **Сохраняемый игровой режим и мини-режим:** Игровой режим сохраняется даже после перезапуска программы, пока вы сами его не выключите; мини-режим сворачивает окно в компактную сферу.
 * **Будильники, таймеры и напоминания:** Распознавание естественной речи для установки будильников, таймеров и задач с сохранением пропущенных напоминаний после включения ПК.
+* **Новогодняя пасхалка в 3 актах:** Срабатывает ровно в полночь (`31.12 -> 01.01`, включая пробуждение в `00:00–00:29`) либо при первом запуске `1–7 января` раз в год: приглушает фоновую музыку, запускает снегопад и салют с переливом сферы, включает куранты (`assets/sounds/holidays/`), произносит персональное поздравление (отдельное для обычных пользователей и разработчика, с правильным склонением года в речи) и плавно включает новогоднюю мелодию (останавливается словами «хватит» / «стоп» / «выключи музыку»).
+* **Кроссплатформенное автообновление:** Проверка релизов на GitHub и установка `.msi` на Windows или `.deb` / `.AppImage` / `.tar.gz` на Linux без потери настроек и переписок (`%APPDATA%\Akira` / `~/.local/share/Akira`).
 
 ---
 
