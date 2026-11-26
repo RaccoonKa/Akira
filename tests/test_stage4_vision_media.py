@@ -584,6 +584,23 @@ class Stage4VisionMediaTests(unittest.TestCase):
             self.assertFalse(ym.is_fading)
             self.assertEqual(pb.state, _FakeVlcState.Paused)
 
+    def test_13_yandex_first_attempt_fallback_on_bad_first_track(self):
+        from services.yandex import yandex_music_manager as ym_mod
+
+        ym = ym_mod.YandexMusicManager()
+        t_bad = MagicMock(id="bad", title="Broken")
+        t_good = MagicMock(id="good", title="Working")
+        t_third = MagicMock(id="next", title="Queued")
+
+        started = []
+        with patch.object(ym, "_play_track_object", side_effect=[False, True]) as m_play, \
+                patch.object(ym, "_start_watcher", side_effect=lambda: started.append(True)):
+            ok = ym._start_first_playable_track([t_bad, t_good, t_third])
+            self.assertTrue(ok)
+            self.assertEqual(m_play.call_count, 2)
+            self.assertEqual(started, [True])
+            self.assertEqual(ym.queue, [t_third])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
