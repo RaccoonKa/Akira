@@ -1,0 +1,45 @@
+{
+    "user_name": "друг",
+    "assistant_name": "Акира",
+    "user_gender": "male",
+    "city": "Калининград",
+    "theme": "dark",
+    "autostart": false,
+    "first_run": true,
+    "is_configured": false,
+    "music_service": "yandex",
+    "use_spotify": false,
+    "vpn_service": "none",
+    "voice_volume": 100,
+    "alarm_sound": "alarm_1",
+    "custom_alarm_path": "",
+    "target_fps": 60,
+    "is_muted": false,
+    "is_mini_mode": false,
+    "is_whisper_mode": false,
+    "work_apps": [
+        "https://github.com"
+    ],
+    "rest_apps": [
+        "https://youtube.com"
+    ],
+    "modules": {
+        "vision": false,
+        "gestures": false,
+        "face_recognition": false,
+        "eye_tracking": false,
+        "telegram": false,
+        "gigachat": false,
+        "routerai": false,
+        "memory": true
+    },
+    "api_keys": {
+        "gigachat": "",
+        "routerai": "",
+        "telegram_token": "",
+        "telegram_admin_id": 0,
+        "yandex_music_token": "",
+        "spotify_client_id": "",
+        "yandex_iot_token": ""
+    }
+}

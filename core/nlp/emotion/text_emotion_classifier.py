@@ -1,0 +1,105 @@
+import os
+import numpy as np
+import onnxruntime as ort
+from core.nlp.fast_tokenizer import load_fast_tokenizer
+from core.utils.config import get_resource_path
+from core.utils.onnx_runtime import create_onnx_session
+
+EMOTION_CLASSES = [
+    ("happy", "радость / похвала"),
+    ("angry", "злость / раздражение / сарказм"),
+    ("sad", "грусть / усталость"),
+    ("surprise", "удивление / восторг"),
+    ("neutral", "нейтрально")
+]
+
+RU_EMOTIONS = {
+    "joy_praise": "радость / похвала",
+    "negative_sarcasm": "злость / раздражение / сарказм",
+    "sadness_fatigue": "грусть / усталость",
+    "surprise": "удивление / восторг",
+    "neutral": "нейтрально"
+}
+
+
+class TextEmotionClassifier:
+    def __init__(self, model_dir=None):
+        if model_dir is None:
+            model_dir = get_resource_path("optimized_models", "text_emotions")
+
+        self.model_dir = os.path.normpath(model_dir)
+        self.tokenizer = None
+        self.session = None
+
+    def _ensure_loaded(self):
+        if self.session is not None and self.tokenizer is not None:
+            return True
+
+        try:
+            self.tokenizer = load_fast_tokenizer(self.model_dir)
+
+            if getattr(self.tokenizer, "pad_token", None) is None:
+                self.tokenizer.pad_token = "[PAD]"
+                self.tokenizer.pad_token_id = 0
+
+            session_options = ort.SessionOptions()
+            session_options.intra_op_num_threads = 2
+            session_options.inter_op_num_threads = 1
+            session_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+            session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+
+            onnx_path = os.path.join(self.model_dir, "aki_text_emotions_int8.onnx")
+            self.session, _ = create_onnx_session(
+                onnx_path,
+                sess_options=session_options,
+                ort_module=ort,
+                prefer_gpu=True,
+            )
+            print("[TextEmotion]: Текстовый классификатор эмоций готов к работе!", flush=True)
+            return True
+        except Exception as e:
+            print(f"[TextEmotion Init Error]: {e}", flush=True)
+            return False
+
+    def predict(self, text: str):
+        if not text or not text.strip():
+            return "neutral", "нейтрально", 1.0
+
+        if not self._ensure_loaded():
+            return "neutral", "нейтрально", 1.0
+
+        try:
+            inputs = self.tokenizer(
+                text.strip(),
+                return_tensors="np",
+                truncation=True,
+                max_length=128,
+                padding=True
+            )
+
+            ort_inputs = {}
+            for input_meta in self.session.get_inputs():
+                name = input_meta.name
+                if name in inputs:
+                    ort_inputs[name] = inputs[name].astype(np.int64)
+
+            outputs = self.session.run(None, ort_inputs)
+            logits = np.array(outputs[0]).squeeze()
+
+            exp_logits = np.exp(logits - np.max(logits))
+            probs = exp_logits / np.sum(exp_logits)
+
+            best_idx = int(np.argmax(probs))
+            best_conf = float(probs[best_idx])
+
+            if best_idx == 4 or best_conf < 0.55:
+                ui_emo, ru_desc = "neutral", "нейтрально"
+            else:
+                ui_emo, ru_desc = EMOTION_CLASSES[best_idx]
+
+            print(f"[TextEmotion]: '{text}' -> {ui_emo.upper()} ({ru_desc}, conf={best_conf:.2f})", flush=True)
+            return ui_emo, ru_desc, best_conf
+
+        except Exception as e:
+            print(f"[TextEmotion Predict Error]: {e}", flush=True)
+            return "neutral", "нейтрально", 0.0

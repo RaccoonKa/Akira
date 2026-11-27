@@ -1,0 +1,68 @@
+# Графический интерфейс и визуал
+PyQt6>=6.6.0
+Pillow>=10.0.0
+pyautogui>=0.9.54
+qrcode>=7.4.2
+rich>=13.7.0
+
+# Нейросети, распознавание и синтез речи
+torch>=2.1.0
+torchaudio>=2.1.0
+vosk>=0.3.45
+piper-tts>=1.2.0
+transformers==4.41.2
+optimum[onnxruntime]>=1.14.0
+onnxruntime-directml>=1.16.0; sys_platform == 'win32'
+onnxruntime-gpu>=1.20.0,<1.25.0; sys_platform == 'linux'
+# При установке с нуля, если pip перезаписал GPU-рантайм пакетом onnxruntime из зависимостей fastembed/piper-tts:
+#   Windows: pip install --force-reinstall --no-deps onnxruntime-directml
+#   Linux CUDA 12: pip install --force-reinstall --no-deps "onnxruntime-gpu==1.24.4"
+rapidocr_onnxruntime>=1.3.0
+fastembed>=0.2.0
+opencv-python>=4.8.0
+mediapipe>=0.10.0
+face_recognition>=1.3.0
+librosa>=0.10.0
+scikit-learn==1.4.2
+
+# Звук и мультимедиа
+sounddevice>=0.4.6
+soundfile>=0.12.1
+soundcard>=0.4.6
+pydub>=0.25.1
+scipy==1.13.0
+numpy==1.26.4
+python-vlc>=3.0.20123
+
+# Системные модули (кроссплатформенные и ОС-специфичные)
+psutil>=5.9.0
+pycaw>=20230407; sys_platform == 'win32'
+comtypes>=1.2.0; sys_platform == 'win32'
+pulsectl>=24.12.0; sys_platform == 'linux'
+python-xlib>=0.33; sys_platform == 'linux'
+mss>=9.0.1; sys_platform == 'linux'
+
+# Системные пакеты Linux Mint / Ubuntu (устанавливаются через apt):
+# sudo apt install -y libportaudio2 libpulse0 pulseaudio-utils wireplumber vlc libvlc5 ffmpeg xdotool wmctrl scrot libxcb-cursor0 libxkbcommon-x11-0 libgl1 patchelf
+
+# Документы и парсинг
+python-docx>=1.1.0
+pypdf>=4.0.0
+pymorphy3>=2.0.0
+
+# Сеть, бот и API интеграции
+requests>=2.31.0
+urllib3>=2.0.0
+certifi>=2023.7.22
+beautifulsoup4>=4.12.0
+websockets>=12.0
+openai>=1.10.0
+gigachat>=0.1.30
+spotipy>=2.23.0
+yandex-music>=2.1.1
+google-api-python-client>=2.100.0
+google-auth-oauthlib>=1.1.0
+
+# Полезные команды для сборки:
+# python build_nuitka.py
+# wix build Package.wxs -arch x64 -out dist/Akira-Setup-v5.1.0.msi

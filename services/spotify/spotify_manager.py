@@ -1,0 +1,361 @@
+import os
+import sys
+import random
+import threading
+import subprocess
+import time
+import re
+import shutil
+import spotipy
+from spotipy.oauth2 import SpotifyPKCE
+from core.utils.config import load_config, get_user_data_path
+from core.utils.platform_utils import open_path
+
+
+class SpotifyManager:
+    def __init__(self):
+        self.sp = None
+        self.scope = (
+            "user-read-playback-state "
+            "user-modify-playback-state "
+            "user-read-currently-playing "
+            "user-library-read "
+            "user-library-modify "
+            "playlist-read-private"
+        )
+        self.device_id = None
+
+    def _load_client_id(self):
+        cfg = load_config()
+        return cfg.get("api_keys", {}).get("spotify_client_id", "").strip()
+
+    def _get_cache_path(self) -> str:
+        cache_dir = get_user_data_path("cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        new_path = os.path.join(cache_dir, ".spotify_cache")
+        old_path = get_user_data_path(".spotify_cache")
+
+        if os.path.exists(old_path) and not os.path.exists(new_path):
+            try:
+                shutil.move(old_path, new_path)
+            except Exception:
+                pass
+        return new_path
+
+    def is_authenticated(self):
+        cache_path = self._get_cache_path()
+        if not os.path.exists(cache_path):
+            return False
+        client_id = self._load_client_id()
+        if not client_id:
+            return False
+        try:
+            auth_manager = SpotifyPKCE(
+                client_id=client_id,
+                redirect_uri="http://127.0.0.1:8888/callback",
+                scope=self.scope,
+                cache_path=cache_path,
+                open_browser=False
+            )
+            return auth_manager.get_cached_token() is not None
+        except Exception:
+            return False
+
+    def _init_client(self):
+        if self.sp is not None:
+            return True
+
+        client_id = self._load_client_id()
+        if not client_id:
+            return False
+
+        cache_path = self._get_cache_path()
+
+        try:
+            auth_manager = SpotifyPKCE(
+                client_id=client_id,
+                redirect_uri="http://127.0.0.1:8888/callback",
+                scope=self.scope,
+                cache_path=cache_path,
+                open_browser=False
+            )
+            token = auth_manager.get_access_token()
+            if token:
+                self.sp = spotipy.Spotify(auth_manager=auth_manager)
+                return True
+            return False
+        except Exception as e:
+            print(f"[Spotify Init Error]: {e}")
+            return False
+
+    def _is_spotify_installed(self):
+        if sys.platform != "win32":
+            which_sp = shutil.which("spotify")
+            if which_sp:
+                return which_sp
+
+            for cand in (
+                "/snap/bin/spotify",
+                "/usr/bin/spotify",
+                "/usr/local/bin/spotify",
+                "/usr/share/spotify/spotify",
+            ):
+                if os.path.isfile(cand) and os.access(cand, os.X_OK):
+                    return cand
+
+            flatpak = shutil.which("flatpak")
+            if flatpak:
+                try:
+                    res = subprocess.run([flatpak, "info", "com.spotify.Client"], capture_output=True, timeout=2.5)
+                    if res.returncode == 0:
+                        return "flatpak:com.spotify.Client"
+                except Exception:
+                    pass
+            return None
+
+        import winreg
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, r"spotify\shell\open\command")
+            val, _ = winreg.QueryValueEx(key, "")
+            winreg.CloseKey(key)
+            if val:
+                match = re.search(r'"([^"]+Spotify\.exe)"', val, re.IGNORECASE)
+                if match and os.path.exists(match.group(1)):
+                    return match.group(1)
+                exe_cand = val.split('"')[1] if '"' in val else val.split()[0]
+                if os.path.exists(exe_cand):
+                    return exe_cand
+        except Exception:
+            pass
+
+        user_roaming = os.environ.get("APPDATA", "")
+        user_local = os.environ.get("LOCALAPPDATA", "")
+        prog_files = os.environ.get("ProgramFiles", "C:\\Program Files")
+        prog_files_x86 = os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")
+
+        candidate_paths = [
+            os.path.join(user_roaming, "Spotify", "Spotify.exe"),
+            os.path.join(user_local, "Microsoft", "WindowsApps", "Spotify.exe"),
+            os.path.join(prog_files, "Spotify", "Spotify.exe"),
+            os.path.join(prog_files_x86, "Spotify", "Spotify.exe")
+        ]
+
+        windows_apps = os.path.join(user_local, "Microsoft", "WindowsApps")
+        if os.path.exists(windows_apps):
+            try:
+                for entry in os.listdir(windows_apps):
+                    if "spotify" in entry.lower():
+                        full_p = os.path.join(windows_apps, entry, "Spotify.exe")
+                        if os.path.exists(full_p):
+                            candidate_paths.append(full_p)
+            except Exception:
+                pass
+
+        for p in candidate_paths:
+            if p and os.path.exists(p):
+                return p
+
+        try:
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\Spotify.exe")
+            val, _ = winreg.QueryValueEx(key, "")
+            winreg.CloseKey(key)
+            if val and os.path.exists(val):
+                return val
+        except Exception:
+            pass
+
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\Spotify.exe")
+            val, _ = winreg.QueryValueEx(key, "")
+            winreg.CloseKey(key)
+            if val and os.path.exists(val):
+                return val
+        except Exception:
+            pass
+
+        return None
+
+    def _launch_app(self):
+        installed_path = self._is_spotify_installed()
+        if not installed_path:
+            if sys.platform != "win32":
+                return open_path("spotify:")
+            return False
+
+        if sys.platform != "win32":
+            try:
+                if installed_path == "flatpak:com.spotify.Client":
+                    flatpak = shutil.which("flatpak") or "flatpak"
+                    subprocess.Popen([flatpak, "run", "com.spotify.Client"], start_new_session=True)
+                else:
+                    subprocess.Popen([installed_path], start_new_session=True)
+                return True
+            except Exception:
+                return open_path("spotify:")
+
+        try:
+            subprocess.Popen([installed_path])
+            return True
+        except Exception:
+            pass
+
+        try:
+            subprocess.Popen(["cmd", "/c", "start", "spotify:"], shell=True)
+            return True
+        except Exception:
+            return False
+
+    def _ensure_active_device_async(self):
+        try:
+            devices = self.sp.devices().get("devices", [])
+            if devices:
+                active_dev = next((d for d in devices if d.get("is_active")), devices[0])
+                self.device_id = active_dev["id"]
+                return True
+
+            if not self._launch_app():
+                return False
+
+            for _ in range(8):
+                time.sleep(1.0)
+                devices = self.sp.devices().get("devices", [])
+                if devices:
+                    active_dev = next((d for d in devices if d.get("is_active")), devices[0])
+                    self.device_id = active_dev["id"]
+                    return True
+
+        except Exception as e:
+            print(f"[Spotify Device Async Error]: {e}")
+        return False
+
+    def play_query(self, query):
+        if not self._load_client_id():
+            return "Подключи Spotify в настройках Акиры"
+
+        if not self._is_spotify_installed():
+            return "Прости, я не нашла на твоем ПК Спотик! Установи приложение, и я сразу включу музыку."
+
+        display_name = query.title()
+
+        def _async_play():
+            try:
+                if not self._init_client():
+                    return
+
+                if not self._ensure_active_device_async():
+                    return
+
+                res = self.sp.search(q=query, limit=1, type="track,artist")
+                tracks = res.get("tracks", {}).get("items", [])
+
+                if tracks:
+                    track_uri = tracks[0]["uri"]
+                    self.sp.start_playback(device_id=self.device_id, uris=[track_uri])
+                else:
+                    artists = res.get("artists", {}).get("items", [])
+                    if artists:
+                        artist_uri = artists[0]["uri"]
+                        self.sp.start_playback(device_id=self.device_id, context_uri=artist_uri)
+            except Exception as e:
+                print(f"[Spotify Play Error]: {e}")
+
+        threading.Thread(target=_async_play, daemon=True).start()
+        return f"Включаю {display_name} в Spotify"
+
+    def play_my_wave(self):
+        if not self._load_client_id():
+            return "Подключи Spotify в настройках Акиры"
+
+        if not self._is_spotify_installed():
+            return "Прости, я не нашла на твоем ПК Спотик! Установи приложение, и я сразу включу музыку."
+
+        def _async_wave():
+            try:
+                if not self._init_client():
+                    return
+
+                if not self._ensure_active_device_async():
+                    return
+
+                saved = self.sp.current_user_saved_tracks(limit=20)
+                items = saved.get("items", [])
+
+                if items:
+                    track_uris = [item["track"]["uri"] for item in items]
+                    random.shuffle(track_uris)
+
+                    seed_ids = [item["track"]["id"] for item in random.sample(items, min(3, len(items)))]
+                    recs = self.sp.recommendations(seed_tracks=seed_ids, limit=20)
+                    rec_uris = [t["uri"] for t in recs.get("tracks", [])]
+
+                    all_uris = track_uris[:5] + rec_uris
+                    self.sp.start_playback(device_id=self.device_id, uris=all_uris)
+            except Exception as e:
+                print(f"[Spotify Wave Error]: {e}")
+
+        threading.Thread(target=_async_wave, daemon=True).start()
+        return True
+
+    def toggle_pause(self):
+        def _async_toggle():
+            if not self._init_client():
+                return
+            try:
+                state = self.sp.current_playback()
+                if state and state.get("is_playing"):
+                    self.sp.pause_playback()
+                else:
+                    self.sp.start_playback()
+            except Exception as e:
+                print(f"[Spotify Pause Error]: {e}")
+        threading.Thread(target=_async_toggle, daemon=True).start()
+
+    def stop(self):
+        def _async_stop():
+            if not self._init_client():
+                return
+            try:
+                self.sp.pause_playback()
+            except Exception:
+                pass
+        threading.Thread(target=_async_stop, daemon=True).start()
+        return "Выключаю музыку"
+
+    def next_track(self):
+        threading.Thread(target=lambda: self._init_client() and self.sp.next_track(), daemon=True).start()
+
+    def prev_track(self):
+        threading.Thread(target=lambda: self._init_client() and self.sp.previous_track(), daemon=True).start()
+
+    def like_current(self):
+        def _async_like():
+            if not self._init_client():
+                return
+            try:
+                current = self.sp.current_user_playing_track()
+                if current and current.get("item"):
+                    track_id = current["item"]["id"]
+                    self.sp.current_user_saved_tracks_add([track_id])
+            except Exception as e:
+                print(f"[Spotify Like Error]: {e}")
+        threading.Thread(target=_async_like, daemon=True).start()
+
+    def unlike_current(self):
+        def _async_unlike():
+            if not self._init_client():
+                return
+            try:
+                current = self.sp.current_user_playing_track()
+                if current and current.get("item"):
+                    track_id = current["item"]["id"]
+                    self.sp.current_user_saved_tracks_delete([track_id])
+            except Exception as e:
+                print(f"[Spotify Unlike Error]: {e}")
+        threading.Thread(target=_async_unlike, daemon=True).start()
+
+    def set_shuffle(self, state: bool = True):
+        threading.Thread(target=lambda: self._init_client() and self.sp.shuffle(state), daemon=True).start()
+
+    def set_volume(self, volume_percent: int):
+        vol = max(0, min(100, volume_percent))
+        threading.Thread(target=lambda: self._init_client() and self.sp.volume(vol), daemon=True).start()

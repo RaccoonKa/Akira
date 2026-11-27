@@ -1,0 +1,112 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+*.pyd
+
+# Distribution / packaging
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+
+# Sentry & Crash reports
+.sentry-native/
+
+# Virtual Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDEs and Editors
+.idea/
+.vscode/
+*.sublime-workspace
+*.sublime-project
+.project
+.pydevproject
+.settings/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+*.tmp
+*.temp
+*.log
+
+# Sensitive files / keys / credentials / local notes
+aki_ssh*
+server_commands
+*.key
+*.pem
+*.pub
+personal_data/configs/*.key
+personal_data/configs/creator.key
+personal_data/creator.key
+
+# AI agents
+.cursorrules
+scratch/
+
+# Персональные данные и токены
+personal_data/activity/
+personal_data/configs/config.json
+personal_data/configs/pairing_session.json
+personal_data/configs/user_memory.json
+personal_data/memory/
+personal_data/user_memory.json
+personal_data/configs/.spotify_cache
+personal_data/configs/google/token.json
+personal_data/owner_face/*
+personal_data/cache/
+personal_data/sql/
+personal_data/embeddings/
+personal_data/generated/
+personal_data/sounds/
+personal_data/torrserver/
+personal_data/custom_alarm.wav
+personal_data/*.db
+personal_data/*.db-wal
+personal_data/*.db-shm
+personal_data/*.sqlite3
+personal_data/**/*.db
+personal_data/**/*.db-wal
+personal_data/**/*.db-shm
+personal_data/**/*.sqlite3
+
+# Исключения для personal_data
+!personal_data/configs/config.py
+!personal_data/configs/config.template.json
+!personal_data/owner_face/.gitkeep
+!personal_data/memory/.gitkeep
+
+# Временные файлы моделей и артефакты
+temp_model*
+*.data
+*.npz
+

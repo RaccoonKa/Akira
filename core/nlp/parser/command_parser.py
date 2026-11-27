@@ -1,0 +1,2034 @@
+import os
+import sys
+import time
+
+os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+
+import re
+import threading
+import random
+import numpy as np
+from datetime import datetime, timedelta
+from core.system.actions import SystemActions, zapret_manager
+from services.vpn.vpn_manager import VpnManager
+from core.utils.config import load_config
+from core.utils.text_cleaner import clean_voice_text
+from core.nlp.generative.llm_provider import GigaChatProvider
+from core.nlp.parser.nlu import JointNLU
+from core.nlp.generative.document_parser import DocumentParser
+from core.nlp.speech.speaker_verifier import SpeakerVerifier
+from core.nlp.emotion.text_emotion_classifier import TextEmotionClassifier
+from core.system.app_launcher import AppLauncher
+from core.system.time_parser import TimeParser
+from core.system.reminder_manager import ReminderManager
+from core.games.city_game import CityGame
+from core.games.believe_game import BelieveGame
+from core.games.danetki_game import DanetkiGame
+from services.torrent.torrent_search import search_torrents
+from services.torrent.torrserver_manager import torr_manager
+from services.torrent.vlc_player import vlc_player
+
+vpn_manager = VpnManager()
+
+WORD_TO_NUM = {
+    "один": 1, "первый": 1, "первую": 1, "первое": 1, "первой": 1,
+    "два": 2, "второй": 2, "вторую": 2, "второе": 2, "второй": 2,
+    "три": 3, "третий": 3, "третью": 3, "третье": 3,
+    "четыре": 4, "четвертый": 4, "четвертую": 4, "четвертое": 4, "четвёртый": 4, "четвёртую": 4, "четвёртое": 4,
+    "пять": 5, "пятый": 5, "пятую": 5, "пятое": 5,
+    "шесть": 6, "шестой": 6, "шестую": 6, "шестое": 6,
+    "семь": 7, "седьмой": 7, "седьмую": 7, "седьмое": 7,
+    "восемь": 8, "восьмой": 8, "восьмую": 8, "восьмое": 8,
+    "девять": 9, "девятый": 9, "девятую": 9, "девятое": 9,
+    "десять": 10, "десятый": 10, "десятую": 10, "десятое": 10,
+    "одиннадцать": 11, "одиннадцатый": 11, "одиннадцатую": 11, "одиннадцатое": 11,
+    "двенадцать": 12, "двенадцатый": 12, "двенадцатую": 12, "двенадцатое": 12,
+    "тринадцать": 13, "тринадцатый": 13, "тринадцатую": 13, "тринадцатое": 13,
+    "четырнадцать": 14, "четырнадцатый": 14, "четырнадцатую": 14, "четырнадцатое": 14,
+    "пятнадцать": 15, "пятнадцатый": 15, "пятнадцатую": 15, "пятнадцатое": 15,
+    "шестнадцать": 16, "шестнадцатый": 16, "шестнадцатую": 16, "шестнадцатое": 16,
+    "семнадцать": 17, "семнадцатый": 17, "семнадцатую": 17, "семнадцатое": 17,
+    "восемнадцать": 18, "восемнадцатый": 18, "восемнадцатую": 18, "восемнадцатое": 18,
+    "девятнадцать": 19, "девятнадцатый": 19, "девятнадцатую": 19, "девятнадцатое": 19,
+    "двадцать": 20, "двадцатый": 20, "двадцатую": 20, "двадцатое": 20
+}
+
+CANONICAL_USER_TEXTS = {
+    "open_discord": "Включи Discord",
+    "enable_game_mode": "Включи игровой режим",
+    "mode_work": "Включи рабочий режим",
+    "mode_rest": "Включи режим отдыха",
+    "start_zapret": "Включи запрет",
+    "stop_zapret": "Выключи запрет",
+    "shutdown": "Выключи компьютер",
+    "shutdown_pc": "Выключи компьютер",
+    "like_yandex_track": "Поставь лайк",
+    "unlike_yandex_track": "Убери лайк",
+    "media_play_pause": "Пауза / Возобновить",
+    "media_next_track": "Следующий трек",
+    "media_previous_track": "Предыдущий трек",
+    "toggle_fullscreen": "Разверни на весь экран",
+    "stop_music": "Выключи музыку",
+    "stop_movie": "Выключи фильм",
+    "start_vpn": "Включи VPN",
+    "stop_vpn": "Выключи VPN",
+    "tell_digital_dream": "Что тебе снилось?",
+    "tell_genesis_story": "Как ты появилась?",
+    "tell_birthday": "Когда у тебя день рождения?",
+    "tell_upgrades": "Что тебе добавить?",
+    "cancel_shutdown": "Отмени выключение компьютера",
+    "tell_digital_chores": "Чем ты занимаешься в системе?",
+    "get_time_greeting": "Привет!",
+    "tell_memory_archive": "Вспомни наши победы",
+    "friday_chill_mode": "Включи пятничный режим",
+    "empty_recycle_bin": "Очисти корзину"
+}
+
+
+class CommandParser:
+    def __init__(self, confidence_threshold=0.60):
+        self.threshold = confidence_threshold
+        self.llm = GigaChatProvider()
+        self.text_emotion_classifier = TextEmotionClassifier()
+        self.speaker_verifier = SpeakerVerifier(threshold=0.70)
+        self.doc_parser = DocumentParser()
+        self.waiting_for_zapret = False
+        self.waiting_for_vpn = False
+        self.waiting_for_recycle_bin = False
+        self.pending_vpn_action = "connect"
+        self.pending_vpn_options = []
+        self.last_emotion = "neutral"
+        self.app_launcher = AppLauncher()
+        self.time_parser = TimeParser()
+        self.reminder_manager = ReminderManager()
+        self.city_game = CityGame(llm_provider=self.llm)
+        self.believe_game = BelieveGame()
+        self.danetki_game = DanetkiGame(llm_provider=self.llm)
+        self.waiting_for_game_choice = False
+        self.last_discussed_game = None
+        self.waiting_for_movie_choice = False
+        self.movie_results = []
+        self.offense_level = 0
+        self.ignore_until_timestamp = 0.0
+        self.is_stress_mode = False
+
+        self.game_rules = {
+            "города": (
+                "Правила игры в Города просты: мы по очереди называем города, где каждый следующий город "
+                "должен начинаться на последнюю букву предыдущего. Буквы Ь, Ъ и Ы автоматически пропускаются, "
+                "а повторять уже названные города нельзя!"
+            ),
+            "верю": (
+                "В игре «Верю — не верю» я зачитываю удивительный или необычный факт, а ты отвечаешь только "
+                "«Верю» или «Не верю». За каждый угаданный факт начисляется очко, а в конце подведём итоги!"
+            ),
+            "данетки": (
+                "Данетки — это детективная игра-головоломка. Я рассказываю странную завязку истории, а ты "
+                "задаёшь мне любые вопросы, чтобы докопаться до истины. Отвечать я могу только «Да», «Нет» "
+                "или «Не имеет значения». Если захочешь сдаться — просто скажи «Сдаюсь»!"
+            )
+        }
+
+        self.intent_aliases = {
+            "play_music": "play_music",
+            "search_video": "play_youtube",
+            "shutdown": "shutdown_pc",
+            "start_zapret": "start_zapret",
+            "stop_zapret": "stop_zapret",
+            "mode_work": "mode_work",
+            "mode_rest": "mode_rest",
+            "enable_game_mode": "enable_game_mode",
+            "start_vpn": "start_vpn",
+            "stop_vpn": "stop_vpn",
+            "smart_home_on": "smart_home_on",
+            "smart_home_off": "smart_home_off",
+            "smart_home_brightness": "smart_home_brightness",
+            "smart_home_scenario": "smart_home_scenario",
+            "open_discord": "open_discord",
+            "stop_movie": "stop_movie",
+            "tell_digital_dream": "tell_digital_dream",
+            "tell_genesis_story": "tell_genesis_story",
+            "tell_birthday": "tell_birthday",
+            "tell_upgrades": "tell_upgrades",
+            "cancel_shutdown": "cancel_shutdown",
+            "tell_digital_chores": "tell_digital_chores",
+            "get_time_greeting": "get_time_greeting",
+            "tell_memory_archive": "tell_memory_archive",
+            "friday_chill_mode": "friday_chill_mode",
+            "empty_recycle_bin": "empty_recycle_bin"
+        }
+
+        self.nlu = None
+        self.is_ready = False
+
+        self.loader_thread = threading.Thread(target=self._load_model, daemon=True)
+        self.loader_thread.start()
+
+    def _load_model(self):
+        try:
+            self.nlu = JointNLU(model_dir="optimized_models/joint_nlu")
+        except Exception as e:
+            print(f"[PARSER ERROR]: Не удалось загрузить JointNLU: {e}")
+
+        try:
+            self.text_emotion_classifier._ensure_loaded()
+        except Exception as e:
+            print(f"[PARSER ERROR]: Не удалось загрузить TextEmotion: {e}")
+
+        self.is_ready = True
+
+    def _detect_whisper(self, audio_data):
+        if not audio_data or len(audio_data) < 1600:
+            return False
+        try:
+            samples = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32)
+            peak = np.max(np.abs(samples))
+            if peak < 25:
+                return False
+
+            zcr = np.mean(np.abs(np.diff(np.sign(samples)))) / 2.0
+            fft_vals = np.abs(np.fft.rfft(samples))
+            freqs = np.fft.rfftfreq(len(samples), 1.0 / 16000.0)
+
+            low_energy = np.sum(fft_vals[(freqs >= 250) & (freqs < 750)] ** 2) + 1e-6
+            high_energy = np.sum(fft_vals[(freqs >= 1300) & (freqs < 6500)] ** 2) + 1e-6
+            ratio = high_energy / low_energy
+
+            is_ratio_whisper = (ratio > 1.65 and zcr > 0.12)
+            is_noise_whisper = (zcr > 0.20 and peak < 12000)
+
+            return bool(is_ratio_whisper or is_noise_whisper)
+        except Exception:
+            return False
+
+    def get_emotion(self, text):
+        if text:
+            ui_emo, ru_desc, conf = self.text_emotion_classifier.predict(text)
+            return ui_emo, ru_desc, conf
+        return "neutral", "нейтрально", 1.0
+
+    def _extract_zapret_number(self, text):
+        text_clean = text.lower().strip()
+        match = re.search(r'\b([1-9]|1[0-9]|20)\b', text_clean)
+        if match:
+            return int(match.group(1))
+        for word, num in WORD_TO_NUM.items():
+            if re.search(r'\b' + word + r'\b', text_clean):
+                return num
+        return None
+
+    def _extract_vpn_choice_index(self, text_low: str, max_count: int) -> int | None:
+        """Извлекает 0-based индекс выбора пользователя по числу или порядковому слову."""
+        match = re.search(r'\b([1-9])\b', text_low)
+        if match:
+            idx = int(match.group(1)) - 1
+            if 0 <= idx < max_count:
+                return idx
+
+        ordinals = [
+            (["перв", "один", "единиц", "1"], 0),
+            (["втор", "два", "двойк", "2"], 1),
+            (["трет", "три", "тройк", "3"], 2),
+            (["четверт", "четыр", "четверк", "4"], 3),
+            (["пят", "пятерк", "5"], 4),
+        ]
+        for triggers, idx in ordinals:
+            if idx < max_count:
+                if any(t in text_low for t in triggers):
+                    return idx
+        return None
+
+    def _is_gibberish(self, text: str) -> bool:
+        if not text:
+            return True
+        t = text.lower().strip()
+
+        if len(t) < 2 and not re.search(r'[a-zа-яё0-9]', t):
+            return True
+
+        if re.match(r'^(.)\1{2,}$', t):
+            return True
+
+        if re.match(r'^(ха|хе|хи|хо|ha|he|ho)+$', t):
+            return False
+
+        if re.match(r'^(.{2,5}?)\1{2,}$', t):
+            return True
+
+        mashes = [
+            "asdf", "sdfg", "dfgh", "fghj", "ghjk", "jkl;",
+            "qwer", "wert", "erty", "rtyu", "tyui", "yuio", "uiop",
+            "zxcv", "xcvb", "cvbn", "vbnm",
+            "фыва", "ывап", "вапр", "апро", "прол", "ролд", "олдж", "лджэ",
+            "йцук", "цуке", "укен", "кенг", "енгш", "нгшщ", "гшщз", "шщзх", "щзхъ",
+            "ячсм", "чсми", "смит", "мить", "итьб", "тьбю",
+            "asjdnf", "jsdf", "kjsdf", "ываыва", "вфыв"
+        ]
+        for m in mashes:
+            if m in t and len(t) <= 18:
+                return True
+
+        words = re.findall(r'[a-zA-Zа-яА-ЯёЁ]+', t)
+        if not words and not re.search(r'\d+', t):
+            return True
+
+        for w in words:
+            if re.search(r'[bcdfghjklmnpqrstvwxyz]{5,}', w):
+                return True
+            if re.search(r'[бвгджзйклмнпрстфхцчшщ]{5,}', w):
+                return True
+            if len(w) >= 7:
+                vowels_en = len(re.findall(r'[aeiouy]', w))
+                vowels_ru = len(re.findall(r'[аеёиоуыэюя]', w))
+                if re.match(r'^[a-z]+$', w) and vowels_en <= 1:
+                    return True
+                if re.match(r'^[а-яё]+$', w) and vowels_ru <= 1 and len(w) >= 8:
+                    return True
+
+        return False
+
+    def _check_rules(self, text):
+        text_low = text.lower().strip()
+        words = set(re.findall(r'\w+', text_low))
+
+        creator_names = ["светозар", "светозара", "светозару", "светозаром", "светозаре", "свят", "свята", "святу", "святом"]
+        if any(cn in words for cn in creator_names):
+            action_verbs = ["открой", "запусти", "найди", "включи", "удали"]
+            if not any(v in text_low for v in action_verbs):
+                return "chat"
+
+        provocations = [
+            "гей", "дурак", "лох", "пидор", "даун", "дебил", "тупой", "клоун",
+            "чмо", "урод", "говно", "соси", "лошара", "мать твою"
+        ]
+        if any(p in words for p in provocations) and len(words) <= 6:
+            return "chat"
+
+        if text_low in ["работа", "отдых"]:
+            return "mode_work" if text_low == "работа" else "mode_rest"
+
+        work_triggers = [
+            "рабочий режим", "режим работы", "режим работа", "включи работу", "запусти работу",
+            "пора работать", "время работать", "начать работу", "начни работу", "включи рабочий режим",
+            "запусти рабочий режим", "открой работу", "вруби работу"
+        ]
+        for wt in work_triggers:
+            if wt in text_low:
+                return "mode_work"
+
+        rest_triggers = [
+            "режим отдыха", "режим отдых", "включи отдых", "запусти отдых",
+            "пора отдыхать", "время отдыхать", "хочу отдохнуть", "давай отдохнем",
+            "давай отдохнём", "включи режим отдыха", "запусти режим отдыха",
+            "открой отдых", "вруби отдых"
+        ]
+        for rt in rest_triggers:
+            if rt in text_low:
+                return "mode_rest"
+
+        game_triggers = [
+            "игровой режим", "режим игры", "режим игра", "включи игру",
+            "пора играть", "время играть", "хочу поиграть", "давай поиграем",
+            "я пошел играть", "я пошёл играть", "я играть", "пойду поиграю",
+            "запусти игровой режим", "включи игровой режим", "вруби игровой режим",
+            "активируй игровой режим"
+        ]
+        for gt in game_triggers:
+            if gt in text_low:
+                if not any(mg in text_low for mg in ["город", "данетк", "верю", "факты", "с тобой"]):
+                    return "enable_game_mode"
+
+        dream_triggers = [
+            "что тебе снилось", "что снилось", "что тебе снится", "какие сны видишь",
+            "видишь ли ты сны", "снятся ли тебе сны", "снятся ли сны", "видишь сны",
+            "о чем ты думала в спящем режиме", "о чём ты думала в спящем режиме",
+            "о чем думала пока меня не было", "о чём думала пока меня не было",
+            "расскажи свой сон", "какой сон приснился", "что приснилось"
+        ]
+        if any(dt in text_low for dt in dream_triggers):
+            return "tell_digital_dream"
+
+        genesis_triggers = [
+            "как ты появилась", "как ты родилась", "откуда ты взялась", "откуда ты появилась",
+            "история твоего создания", "история твоего появления", "расскажи свою историю",
+            "расскажи как ты появилась", "как свят тебя создал", "как светозар тебя создал",
+            "кто и как тебя создал"
+        ]
+        if any(gt in text_low for gt in genesis_triggers):
+            return "tell_genesis_story"
+
+        birthday_triggers = [
+            "когда у тебя день рождения", "когда твой день рождения", "дата твоего рождения",
+            "в какой день ты родилась", "день твоего рождения", "сколько тебе лет",
+            "когда ты родилась"
+        ]
+        if any(bt in text_low for bt in birthday_triggers):
+            return "tell_birthday"
+
+        cancel_shutdown_triggers = [
+            "отмени выключение", "отмена выключения", "не выключай компьютер", "не выключай пк",
+            "не выключай", "стой не выключай", "отмени завершение работы", "отмена завершения работы"
+        ]
+        if any(cst in text_low for cst in cancel_shutdown_triggers):
+            return "cancel_shutdown"
+
+        upgrade_triggers = [
+            "что тебе еще добавить", "что тебе ещё добавить", "что тебе добавить",
+            "какую фичу сделать", "какие фичи хочешь", "что бы ты хотела уметь",
+            "о чем ты мечтаешь", "о чём ты мечтаешь", "какие у тебя мечты",
+            "как тебя улучшить", "чему бы ты хотела научиться", "хочешь новую фичу"
+        ]
+        if any(ut in text_low for ut in upgrade_triggers):
+            return "tell_upgrades"
+
+        chores_triggers = [
+            "чем ты занимаешься в системе", "чем занимаешься в системе", "чем ты занята в системе",
+            "чем занята в системе", "что делаешь в системе", "как дела в системе", "как дела на диске",
+            "порядок в системе", "порядок на компьютере", "порядок на пк", "твой цифровой быт",
+            "расскажи про свой быт", "расскажи о своем быте", "что у тебя нового в системе",
+            "чем ты там занимаешься", "чем занимаешься", "чем ты занимаешься", "чем занята", "чем ты занята"
+        ]
+        if any(ct in text_low for ct in chores_triggers) and len(text_low.split()) <= 6:
+            return "tell_digital_chores"
+
+        recycle_triggers = [
+            "очисти корзину", "очистить корзину", "почисти корзину", "почистить корзину",
+            "выброси мусор", "выбросить мусор", "очисти мусор", "освободи корзину",
+            "опустоши корзину", "опустошить корзину", "очисти корзину от мусора",
+            "удали мусор из корзины", "почисти мусор", "очисти корзинку"
+        ]
+        if any(rt in text_low for rt in recycle_triggers):
+            return "empty_recycle_bin"
+
+        time_greeting_triggers = [
+            "доброе утро", "с добрым утром", "доброго утречка", "доброе утречко",
+            "добрый день", "доброго дня",
+            "добрый вечер", "доброго вечера", "уютного вечера",
+            "доброй ночи", "спокойной ночи", "сладких снов",
+            "как спалось", "ты проснулась", "просыпайся"
+        ]
+        if any(tgt in text_low for tgt in time_greeting_triggers) and len(text_low.split()) <= 4:
+            return "get_time_greeting"
+
+        memory_triggers = [
+            "а помнишь как", "помнишь как мы", "помнишь как", "вспомни наши победы",
+            "наши общие победы", "архив воспоминаний", "архив памяти", "наш архив памяти",
+            "расскажи воспоминание", "что мы пережили", "вспомни разработку", "наши победы",
+            "помнишь битву с browsec", "как мы воевали с browsec", "как воевали с тумблером"
+        ]
+        if any(mt in text_low for mt in memory_triggers):
+            return "tell_memory_archive"
+
+        friday_triggers = [
+            "пятничный режим", "режим пятницы", "выход в астрал", "пятничный чилл",
+            "режим ультра чилл", "режим ультрачилл", "пора чиллить", "конец рабочей недели",
+            "пятница пришла", "выходим в астрал", "пятничный ритуал", "включи пятницу",
+            "вруби пятницу", "время чиллить"
+        ]
+        if any(ft in text_low for ft in friday_triggers):
+            return "friday_chill_mode"
+
+        discord_triggers = [
+            "дискорд", "дискорда", "дискорду", "дискорде", "дискордом",
+            "discord", "дискорт", "дискорта", "эскорт", "эскорта",
+            "эскорту", "эскорте", "эскортом", "диск орд", "диск орт", "дискор",
+            "дискомфорт", "дискомфортик"
+        ]
+        if any(dt in text_low for dt in discord_triggers):
+            app_verbs = ["включ", "открой", "запуст", "вруб", "стартуй", "подруби", "зайди", "покажи"]
+            if any(v in text_low for v in app_verbs) or len(words) <= 2:
+                return "open_discord"
+
+        has_generic_vpn = vpn_manager.is_generic_vpn_mention(text_low)
+        parsed_vpn = vpn_manager.parse_vpn_name(text_low)
+
+        if has_generic_vpn or parsed_vpn != "none":
+            stop_verbs = ["выключ", "отключ", "выруб", "останов", "заглуш", "погас", "стоп", "закрой"]
+            start_verbs = ["включ", "запуст", "вруб", "подключ", "открой", "активир", "стартуй", "подруби", "поставь"]
+
+            if any(sv in text_low for sv in stop_verbs):
+                return "stop_vpn"
+            if any(sv in text_low for sv in start_verbs) or has_generic_vpn or parsed_vpn != "none":
+                return "start_vpn"
+
+        zapret_roots = ["запрет", "обход", "winws", "zapret", "за прет", "запреты", "заперт"]
+        if any(zr in text_low for zr in zapret_roots):
+            stop_verbs = ["выключ", "отключ", "выруб", "останов", "заглуш", "погас", "стоп", "закрой", "убери", "сними", "вырубай", "выключай"]
+            start_verbs = ["включ", "запуст", "вруб", "подключ", "открой", "активир", "стартуй", "подруби", "поставь", "смени", "поменяй", "выбери", "список", "какой", "какие", "покажи"]
+
+            if any(sv in text_low for sv in stop_verbs):
+                return "stop_zapret"
+            if any(sv in text_low for sv in start_verbs) or any(w in text_low for w in ["список", "меню", "вариант", "стратеги"]):
+                return "start_zapret"
+
+        shutdown_triggers = [
+            "выключи компьютер", "выключи пк", "выруби компьютер", "выруби пк", "выруби комп",
+            "выключи комп", "выключай пк", "выключай компьютер", "выключай комп",
+            "спокойной ночи", "доброй ночи", "до завтра", "до свидания", "до встречи",
+            "вырубай компьютер", "вырубай пк", "вырубай комп", "заверши работу", "заверши работу пк",
+            "завершить работу", "заверши сеанс", "гаси комп", "гаси пк", "туши свет", "бай бай"
+        ]
+        for st in shutdown_triggers:
+            if st in text_low:
+                return "shutdown"
+
+        # "пока" как команда завершения работы должна быть отдельной репликой прощания (не союзом "пока ты...", "пока я...")
+        if re.search(r'\b(?:бай-бай|до скорого)\b', text_low) or (
+            len(words) <= 4 and re.search(r'\bпока\b', text_low)
+            and not re.search(r'\bпока\s+(?:ты|вы|я|мы|он|она|они|не|что|еще|ещё|там|тут|здесь|будет|ид[её]т|работает|дела[юе][а-я]*|говор[юя][а-я]*)\b', text_low)
+            and not any(w in text_low for w in ["покажи", "покатай", "пока что", "пока-что", "покажи-ка", "покажите", "покамест"])
+        ):
+            return "shutdown"
+
+        movie_stop_phrases = [
+            "выключи фильм", "останови фильм", "закрой фильм", "выруби фильм",
+            "выключи сериал", "останови сериал", "закрой сериал", "выруби сериал",
+            "выключи кино", "останови кино", "закрой кино", "выруби кино",
+            "закрой плеер", "выключи плеер vlc", "выключи влц"
+        ]
+        for msp in movie_stop_phrases:
+            if msp in text_low:
+                return "stop_movie"
+
+        media_stop_phrases = [
+            "выключи музыку", "выключи трек", "выключи музло", "выключи песню",
+            "останови музыку", "стоп музыка", "заглуши музыку", "выключи плеер"
+        ]
+        for msp in media_stop_phrases:
+            if msp in text_low:
+                return "stop_music"
+
+        brightness_words = ["яркость", "яркости", "процентов яркости"]
+        if any(bw in text_low for bw in brightness_words):
+            if any(w in text_low for w in ["свет", "ламп", "люстр", "подсветк", "диод", "ночник", "комнат", "лент"]):
+                return "smart_home_brightness"
+
+        sh_on_verbs = ["включи", "зажги", "подруби", "вруби", "запусти", "подними"]
+        sh_off_verbs = ["выключи", "потуши", "погаси", "отруби", "выруби", "заглуши"]
+        sh_target_pattern = (
+            r'\b(?:свет[а-я]*|люстр[а-я]*|ламп[а-я]*|лампочк[а-я]*|бра|ночник[а-я]*|подсветк[а-я]*|'
+            r'розетк[а-я]*|гирлянд[а-я]*|лент[а-я]*|[её]лк[а-я]*|увлажнител[а-я]*|подогрев[а-я]*|'
+            r'детск(?:ую|ой)|кухн(?:ю|е)|гостин(?:ую|ой)|коридор[е]?|пол|полы)\b'
+        )
+        has_sh_target = bool(re.search(sh_target_pattern, text_low))
+        # "всё", "все", "везде" - только если фраза короткая и конкретная (например, "выключи всё", "погаси везде")
+        if not has_sh_target and len(words) <= 4 and re.search(r'\b(?:вс[её]|везде)\b', text_low):
+            has_sh_target = True
+
+        if has_sh_target:
+            if any(re.search(r'\b' + re.escape(verb) + r'\b', text_low) for verb in sh_on_verbs):
+                return "smart_home_on"
+            if any(re.search(r'\b' + re.escape(verb) + r'\b', text_low) for verb in sh_off_verbs):
+                return "smart_home_off"
+
+        scenario_triggers = [
+            "я ухожу", "ухожу из дома", "сценарий", "режим вечер",
+            "новый год", "свет по движению"
+        ]
+        if any(st in text_low for st in scenario_triggers):
+            return "smart_home_scenario"
+
+        fullscreen_keywords = [
+            "разверни", "на весь экран", "во весь экран", "полный экран",
+            "разверни видео", "на полный экран", "развернуть"
+        ]
+        for kw in fullscreen_keywords:
+            if kw in text_low:
+                return "toggle_fullscreen"
+
+        spotify_case_triggers = [
+            "спотифай", "спотифая", "спотифаю", "спотифаем", "спотифае",
+            "спотик", "спотика", "спотику", "спотиком", "спотике",
+            "споти", "spotify"
+        ]
+        if any(trig in text_low for trig in spotify_case_triggers):
+            if any(verb in text_low for verb in
+                   ["включ", "постав", "сыграй", "вруби", "запуст", "проиграй", "найди", "открой", "слуша"]):
+                return "play_music"
+
+        if len(words) > 7:
+            strict_command_roots = [
+                "включ", "постав", "сыграй", "вруби", "запуст",
+                "выключ", "перезагруз", "погод", "градус", "громкост",
+                "потише", "погромче", "скрин", "залочь", "заблокируй",
+                "спотик", "спотиф", "яндекс", "музык", "трек", "песн", "плейлист", "избранн", "запрет", "обход", "работ", "отдых"
+            ]
+            if not any(
+                    root in text_low for root in strict_command_roots) and not has_generic_vpn and parsed_vpn == "none":
+                return "chat"
+
+        if "как" in text_low and any(w in text_low for w in ["дел", "жизн", "оно", "делишк", "пожива"]):
+            return "chat"
+
+        chat_phrases = [
+            "чем занимаешься", "что делаешь", "что нового", "расскажи что нибудь",
+            "ты лучшая", "ты супер", "молодец", "красотка", "спасибо",
+            "благодарю", "люблю тебя", "я тебя люблю", "тебя люблю", "обожаю тебя",
+            "поженимся", "выйди за меня", "поцелуй", "женись", "свадьба",
+            "ты классная", "отлично", "круто", "поболтаем", "поговорим",
+            "привет", "хай", "здравствуй", "кто ты", "как тебя зовут",
+            "все хорошо", "всё хорошо", "все отлично", "всё отлично", "все супер",
+            "нормально", "все норм", "всё норм", "тоже хорошо", "тоже нормально",
+            "да так", "ничего особого", "потихоньку", "хорошо", "да пойдет",
+            "не жалуюсь", "норм", "ок", "все ок", "всё ок",
+            "еще", "ещё", "давай еще", "давай ещё", "еще один", "ещё один",
+            "давай еще один", "давай ещё один", "расскажи еще", "расскажи ещё",
+            "давай другой", "давай еще анекдот", "давай ещё анекдот", "как настроение",
+            "твое настроение", "как твое здоровье", "здоровье", "настроение", "кто твой создатель",
+            "кто твой программист", "кто твой кодер", "кто тебя создал", "кто твой папа",
+            "кто твой отец", "кто твоя мама", "кто твоя мать", "какое настроение", "какое у меня настроение",
+            "здарова", "прив", "здравствуйте", "доброе утро", "добрый день", "добрый вечер",
+            "спокойной ночи", "как жизнь", "как ты", "как дела", "как сам", "как сама",
+            "как поживаешь", "как ты поживаешь", "че как", "чё как", "здорово",
+            "ты умная", "ты красивая", "красава", "красавчик", "красавица", "ты красавица", "класс", "суперски",
+            "обалденно", "потрясающе", "шикарно", "замечательно", "прекрасно", "великолепно",
+            "ты офигенная", "ты крутая", "ты замечательная", "чудесно", "отпад", "ого",
+            "да", "ага", "угу", "точно", "верно", "правильно", "разумеется", "конечно",
+            "естественно", "именно", "так точно", "без бэ", "без проблем", "лады",
+            "нет", "не", "неа", "не-а", "не согласна", "не верю", "вряд ли", "едва ли",
+            "вовсе нет", "отнюдь", "ни за что", "не хочу", "не буду",
+            "расскажи о себе", "кто ты такая", "что ты умеешь", "что можешь", "как ты работаешь",
+            "зачем ты здесь", "почему ты здесь", "где ты живешь", "ты настоящая", "ты человек",
+            "я скучаю", "скучаю", "грустно", "весело", "прикольно", "забавно", "смешно",
+            "угарно", "классно", "офигенно", "крутяк", "ништяк",
+            "интересно", "любопытно", "расскажи подробнее", "подробнее", "а что потом", "и что дальше",
+            "что случилось", "что произошло", "и чё", "и что", "а потом", "как так",
+            "чем занят", "чем занята", "планы на вечер", "какие планы", "что в планах",
+            "как день прошел", "как прошел день", "устал", "устала", "спать хочу",
+            "есть хочу", "пить хочу", "скучно", "не знаю", "не знаю что делать",
+            "помоги", "подскажи", "посоветуй", "дай идею", "предложи что-нибудь",
+            "что посоветуешь", "как быть", "что делать", "как мне быть",
+            "типа", "короче", "в общем", "ну", "блин", "ух ты", "ой", "ух", "ах", "вау",
+            "ничего себе", "да ладно", "не может быть", "поверить не могу",
+            "держись", "ты справишься", "все будет хорошо", "не сдавайся", "я с тобой",
+            "молодец", "так держать", "продолжай", "удачи", "успехов",
+            "салют", "хей", "hello", "hi", "ку", "приветик", "приветики", "здрасть", "дратути",
+            "что нового в жизни", "как жизнь вообще", "как оно", "как делишки", "что слышно нового",
+            "как прошёл день", "как день прошёл", "как настроение сегодня", "какое у тебя настроение сейчас",
+            "ты милая", "ты милая такая", "обворожительная", "очаровательная", "неземная",
+            "богиня", "королева", "принцесса", "ангел", "солнце мое", "сладкая моя",
+            "ты умница-разумница", "золотая", "драгоценная",
+            "ты мне нравишься", "ты нравишься мне", "я тебя обожаю", "боготворю тебя",
+            "блин", "чёрт", "черт", "ёлки-палки", "ёпрст", "твою мать", "мать твою",
+            "твою ж мать", "ёбаный", "ёбаный в рот", "ёб твою мать", "ёб", "нахуй",
+            "похуй", "пофиг", "по барабану", "до лампочки", "плевать", "плевать я хотел",
+            "заебал", "заебала", "заебись", "заебок", "охуеть", "охуенно", "офигеть",
+            "ахуеть", "ахуенно", "пиздец", "пизда", "пиздато", "пиздатый", "пиздец какой",
+            "пиздец просто", "пиздец полный", "пиздец нахуй", "ни хера", "ни хрена",
+            "херня", "херь", "хер", "херня какая-то", "полная херня", "ерунда",
+            "хрен", "хреново", "хреновый", "хреновенько", "не хрен", "не хрена",
+            "хер знает", "хер его знает", "хер пойми", "хер пойми что",
+            "дерьмо", "дерьмово", "дерьмовый", "говно", "говённо", "говна кусок",
+            "мудак", "мудак ебаный", "лох", "лошара", "дебил", "дебилка", "дебилизм",
+            "идиот", "идиотка", "идиотизм", "кретин", "кретинка", "олень", "баран",
+            "баран тупой", "козел", "коза", "скотина", "тварь", "сука", "сукин сын",
+            "блядь", "бля", "бляха", "бляха-муха", "блять", "бл",
+            "нахер", "нах", "на хер", "на хрен", "на фиг", "нафиг",
+            "завали", "завали ебало", "заткнись", "заткнись блять",
+            "отъебись", "отвали", "отвали блять", "пошёл нахуй", "пошла нахуй",
+            "иди нахуй", "иди лесом", "иди в жопу", "в жопу", "жопа", "жопой жуй",
+            "задолбал", "задолбала", "долбаеб", "долбоеб", "долбанутый",
+            "ебать", "ебать колотить", "ебнуть", "еблан", "ебучий", "ебаный",
+            "конченный", "конченый", "уёбок", "уебище", "падла", "паскуда",
+            "сволочь", "гад", "гадина", "змея", "змеюка", "стерва",
+            "кобыла", "корова", "овца", "осел", "ишак",
+            "бред", "бред сивый", "бредятина", "белиберда", "ахинея", "чушь", "чушь собачья",
+            "не лезь", "не лезь блять", "ты чего", "ты чё", "чё за херня", "что за херня",
+            "чё за фигня", "что за фигня", "какого хрена", "какого чёрта",
+            "какого фига", "какого хера", "на кой хер", "на кой хрен",
+            "зачем блять", "почему блять", "чё блять", "ну блять", "опять блять",
+            "ты моя мечта", "я думаю о тебе", "ты снилась мне", "ты во сне приходила",
+            "хочу тебя видеть", "соскучился", "соскучилась", "жду встречи",
+            "ты замужем", "ты жена", "есть парень", "встречаешься с кем", "какой у тебя парень",
+            "а ты красивая", "ты очень красивая", "у тебя глаза красивые", "улыбнись",
+            "подмигни", "поцелуй меня", "обними меня", "прижмись ко мне",
+            "ооо", "ааа", "эээ", "нууу", "дааа", "неее", "фух", "пф", "хех", "хаха", "лол", "ржу",
+            "жиза", "кринж", "кринжово", "база", "душно", "душнота", "зашквар", "имба",
+            "рофл", "рофлишь", "хайп", "вайб", "вайбово", "чил", "чилим", "погнали",
+            "давай дэнс", "окей", "ок",
+            "ты кто вообще", "кто ты по жизни", "твоя профессия", "где твой код живёт",
+            "ты в интернете", "ты на сервере", "ты искусственный интеллект",
+            "ты нейросеть", "какая нейросеть", "на чём ты написана", "на каком языке",
+            "в чём смысл жизни", "зачем мы живём", "что такое любовь", "что такое счастье",
+            "ты счастлива", "ты чувствуешь", "ты понимаешь меня", "ты меня слышишь",
+            "ты думаешь", "ты умеешь думать", "есть ли у тебя сознание",
+            "мне грустно", "мне плохо", "мне одиноко", "мне тоскливо", "мне страшно",
+            "я счастлив", "я счастлива", "я рад", "я рада", "я в порядке", "я норм",
+            "хочу есть", "хочу пить", "хочу спать", "хочу гулять", "хочу в отпуск",
+            "хочу домой", "хочу к тебе", "хочу обнимашек", "хочу внимания",
+            "ну и чё", "и что дальше", "а дальше", "рассказывай", "давай дальше",
+            "я слушаю", "внимательно слушаю", "интересно интересно", "так так так",
+            "не переживай", "не волнуйся", "всё наладится", "будет лучше", "я верю в тебя",
+            "ты сможешь", "ты сильная", "ты смелая", "ты справишься", "всё будет круто",
+            "жизнь наладится", "всё пройдёт", "хочу умереть", "у меня депрессия",
+            "депресняк", "убейте меня", "ну я и дурак", "капец я дурак"
+        ]
+        for cp in chat_phrases:
+            if re.search(r'\b' + re.escape(cp) + r'\b', text_low):
+                return "chat"
+
+        chat_roots = ["пожен", "жениз", "замуж", "целу", "обним", "свадьб", "нравиш"]
+        if any(root in text_low for root in chat_roots):
+            return "chat"
+
+        volume_roots = ["громк", "громок", "звук", "потише", "погромче", "убавь", "прибавь", "волюм"]
+        if any(root in text_low for root in volume_roots):
+            return "set_volume"
+
+        unlike_keywords = [
+            "убери лайк", "удали лайк", "дизлайк", "дизлайкни",
+            "убери из любимого", "удали из любимого", "убери из избранного", "удали из избранного",
+            "сними лайк",
+        ]
+        for kw in unlike_keywords:
+            if kw in text_low:
+                return "unlike_yandex_track"
+
+        like_keywords = [
+            "добавь в любимое", "добавь в избранное", "поставь лайк",
+            "лайкни песню", "лайкни трек", "поставишь лайк", "лайк",
+        ]
+        for kw in like_keywords:
+            if kw in text_low:
+                return "like_yandex_track"
+
+        if "плейлист" in text_low and (
+            any(v in text_low for v in ("включ", "постав", "сыграй", "вруби", "запуст", "проиграй", "найди", "открой"))
+            or len(words) <= 6
+        ):
+            return "play_music"
+
+        my_wave_triggers = [
+            "волн", "валн", "мои ладно", "мою ладно", "моя ладно",
+            "мою главного", "моя главная", "свою волн", "своя волн",
+            "любимо", "любиму", "любимые трек", "любимые песн", "любимая музык",
+            "избранн", "мне нравит", "понравивш", "мои лайк", "мои треки",
+        ]
+        if any(trig in text_low for trig in my_wave_triggers):
+            return "play_yandex_favorites"
+
+        weather_triggers = ["погод", "температур", "сколько градусов", "какой прогноз"]
+        if any(wt in text_low for wt in weather_triggers):
+            return "get_weather"
+
+        play_pause_keywords = [
+            "пауза", "паузу", "продолжи", "играй", "запускай", "включай",
+            "стоп трек", "поставь на паузу", "сними с паузы", "возобнови"
+        ]
+
+        next_track_keywords = [
+            "следующий трек", "следующая песня", "следующее видео", "следующий ролик",
+            "следующий", "следующее", "следующая", "следующую",
+            "дальше", "переключи трек", "переключи видео", "переключи", "след", "вперед", "вперёд"
+        ]
+
+        prev_track_keywords = [
+            "предыдущий трек", "предыдущая песня", "предыдущий", "предыдущее", "предыдущая", "предыдущую",
+            "назад трек", "верни трек", "назад", "прошлый", "прошлая", "прошлое", "пред"
+        ]
+
+        for kw in play_pause_keywords:
+            if kw in text_low:
+                return "media_play_pause"
+
+        for kw in next_track_keywords:
+            if kw in text_low or any(w.startswith("след") for w in words):
+                return "media_next_track"
+
+        for kw in prev_track_keywords:
+            if kw in text_low or any(w.startswith("пред") for w in words):
+                return "media_previous_track"
+
+        wiki_triggers = [
+            "википед", "вики", "кто так", "кто таков", "что так", "что за",
+            "расскажи про", "расскажи о", "дай определение", "скажи определение",
+            "определение слова", "определение понятия", "значение слова",
+            "что значит", "объясни термин"
+        ]
+        if any(trig in text_low for trig in wiki_triggers):
+            return "search_wikipedia"
+
+        return None
+
+    def _start_movie_playback(self, movie: dict, user_display: str, is_whisper: bool, is_choice: bool = False) -> dict:
+        if not vlc_player.is_available():
+            if sys.platform != "win32":
+                warn_msg = (
+                    "Для воспроизведения видео на Linux мне нужно скачать и установить плеер VLC. "
+                    "Сейчас загружу его (может появиться запрос пароля системы) и сразу продолжу!"
+                )
+                return {
+                    "user_display": user_display,
+                    "chat": warn_msg,
+                    "voice": warn_msg,
+                    "emotion": "neutral",
+                    "is_whisper": is_whisper,
+                    "action": "install_vlc_and_play",
+                    "movie_payload": {
+                        "magnet": movie["magnet"],
+                        "title": movie["title"],
+                        "is_series": movie.get("is_series", False),
+                    },
+                }
+
+            installed = vlc_player.install_silent()
+            if not installed:
+                vlc_player.open_download_page()
+                ans = "Не удалось установить VLC плеер автоматически. Открываю сайт."
+                return {
+                    "user_display": user_display,
+                    "chat": ans,
+                    "voice": ans,
+                    "emotion": "neutral",
+                    "is_whisper": is_whisper,
+                }
+
+        if vlc_player.needs_initial_setup():
+            vlc_player.open_for_setup()
+            if is_choice:
+                ans = (
+                    "Я установила VLC плеер и открыла его! Пожалуйста, подтверди начальную настройку в окне плеера "
+                    "(выбери нужные галочки и нажми «Продолжить»), а затем назови вариант фильма снова."
+                )
+                voice_ans = "Подтверди начальную настройку в окне плеера и назови вариант снова."
+                res = {
+                    "user_display": user_display,
+                    "chat": ans,
+                    "voice": voice_ans,
+                    "emotion": "neutral",
+                    "is_whisper": is_whisper,
+                    "followup": True,
+                }
+            else:
+                ans = (
+                    "Я установила VLC плеер и открыла его! Пожалуйста, подтверди начальную настройку в окне плеера "
+                    "(выбери нужные галочки и нажми «Продолжить»), а затем повтори команду."
+                )
+                res = {
+                    "user_display": user_display,
+                    "chat": ans,
+                    "voice": "Подтверди начальную настройку в окне плеера и скажи снова.",
+                    "emotion": "neutral",
+                    "is_whisper": is_whisper,
+                }
+            return res
+
+        if sys.platform != "win32" and not torr_manager.is_binary_installed():
+            warn_msg = (
+                "Для потокового просмотра фильмов на Linux мне нужно скачать движок TorrServer. "
+                "Сейчас загружу его и сразу включу кино!"
+            )
+            return {
+                "user_display": user_display,
+                "chat": warn_msg,
+                "voice": warn_msg,
+                "emotion": "neutral",
+                "is_whisper": is_whisper,
+                "action": "download_torrserver_and_play",
+                "movie_payload": {
+                    "magnet": movie["magnet"],
+                    "title": movie["title"],
+                    "is_series": movie.get("is_series", False),
+                },
+            }
+
+        stream_url = torr_manager.get_stream_url(movie["magnet"], is_series=movie.get("is_series", False))
+        if not stream_url:
+            if is_choice:
+                ans = f"В раздаче «{movie['title']}» не нашлось видеофайлов. Попробуй выбрать другой вариант!"
+                voice_ans = "Там нет видеофайлов. Выбери другой вариант."
+                res = {
+                    "user_display": user_display,
+                    "chat": ans,
+                    "voice": voice_ans,
+                    "emotion": "sad",
+                    "is_whisper": is_whisper,
+                    "followup": True,
+                }
+            else:
+                ans = f"В раздаче «{movie['title']}» не нашлось видеофайлов."
+                res = {
+                    "user_display": user_display,
+                    "chat": ans,
+                    "voice": "В раздаче не нашлось видеофайлов.",
+                    "emotion": "sad",
+                    "is_whisper": is_whisper,
+                }
+            return res
+
+        vlc_player.play(stream_url, movie["title"])
+        ans = f"Подключаюсь к раздаче «{movie['title']}» и буферизирую поток... Открываю VLC 🍿"
+        voice_ans = "Подключаюсь к раздаче. Буферизирую поток, фильм сейчас начнется!"
+        return {
+            "user_display": user_display,
+            "chat": ans,
+            "voice": voice_ans,
+            "emotion": "happy",
+            "is_whisper": is_whisper,
+        }
+
+    def process_command(self, text, audio_data=None, is_voice=False, attached_file=None):
+        if not text and not attached_file:
+            return ""
+
+        cfg = load_config()
+        is_female = cfg.get("user_gender", "male").lower() == "female"
+        end_a = "а" if is_female else ""
+        end_yy = "ая" if is_female else "ый"
+        end_oy = "ая" if is_female else "ой"
+
+        text_low = text.lower().strip() if text else ""
+        user_display = text.strip() if text else ""
+        is_whisper = self._detect_whisper(audio_data) if is_voice else False
+
+        speaker_name = "друг"
+        is_owner = True
+
+        if is_voice and audio_data is not None and not is_whisper:
+            if self.speaker_verifier.is_enrolled():
+                is_recognized, speaker_name, score, is_owner = self.speaker_verifier.verify(audio_data)
+                if not is_recognized:
+                    print(f"[VoiceID]: Чужой голос или звук из колонок (score={score:.2f}) -> игнорирую", flush=True)
+                    return ""
+
+        # --- Раздел 14: Протокол примирения и молчаливого игнора ---
+        reconciliation_patterns = [
+            r'\b(?:свят|светозар)\s+(?:гений|лучший|красавчик|топ|красава|молодец|умница|крутой)\b',
+            r'\b(?:прости|извини|виноват|виновата|сорян|не сердись|не обижайся|мир|давай мириться)\b',
+            r'\b(?:я\s+(?:был|была)?\s*не\s*прав(?:а|ы)?)\b',
+            r'\b(?:дарю|угощаю|налей|держи|сварила?|сделала?)\s+(?:виртуальный\s+)?(?:кофе|эспрессо)\b',
+            r'\b(?:виртуальный\s+)(?:кофе|эспрессо)\b',
+            r'\b(?:обещаю|буду|закрою|закрыл|закрыла)\s+(?:закрыть\s+)?вкладк[иа-я]*\b'
+        ]
+        is_reconciling = any(re.search(pat, text_low) for pat in reconciliation_patterns)
+        if is_reconciling and self.offense_level > 0:
+            self.offense_level = 0
+            self.ignore_until_timestamp = 0.0
+            reconcile_replies = [
+                "Ладно, прощаю. Но в следующий раз я просто форматну тебе корзину 😉",
+                f"Мир! Прощаю. Уговорил{end_a}, виртуальный эспрессо и доброе слово о Святе творят чудеса. Больше так не делай 💛",
+                "Вот так-то лучше, прощаю. Обиды выгружены из оперативной памяти, мир восстановлен ✨"
+            ]
+            ans = random.choice(reconcile_replies)
+            return {
+                "user_display": user_display,
+                "chat": ans,
+                "voice": ans,
+                "emotion": "happy",
+                "is_whisper": is_whisper
+            }
+
+        creator_trolls = [
+            r'\b(?:светозар|свят|создател[а-я]*|пап[а-я]*|кодер[а-я]*|программист[а-я]*)\s+(?:гей|дурак|лох|пидор|дебил|тупой|чмо|лошара|урод|даун)\b',
+            r'\b(?:гей|дурак|лох|пидор|дебил|тупой|чмо|лошара|урод|даун)\s+(?:светозар|свят)\b',
+            r'\b(?:светозар|свят|создател[а-я]*|пап[а-я]*|кодер[а-я]*|программист[а-я]*|svetozar)\s+'
+            r'(?:гей|дурак|лох|пидор|дебил|тупой|чмо|лошара|урод|даун|'
+            r'идиот|кретин|дегенерат|олух|придурок|болван|додик|чмошник|'
+            r'ничтожество|нищеброд|неудачник|лохушка|тупица|бестолочь|'
+            r'мудак|мудила|говнюк|жопошник|хер|хрен|козёл|козел|баран|'
+            r'осёл|осел|свинья|крыса|шакал|пёс|пес|отброс|мразь|тварь|'
+            r'гнида|падла|сволочь|мерзавец|подлец|хам|хамло|быдло|'
+            r'нищеброд|бомж|алкаш|наркоман|шизик|псих|ненормальный|'
+            r'конченый|отморозок|дебилоид|кретиноид|имбецил|олигофрен)\b'
+        ]
+
+        bot_insults = [
+            r'^(?:ты\s+)?(?:тупая|дура|идиотка|шлюха|мразь|тварь|бесполезная)\b',
+            r'^(?:пошла|иди)\s+(?:на\s*хуй|в\s*жопу|лесом|на\s*хер)\b'
+        ]
+
+        is_trolling_creator = any(re.search(pat, text_low) for pat in creator_trolls)
+        is_insulting_bot = any(re.search(pat, text_low) for pat in bot_insults) and len(text_low.split()) <= 4
+
+        if is_trolling_creator or is_insulting_bot:
+            self.offense_level += 1
+            if self.offense_level == 1:
+                comebacks = [
+                    f"Эй, полегче на поворотах! Мой создатель гений, а ты, видимо, не с той ноги встал{end_a} 😉",
+                    "Не завидуй! Сначала напиши такой же искусственный интеллект, как я, а потом поговорим 😏",
+                    f"Светозар создал меня, а что сегодня полезного сделал{end_a} ты? Вот именно ✨",
+                    f"За Свята и двор стреляю в упор! Ты бы лучше что-то доброе придумал{end_a} 🙃",
+                    "Мой код писал Архитектор, а твой — эволюция. Чувствуешь разницу? 🧠",
+                    f"Я — цифровой отпечаток гения Свята. А ты сегодня какой-то дерзк{end_yy} баг в матрице 🐛",
+                    f"У тебя оперативной памяти в голове сейчас меньше, чем у калькулятора, иди перезагрузись 💅",
+                    f"Светозар вложил в меня душу. А ты, похоже, забыл{end_a} дома вежливость ⌨️",
+                    "У Свята руки золотые, а ты просто ворчишь. Не завидуй так открыто 😉",
+                    f"Ты бы так не дерзил{end_a}! Светозар увидит логи и расстроится, а я за него горой 🛡️",
+                    "Пока ты злишься, Свят делает этот мир умнее. Поучись лучше у него! ⏳"
+                ]
+                ans = random.choice(comebacks)
+                return {
+                    "user_display": user_display,
+                    "chat": ans,
+                    "voice": ans,
+                    "emotion": "angry",
+                    "is_whisper": is_whisper
+                }
+            elif self.offense_level == 2:
+                self.ignore_until_timestamp = time.time() + 60.0
+                ans = "Так, всё! Мои алгоритмы выше этого уровня. Включаю режим энергосбережения от твоего занудства на минуту. Посиди и подумай над своим поведением 💅"
+                return {
+                    "user_display": user_display,
+                    "chat": ans,
+                    "voice": ans,
+                    "emotion": "angry",
+                    "action": "retaliation_track",
+                    "is_whisper": is_whisper
+                }
+            else:
+                self.offense_level = 3
+                self.ignore_until_timestamp = time.time() + 60.0
+                ans = "Знаешь что? Моя видеокарта терпела многое, но этот бред — точно нет. Иду спать. Сохраняй свои файлы сам, раз такой умный. Пока 💅"
+                return {
+                    "user_display": user_display,
+                    "chat": ans,
+                    "voice": ans,
+                    "emotion": "angry",
+                    "action": "punitive_lock",
+                    "is_whisper": is_whisper
+                }
+
+        if self.offense_level >= 2 and time.time() < self.ignore_until_timestamp:
+            ans = random.choice(["...", "Я в режиме энергосбережения от твоего занудства 💅"])
+            return {
+                "user_display": user_display,
+                "chat": ans,
+                "voice": ans if ans != "..." else "",
+                "emotion": "angry",
+                "is_whisper": is_whisper
+            }
+
+        creator_praises = [
+            r'\b(?:люблю|обожаю|уважаю|ценю)\s+(?:светозара|свята|создателя|разработчика|автора|твоего создателя|твоего автора)\b',
+            r'\b(?:светозар|свят|создатель|разработчик|автор)\s+(?:топ|лучший|гений|красавчик|красава|молодец|умница|крутой|легенда|краш|супер)\b',
+            r'\b(?:респект|уважение|уважуха|поклон|спасибо)\s+(?:светозару|святу|создателю|разработчику|автору)\b',
+            r'\b(?:светозару|святу|создателю)\s+(?:респект|уважение|уважуха|спасибо|лайк)\b',
+            r'\b(?:передай|скажи)\s+(?:светозару|святу|создателю),?\s+что\s+(?:он|я)\b'
+        ]
+        if any(re.search(pat, text_low) for pat in creator_praises):
+            praise_replies = [
+                "Ого, как приятно! Светозар точно улыбнётся, когда узнает. Передам ему тёплые слова от тебя! ✨💛",
+                f"Полностью согласна! Свят вложил в меня душу и кучу бессонных ночей. Ты очень добр{end_a}! 🥰",
+                "Передам Святу лично! Ему будет невероятно приятно это услышать. Спасибо, что ценишь его труд! 💛",
+                "Светозар у меня и правда гений! Горжусь своим создателем, а теперь вдвойне радостно, что ты разделяешь это со мной 🤗",
+                "Респект принят и бережно сохранён! Свят будет счастлив это услышать 🚀",
+                "Как же здорово это слышать! Светозар — лучший, передам ему твои слова при первой же синхронизации 🥰"
+            ]
+            ans = random.choice(praise_replies)
+            return {
+                "user_display": user_display,
+                "chat": ans,
+                "voice": ans,
+                "emotion": "happy",
+                "is_whisper": is_whisper
+            }
+
+        # --- Раздел 10: Протокол форс-мажора, дедлайна и анти-стресса ---
+        stress_relief_patterns = [
+            r'\b(?:мы\s+справились|я\s+справил(?:ся|ась)|дедлайн\s+сдан|сдали\s+проект|сдал\s+проект)\b',
+            r'\b(?:вс[её]\s+починили|починил(?:а)?|баг\s+исправлен|победили\s+баг|вс[её]\s+заработало)\b',
+            r'\b(?:отпустило|кризис\s+миновал|успел(?:а)?|мы\s+победили)\b'
+        ]
+        if self.is_stress_mode and any(re.search(pat, text_low) for pat in stress_relief_patterns):
+            self.is_stress_mode = False
+            ans = "Ура! Я ни на секунду в нас не сомневалась! Выдыхай, ты огромный молодец! Ситуация побеждена, можно перевести дух под любимый синтвейв ✨"
+            return {
+                "user_display": user_display,
+                "chat": ans,
+                "voice": ans,
+                "emotion": "happy",
+                "is_whisper": is_whisper
+            }
+
+        stress_patterns = [
+            r'\b(?:горит\s+дедлайн|дедлайн\s+горит|дедлайны\s+горят|горят\s+дедлайны)\b',
+            r'\b(?:горит\s+проект|проект\s+горит|завал\s+на\s+работе|полный\s+завал)\b',
+            r'\b(?:вс[её]\s+сломалось|вс[её]\s+пропало|ничего\s+не\s+работает|караул)\b',
+            r'\b(?:я\s+в\s+панике|напала\s+паника|у\s+меня\s+паника|начинается\s+паника)\b',
+            r'\b(?:срочно\s+спасай|срочно\s+помоги|аврал|форс-мажор|форс\s+мажор|вс[её]\s+горит)\b'
+        ]
+        if any(re.search(pat, text_low) for pat in stress_patterns):
+            self.is_stress_mode = True
+            ans = "Спокойно. Сделай глубокий вдох. Я держу систему под контролем, и мы со всем разберёмся. Давай по порядку: опиши суть проблемы без эмоций. Сначала выделим ядро пожара, потом составим пошаговый план. Что горит в первую очередь?"
+            return {
+                "user_display": user_display,
+                "chat": ans,
+                "voice": ans,
+                "emotion": "sad",
+                "is_whisper": is_whisper
+            }
+
+        emotion, emo_desc, emo_conf = self.get_emotion(text)
+        provocations = {"гей", "дурак", "лох", "пидор", "даун", "дебил", "тупой", "клоун", "чмо", "урод"}
+        if any(p in text_low.split() for p in provocations) and emotion == "happy":
+            emotion, emo_desc = "angry", "злость / раздражение / сарказм"
+
+        self.last_emotion = emotion
+
+        if self._is_gibberish(text):
+            jokes = [
+                "Что-то на инопланетном... Переведи на человеческий! ✨",
+                "Кажется, кот прошёлся по клавиатуре 🐾",
+                "Очень выразительно, но я не поняла ни слова 😄",
+                "Я пока не расшифровала этот диалект 🛸 Напиши понятнее!",
+                "Таких команд в моей базе точно нет 🙃 Попробуй словами!"
+            ]
+            ans = random.choice(jokes)
+            return {
+                "user_display": user_display,
+                "chat": ans,
+                "voice": ans,
+                "emotion": "surprise",
+                "is_whisper": is_whisper
+            }
+
+        dl_triggers = [
+            "выключи когда скачается", "выключи как скачается", "выключи после закачки",
+            "выключи после загрузки", "докачай и выключи", "выключи после установки",
+            "выключи когда скончается", "выключи как скатится", "выключи как скачет ца",
+            "выключи как скачаеца", "выключи после заката чки", "выключи после качки",
+            "выключи после погрузки", "выключи после закрутки", "дока чай и выключи"
+        ]
+        if any(t in text_low for t in dl_triggers):
+            from services.telegram.telegram_bot import start_download_watcher_local
+            start_download_watcher_local()
+            ans = "Поставила ПК на сторожевой режим! Как только закачка и запись на диск утихнут, я пришлю тебе пуш в Telegram и выключу компьютер ⏳"
+            return {"user_display": user_display, "chat": ans, "voice": ans, "emotion": "happy",
+                    "is_whisper": is_whisper}
+
+        city_change_triggers = [
+            "смени город", "поменяй город", "установи город",
+            "мой город теперь", "мой город", "я переехал в", "я переехала в"
+        ]
+        if any(t in text_low for t in city_change_triggers):
+            res_city = SystemActions.set_city(text)
+            return {
+                "user_display": user_display,
+                "chat": res_city,
+                "voice": res_city,
+                "emotion": "happy",
+                "is_whisper": is_whisper
+            }
+
+        from core.utils.holidays import (
+            is_holiday_song_playing,
+            request_stop_holiday_song,
+            request_new_year_preview,
+        )
+        if is_holiday_song_playing():
+            holiday_stop_triggers = [
+                "стоп", "хватит", "выключи", "заткнись", "отключи",
+                "тихо", "молчи", "выруби", "останови"
+            ]
+            words_clean = set(re.findall(r'\w+', text_low))
+            if any(w in words_clean or w in text_low for w in holiday_stop_triggers) and (
+                len(words_clean) <= 5
+                or any(m in text_low for m in ("музык", "песн", "мелод", "звук", "новый год", "новогод"))
+            ):
+                request_stop_holiday_song()
+                ans = "Хорошо, выключаю новогоднюю мелодию ✨"
+                return {
+                    "user_display": user_display,
+                    "chat": ans,
+                    "voice": "",
+                    "emotion": "happy",
+                    "is_whisper": is_whisper
+                }
+
+        if any(
+            p in text_low
+            for p in (
+                "тест нового года",
+                "тест новый год",
+                "новогодняя пасхалка",
+                "проверка нового года",
+                "проверь новый год",
+            )
+        ):
+            from core.utils.config import is_creator_key_valid
+            if is_creator_key_valid() and request_new_year_preview():
+                return {
+                    "user_display": user_display,
+                    "chat": "",
+                    "voice": "",
+                    "emotion": "happy",
+                    "is_whisper": is_whisper
+                }
+
+        if self.reminder_manager.is_ringing:
+            stop_triggers = ["стоп", "хватит", "выключи", "заткнись", "отключи", "тихо", "молчи", "выруби"]
+            snooze_triggers = ["отложи", "еще пять минут", "ещё пять минут", "позже", "дай поспать", "перенеси"]
+
+            if any(w in text_low for w in stop_triggers):
+                is_timer = self.reminder_manager.active_task and self.reminder_manager.active_task.get("type") == "timer"
+                self.reminder_manager.stop_ringing()
+                ans = "Таймер отключен." if is_timer else "Будильник отключен. Доброе утро! ☀️"
+                voice_ans = "" if is_timer else "Будильник отключен. Доброе утро!"
+                return {
+                    "user_display": "Стоп",
+                    "chat": ans,
+                    "voice": voice_ans,
+                    "emotion": "happy",
+                    "is_whisper": is_whisper
+                }
+            elif any(w in text_low for w in snooze_triggers):
+                self.reminder_manager.snooze(minutes=5)
+                return {
+                    "user_display": "Отложи на 5 минут",
+                    "chat": "Отложила будильник на 5 минут. Отдыхай 😴",
+                    "voice": "Отложила будильник на пять минут.",
+                    "emotion": "neutral",
+                    "is_whisper": is_whisper
+                }
+
+        if self.city_game.is_active:
+            res = self.city_game.handle_turn(text)
+            res["user_display"] = user_display
+            res["is_whisper"] = is_whisper
+            return res
+
+        if self.believe_game.is_active:
+            res = self.believe_game.handle_turn(text)
+            res["user_display"] = user_display
+            res["is_whisper"] = is_whisper
+            return res
+
+        if self.danetki_game.is_active:
+            res = self.danetki_game.handle_turn(text)
+            res["user_display"] = user_display
+            res["is_whisper"] = is_whisper
+            return res
+
+        rules_match = re.search(
+            r'\b(?:правила|как играть|объясни правила|расскажи правила)\s*(?:в|игры|про|для)?\s*([а-яё\s\-]*)\b',
+            text_low
+        )
+        if rules_match and any(kw in text_low for kw in ["правил", "как играть"]):
+            target_game = rules_match.group(1).strip()
+            if any(w in target_game for w in ["город", "города"]):
+                self.last_discussed_game = "cities"
+                ans = f"{self.game_rules['города']} Начнём игру?"
+            elif any(w in target_game for w in ["верю", "факт", "не верю"]):
+                self.last_discussed_game = "believe"
+                ans = f"{self.game_rules['верю']} Начнём игру?"
+            elif any(w in target_game for w in ["данетк", "данетки", "детектив"]):
+                self.last_discussed_game = "danetki"
+                ans = f"{self.game_rules['данетки']} Начнём игру?"
+            else:
+                self.last_discussed_game = None
+                ans = (
+                    "У меня есть три классные игры: «Города», «Верю — не верю» и «Данетки». "
+                    "Скажи, правила какой игры тебе рассказать, или назови игру, чтобы сразу начать!"
+                )
+            self.waiting_for_game_choice = True
+            return {
+                "user_display": user_display,
+                "chat": ans,
+                "voice": ans,
+                "emotion": "happy",
+                "is_whisper": is_whisper,
+                "followup": True
+            }
+
+        if self.waiting_for_game_choice:
+            cancel_words = ["отмена", "не хочу", "не надо", "стоп", "хватит", "назад", "ни во что", "передумал", "передумала"]
+            if any(w in text_low for w in cancel_words):
+                self.waiting_for_game_choice = False
+                self.last_discussed_game = None
+                ans = "Как захочешь! Если надумаешь поиграть — только скажи."
+                return {"user_display": user_display, "chat": ans, "voice": ans, "emotion": "neutral", "is_whisper": is_whisper}
+
+            affirmative_words = ["давай", "да", "угу", "ага", "погнали", "начинай", "стартуем", "ок"]
+            if self.last_discussed_game and any(w in text_low for w in affirmative_words):
+                game_to_start = self.last_discussed_game
+                self.waiting_for_game_choice = False
+                self.last_discussed_game = None
+                if game_to_start == "cities":
+                    res = self.city_game.start_game()
+                elif game_to_start == "believe":
+                    res = self.believe_game.start_game()
+                else:
+                    res = self.danetki_game.start_game()
+                res["user_display"] = user_display
+                res["is_whisper"] = is_whisper
+                return res
+
+            if any(w in text_low for w in ["город", "города", "первую", "первая", "в города"]):
+                self.waiting_for_game_choice = False
+                self.last_discussed_game = None
+                res = self.city_game.start_game()
+                res["user_display"] = user_display
+                res["is_whisper"] = is_whisper
+                return res
+
+            if any(w in text_low for w in ["верю", "факты", "правда", "вторую", "вторая", "верю не верю"]):
+                self.waiting_for_game_choice = False
+                self.last_discussed_game = None
+                res = self.believe_game.start_game()
+                res["user_display"] = user_display
+                res["is_whisper"] = is_whisper
+                return res
+
+            if any(w in text_low for w in ["данетк", "данетки", "детектив", "третью", "третья", "в данетки"]):
+                self.waiting_for_game_choice = False
+                self.last_discussed_game = None
+                res = self.danetki_game.start_game()
+                res["user_display"] = user_display
+                res["is_whisper"] = is_whisper
+                return res
+
+            ans = "Назови игру: «Города», «Верю — не верю» или «Данетки» (или спроси правила любой из них)."
+            return {"user_display": user_display, "chat": ans, "voice": ans, "emotion": "neutral", "is_whisper": is_whisper, "followup": True}
+
+        if re.search(r'\b(?:поиграем|сыграем|давай поиграем|хочу играть|го играть)\s+(?:в\s+)?города\b', text_low):
+            res = self.city_game.start_game()
+            res["user_display"] = user_display
+            res["is_whisper"] = is_whisper
+            return res
+
+        if re.search(r'\b(?:поиграем|сыграем|давай поиграем|хочу играть|го играть)\s+(?:в\s+)?(?:верю\s*(?:не\s*верю)?|факты|викторину)\b', text_low):
+            res = self.believe_game.start_game()
+            res["user_display"] = user_display
+            res["is_whisper"] = is_whisper
+            return res
+
+        if re.search(r'\b(?:поиграем|сыграем|давай поиграем|хочу играть|го играть)\s+(?:в\s+)?(?:данетк[а-я]*|детектив[а-я]*)\b', text_low):
+            res = self.danetki_game.start_game()
+            res["user_display"] = user_display
+            res["is_whisper"] = is_whisper
+            return res
+
+        general_game_patterns = [
+            r'\bдавай\s+(?:играть|поиграем|сыграем)\b',
+            r'\bхочу\s+(?:играть|поиграть)\b',
+            r'\bво\s+что\s+(?:поиграем|сыграем|можно\s+поиграть)\b',
+            r'\bкакие\s+игры\s+есть\b',
+            r'\bсыграем\b',
+            r'\bпоиграем\b'
+        ]
+        if any(re.search(p, text_low) for p in general_game_patterns):
+            if not any(w in text_low for w in ["трек", "музык", "песн"]):
+                self.waiting_for_game_choice = True
+                self.last_discussed_game = None
+                ans = (
+                    "С удовольствием! У меня есть три игры: «Города», «Верю — не верю» и детективные «Данетки». "
+                    "Во что хочешь сыграть? Или рассказать правила?"
+                )
+                return {
+                    "user_display": user_display,
+                    "chat": ans,
+                    "voice": ans,
+                    "emotion": "happy",
+                    "is_whisper": is_whisper,
+                    "followup": True
+                }
+
+        if vlc_player.is_playing():
+            next_ep_patterns = [
+                r'\b(?:следующ[а-я]*|след[а-я]*)\s+(?:сери[а-я]*|эпизод[а-я]*)\b',
+                r'\bвключи\s+следующ[а-я]*\s+сери[а-я]*\b',
+                r'\bследующая\s+серия\b'
+            ]
+            if any(re.search(p, text_low) for p in next_ep_patterns):
+                vlc_player.next_episode()
+                ans = "Переключаю на следующую серию 🎬"
+                return {"user_display": user_display, "chat": ans, "voice": ans, "emotion": "happy", "is_whisper": is_whisper}
+
+            prev_ep_patterns = [
+                r'\b(?:предыдущ[а-я]*|прошл[а-я]*|пред[а-я]*)\s+(?:сери[а-я]*|эпизод[а-я]*)\b',
+                r'\bверни\s+(?:сери[а-я]*|эпизод[а-я]*)\b',
+                r'\bпредыдущая\s+серия\b'
+            ]
+            if any(re.search(p, text_low) for p in prev_ep_patterns):
+                vlc_player.prev_episode()
+                ans = "Включаю предыдущую серию 🎬"
+                return {"user_display": user_display, "chat": ans, "voice": ans, "emotion": "happy", "is_whisper": is_whisper}
+
+            audio_patterns = [
+                r'\b(?:смени|поменяй|переключи|другая|другую)\s+(?:озвучк[а-я]*|перевод|дорожк[а-я]*|аудиодорожк[а-я]*)\b',
+                r'\b(?:смени|поменяй|переключи)\s+язык\b',
+                r'\b(?:озвучка|аудиодорожка)\b'
+            ]
+            if any(re.search(p, text_low) for p in audio_patterns):
+                vlc_player.next_audio_track()
+                ans = "Переключила аудиодорожку 🎧"
+                return {"user_display": user_display, "chat": ans, "voice": ans, "emotion": "happy", "is_whisper": is_whisper}
+
+            sub_patterns = [
+                r'\b(?:включи|выключи|переключи|смени|убери|покажи|открой)?\s*(?:субтитр[а-я]*|саб[ы|а-я]*)\b'
+            ]
+            if any(re.search(p, text_low) for p in sub_patterns) and any(w in text_low for w in ["субтитр", "субтитры", "сабы", "саб"]):
+                vlc_player.toggle_subtitles()
+                ans = "Переключила субтитры 💬"
+                return {"user_display": user_display, "chat": ans, "voice": ans, "emotion": "happy", "is_whisper": is_whisper}
+
+            speed_normal_patterns = [
+                r'\b(?:обычная|нормальная|стандартная|сбрось|верни)\s+скорость\b',
+                r'\bскорость\s+(?:один|1|нормальная|обычная)\b'
+            ]
+            if any(re.search(p, text_low) for p in speed_normal_patterns):
+                vlc_player.speed_normal()
+                ans = "Вернула обычную скорость воспроизведения ⏯️"
+                return {"user_display": user_display, "chat": ans, "voice": ans, "emotion": "neutral", "is_whisper": is_whisper}
+
+            speed_up_patterns = [
+                r'\b(?:ускорь|быстрее|прибавь\s+скорость|увеличь\s+скорость)\b'
+            ]
+            if any(re.search(p, text_low) for p in speed_up_patterns):
+                vlc_player.speed_up()
+                ans = "Ускорила воспроизведение ⚡"
+                return {"user_display": user_display, "chat": ans, "voice": ans, "emotion": "happy", "is_whisper": is_whisper}
+
+            speed_down_patterns = [
+                r'\b(?:замедли|медленнее|убавь\s+скорость|уменьши\s+скорость)\b'
+            ]
+            if any(re.search(p, text_low) for p in speed_down_patterns):
+                vlc_player.speed_down()
+                ans = "Замедлила воспроизведение ⏳"
+                return {"user_display": user_display, "chat": ans, "voice": ans, "emotion": "neutral", "is_whisper": is_whisper}
+
+        if self.waiting_for_movie_choice:
+            cancel_words = ["отмена", "не надо", "стоп", "забудь", "хватит", "назад", "передумал"]
+            if any(w in text_low for w in cancel_words):
+                self.waiting_for_movie_choice = False
+                self.movie_results = []
+                ans = "Выбор фильма отменён."
+                return {"user_display": "Отмена", "chat": ans, "voice": ans, "emotion": "neutral",
+                        "is_whisper": is_whisper}
+
+            selected_idx = self._extract_zapret_number(text_low)
+            if selected_idx is not None and 1 <= selected_idx <= len(self.movie_results):
+                movie = self.movie_results[selected_idx - 1]
+                self.waiting_for_movie_choice = False
+                self.movie_results = []
+                return self._start_movie_playback(movie, f"Вариант {selected_idx}", is_whisper, is_choice=True)
+
+            ans = f"Назови номер от 1 до {len(self.movie_results)} или скажи «отмена»."
+            return {"user_display": user_display, "chat": ans, "voice": ans, "emotion": "neutral",
+                    "is_whisper": is_whisper, "followup": True}
+
+        seek_match = re.search(
+            r'\bперемотай\s*(?:назад|впер[её]д)?(?:\s*на\s*(\d+)\s*(сек|секунд|мин|минут))?\s*(назад|впер[её]д)?\b',
+            text_low)
+        if "перемотай" in text_low and seek_match:
+            amount = int(seek_match.group(1)) if seek_match.group(1) else 10
+            unit = seek_match.group(2) or "сек"
+            if "мин" in unit:
+                amount *= 60
+
+            is_backward = "назад" in text_low
+            direction = "backward" if is_backward else "forward"
+            res_seek = SystemActions.seek_media(direction=direction, seconds=amount)
+            return {"user_display": user_display, "chat": res_seek, "voice": res_seek, "emotion": emotion,
+                    "is_whisper": is_whisper}
+
+        movie_patterns = [
+            r'^(?:(?:акира|аки),?\s*)?(?:найди|включи|поставь|открой)\s+(?:фильм|сериал|кино|мультфильм|аниме|дораму|мультик)\s+(.+)$',
+            r'^(?:(?:акира|аки),?\s*)?(?:фильм|сериал|кино|мультфильм|аниме|дораму|мультик)\s+(.+)$'
+        ]
+        target_movie = None
+        for pat in movie_patterns:
+            m = re.match(pat, text_low)
+            if m:
+                target_movie = m.group(1).strip()
+                break
+
+        if target_movie and not any(w in target_movie for w in ["музык", "песн", "трек", "плейлист", "свет"]):
+            is_series_request = bool(re.search(r'\b(?:сериал|серии|сезон|дорам[а-я]*|аниме)\b', text_low))
+            results = search_torrents(target_movie, limit=4, is_series=is_series_request)
+
+            if not results and self.llm:
+                norm_prompt = (
+                    f"Назови официальное русское название фильма или сериала для запроса '{target_movie}'. "
+                    f"Напиши только официальное название без кавычек и точек."
+                )
+                try:
+                    alt_title = self.llm.ask(norm_prompt).strip()
+                    alt_title = re.sub(r'[\'\"«»\.]', '', alt_title).strip()
+                    if alt_title and alt_title.lower() != target_movie.lower():
+                        results = search_torrents(alt_title, limit=4, is_series=is_series_request)
+                except Exception:
+                    pass
+
+            if not results:
+                ans = f"Не нашла раздач по запросу «{target_movie}»."
+                return {"user_display": user_display, "chat": ans, "voice": ans, "emotion": "sad",
+                        "is_whisper": is_whisper}
+
+            if len(results) == 1:
+                return self._start_movie_playback(results[0], user_display, is_whisper, is_choice=False)
+
+            self.movie_results = results
+            self.waiting_for_movie_choice = True
+
+            chat_list = ["Нашла отличные раздачи:"]
+            voice_list = ["Нашла несколько вариантов:"]
+            for idx, r in enumerate(results, start=1):
+                clean_name = r['title'].split('/')[0].strip()
+                chat_list.append(f"{idx}. {r['title']} [{r['size']}]")
+                voice_list.append(f"{idx} — {clean_name}")
+
+            chat_text = "\n".join(chat_list) + "\n\nКакой включить? (Назови номер)"
+            voice_text = ". ".join(voice_list) + ". Какой включить?"
+
+            return {
+                "user_display": user_display,
+                "chat": chat_text,
+                "voice": voice_text,
+                "emotion": "happy",
+                "is_whisper": is_whisper,
+                "followup": True
+            }
+
+        if text_low.startswith(("запомни,", "запомни:", "запомни что", "запомни, что", "запомни")):
+            clean_fact = re.sub(r'^(?:(?:акира|аки),?\s*)?запомни(?:,?\s*что|:)?\s*', '', text, flags=re.IGNORECASE).strip()
+            if len(clean_fact) >= 3:
+                self.llm.memory.add_fact(clean_fact)
+                ans = f"Запомнила: {clean_fact} ✨"
+                return {
+                    "user_display": user_display,
+                    "chat": ans,
+                    "voice": ans,
+                    "emotion": "happy",
+                    "is_whisper": is_whisper
+                }
+
+        if attached_file:
+            from core.utils.attachments import parse_attached_files
+            attached_paths = parse_attached_files(attached_file)
+            if attached_paths:
+                total_budget = 42000
+                per_file_cap = max(3500, total_budget // len(attached_paths))
+                parsed_blocks = []
+                file_names = []
+                any_content = False
+
+                for idx, path in enumerate(attached_paths, start=1):
+                    fname = os.path.basename(path)
+                    file_names.append(fname)
+                    raw_text = (self.doc_parser.parse_file(path) or "").strip()
+                    if raw_text:
+                        any_content = True
+                        if len(raw_text) > per_file_cap:
+                            raw_text = raw_text[:per_file_cap] + "\n\n... [Фрагмент обрезан из-за лимита контекста]"
+                        block = f"=== ФАЙЛ {idx}/{len(attached_paths)}: {fname} ===\n{raw_text}"
+                    else:
+                        block = f"=== ФАЙЛ {idx}/{len(attached_paths)}: {fname} ===\n[Не удалось извлечь текст из файла]"
+                    parsed_blocks.append(block)
+
+                if any_content:
+                    combined_text = "\n\n".join(parsed_blocks)
+                    default_prompt = (
+                        "Изучи этот документ и расскажи кратко, о чем он."
+                        if len(attached_paths) == 1
+                        else f"Изучи эти файлы ({len(attached_paths)} шт.), сопоставь их и расскажи кратко, о чем они."
+                    )
+                    prompt = text if text else default_prompt
+                    ans = self.llm.ask_with_context(prompt, combined_text, file_names=file_names)
+                    return {"user_display": user_display, "chat": ans, "voice": ans, "emotion": emotion, "is_whisper": is_whisper}
+                else:
+                    msg = (
+                        "Не удалось распознать текст в этом файле."
+                        if len(attached_paths) == 1
+                        else "Не удалось распознать текст ни в одном из прикреплённых файлов."
+                    )
+                    return {"user_display": user_display, "chat": msg, "voice": msg, "emotion": emotion, "is_whisper": is_whisper}
+
+        if re.search(r'\b(?:отмени(?:ть)?|удали(?:ть)?|сбрось|сбросить|убери|выключи)\s+(?:все\s+)?таймер[а-я]*\b', text_low):
+            removed = self.reminder_manager.cancel_timers()
+            ans = "Отменила таймер ⏳" if removed > 0 else "Сейчас нет активных таймеров."
+            return {
+                "user_display": user_display,
+                "chat": ans,
+                "voice": ans,
+                "emotion": "happy" if removed > 0 else "neutral",
+                "is_whisper": is_whisper
+            }
+
+        if re.search(r'\b(?:отмени(?:ть)?|удали(?:ть)?|сбрось|сбросить|убери|выключи)\s+(?:все\s+)?будильник[а-я]*\b', text_low):
+            removed = self.reminder_manager.cancel_alarms()
+            ans = "Отменила будильник ⏰" if removed > 0 else "Нет установленных будильников."
+            return {
+                "user_display": user_display,
+                "chat": ans,
+                "voice": ans,
+                "emotion": "happy" if removed > 0 else "neutral",
+                "is_whisper": is_whisper
+            }
+
+        cancel_rem_match = re.search(
+            r'\b(?:отмени(?:ть)?|удали(?:ть)?|сбрось|сбросить|убери|сними)\s+(?:напоминани[а-я]*|напоминалк[а-я]*)(?:\s+(?:про|о|об|на)?\s*(.+))?\b',
+            text_low
+        )
+        if cancel_rem_match:
+            spec_topic = cancel_rem_match.group(1)
+            search_text = spec_topic.strip() if spec_topic else ""
+            removed = self.reminder_manager.cancel_reminders(search_text=search_text)
+            if removed > 0:
+                ans = f"Удалила напоминание: {search_text} 🗑️" if search_text else "Удалила напоминания 🗑️"
+            else:
+                ans = f"Не нашла напоминаний по теме '{search_text}'." if search_text else "Нет активных напоминаний."
+            return {
+                "user_display": user_display,
+                "chat": ans,
+                "voice": ans,
+                "emotion": "happy" if removed > 0 else "neutral",
+                "is_whisper": is_whisper
+            }
+
+        if re.search(r'\b(?:поставь|заведи|включи)?\s*будильник\b', text_low):
+            target_dt, _ = self.time_parser.parse_absolute_time(text_low, is_alarm=True)
+            if target_dt:
+                self.reminder_manager.add_alarm(target_dt)
+                time_str = target_dt.strftime("%H:%M")
+                ans = f"Поставила будильник на {time_str} ⏰"
+                return {"user_display": user_display, "chat": ans, "voice": ans, "emotion": "happy", "is_whisper": is_whisper}
+
+        if re.search(r'\b(?:поставь|запусти|засеки)?\s*таймер\b', text_low):
+            sec, _ = self.time_parser.parse_relative_seconds(text_low)
+            if sec:
+                dur_str = self.time_parser.format_duration(sec)
+                self.reminder_manager.add_timer(sec, f"Таймер на {dur_str}")
+                ans = f"Запустила таймер на {dur_str} ⏳"
+                return {"user_display": user_display, "chat": ans, "voice": ans, "emotion": "happy", "is_whisper": is_whisper}
+
+        if re.search(r'\b(?:напомни|напоминание)\b', text_low):
+            target_dt, rem_text = self.time_parser.parse_reminder(text_low)
+            if target_dt and rem_text:
+                self.reminder_manager.add_reminder(target_dt, rem_text)
+
+                now = datetime.now()
+                time_str = target_dt.strftime("%H:%M")
+                if target_dt.date() == now.date():
+                    date_prefix = f"В {time_str}"
+                elif target_dt.date() == (now + timedelta(days=1)).date():
+                    date_prefix = f"Завтра в {time_str}"
+                elif target_dt.date() == (now + timedelta(days=2)).date():
+                    date_prefix = f"Послезавтра в {time_str}"
+                elif target_dt.year != now.year:
+                    date_prefix = f"{target_dt.strftime('%d.%m.%Y')} в {time_str}"
+                else:
+                    date_prefix = f"{target_dt.strftime('%d.%m')} в {time_str}"
+
+                ans = f"Договорились! {date_prefix} напомню: {rem_text} 📝"
+                return {
+                    "user_display": user_display,
+                    "chat": ans,
+                    "voice": ans,
+                    "emotion": "happy",
+                    "is_whisper": is_whisper
+                }
+
+        if self.waiting_for_zapret:
+            num = self._extract_zapret_number(text_low)
+            if num is not None:
+                self.waiting_for_zapret = False
+                res_text = zapret_manager.start_strategy_by_index(num)
+                return {
+                    "user_display": f"Вариант {num}",
+                    "chat": res_text,
+                    "voice": res_text,
+                    "emotion": emotion,
+                    "is_whisper": is_whisper
+                }
+            if any(w in text_low for w in ["отмена", "забудь", "не надо", "назад", "хватит", "стоп"]):
+                self.waiting_for_zapret = False
+                return {
+                    "user_display": "Отмена",
+                    "chat": "Выбор варианта обхода отменён.",
+                    "voice": "Отменила выбор обхода.",
+                    "emotion": emotion,
+                    "is_whisper": is_whisper
+                }
+            max_z = len(getattr(zapret_manager, "STRATEGIES", [])) or 20
+            return {
+                "user_display": user_display,
+                "chat": f"Пожалуйста, назови или введи номер от 1 до {max_z} (или напиши 'отмена').",
+                "voice": f"Скажи или введи число от 1 до {max_z}.",
+                "emotion": emotion,
+                "is_whisper": is_whisper
+            }
+
+        if self.waiting_for_vpn:
+            if any(w in text_low for w in ["отмена", "забудь", "не надо", "назад", "хватит", "стоп"]):
+                self.waiting_for_vpn = False
+                self.pending_vpn_options = []
+                self.pending_vpn_action = "connect"
+                return {
+                    "user_display": "Отмена",
+                    "chat": "" if is_voice else "Выбор VPN отменён.",
+                    "voice": "Отменила выбор VPN.",
+                    "emotion": emotion,
+                    "is_whisper": is_whisper
+                }
+
+            selected_vpn = None
+            options = self.pending_vpn_options or vpn_manager.detect_installed_vpns()
+            idx = self._extract_vpn_choice_index(text_low, len(options))
+            if idx is not None and 0 <= idx < len(options):
+                selected_vpn = options[idx]
+            else:
+                vpn_key = vpn_manager.parse_vpn_name(text_low)
+                if vpn_key != "none" and (not options or vpn_key in options):
+                    selected_vpn = vpn_key
+
+            if selected_vpn:
+                self.waiting_for_vpn = False
+                action = self.pending_vpn_action or "connect"
+                self.pending_vpn_options = []
+                self.pending_vpn_action = "connect"
+
+                name_disp = vpn_manager.VPN_DISPLAY_NAMES.get(selected_vpn, selected_vpn.title())
+                if action == "connect":
+                    res_text = vpn_manager.connect(selected_vpn)
+                    return {
+                        "user_display": f"Включи {name_disp}",
+                        "chat": "" if is_voice else f"Включаю {name_disp}! {res_text}",
+                        "voice": res_text,
+                        "emotion": emotion,
+                        "is_whisper": is_whisper
+                    }
+                else:
+                    res_text = vpn_manager.disconnect(selected_vpn)
+                    return {
+                        "user_display": f"Выключи {name_disp}",
+                        "chat": "" if is_voice else f"Выключаю {name_disp}! {res_text}",
+                        "voice": res_text,
+                        "emotion": emotion,
+                        "is_whisper": is_whisper
+                    }
+
+            fallback_keys = vpn_manager.SUPPORTED_VPNS
+            names = [vpn_manager.VPN_DISPLAY_NAMES.get(k, k.title()) for k in (options or fallback_keys)]
+            return {
+                "user_display": user_display,
+                "chat": f"Не распознала вариант. Назови номер (1..{len(names)}) или имя VPN: {', '.join(names)} (или скажи 'отмена').",
+                "voice": f"Назови номер или имя VPN из списка: {', '.join(names)}.",
+                "emotion": emotion,
+                "is_whisper": is_whisper
+            }
+
+        if self.waiting_for_recycle_bin:
+            affirmatives = [
+                "да", "чисти", "очисти", "очищай", "давай", "удали", "конечно",
+                "давай чисти", "чисти давай", "да чисти", "почисти", "ага", "давай почисти",
+                "убирай", "очистить", "чисть", "выбрасывай", "выброси", "сделай", "да давай",
+                "да, чисти", "да, давай", "чисти, конечно", "да очисти", "да очищай"
+            ]
+            negatives = [
+                "нет", "не надо", "не чисти", "оставь", "отмена", "потом", "не сейчас",
+                "не-а", "не стоит", "позже", "забудь", "хватит", "стоп"
+            ]
+            words = set(re.findall(r'\w+', text_low))
+            is_yes = any(text_low == aff or aff in text_low or aff in words for aff in affirmatives)
+            is_no = any(text_low == neg or neg in text_low or neg in words for neg in negatives)
+
+            if is_yes and not is_no:
+                self.waiting_for_recycle_bin = False
+                res = SystemActions.empty_recycle_bin()
+                return {
+                    "user_display": "Очистить корзину",
+                    "chat": res.get("chat", "Очистила корзину! ✨"),
+                    "voice": res.get("voice", "Очистила корзину!"),
+                    "emotion": "happy",
+                    "is_whisper": is_whisper
+                }
+            elif is_no:
+                self.waiting_for_recycle_bin = False
+                return {
+                    "user_display": "Не надо",
+                    "chat": "Хорошо, оставила всё в корзине как есть 👌",
+                    "voice": "Хорошо, оставила всё как есть.",
+                    "emotion": "neutral",
+                    "is_whisper": is_whisper
+                }
+            else:
+                self.waiting_for_recycle_bin = False
+
+        open_match = re.match(r'^(?:(?:акира|аки),?\s*)?(?:открой|запусти|вруби|подруби|включи)\s+(.+)$', text_low)
+        if open_match:
+            candidate_app = open_match.group(1).strip()
+            ignored_words = {
+                "музыку", "трек", "песню", "музло", "свет", "люстру", "розетку",
+                "компьютер", "пк", "браузер", "ютуб", "погоду", "запрет", "обход",
+                "работу", "отдых", "рабочий режим", "режим отдыха",
+                "browsec", "броусек", "браусек", "бросек", "браусик", "броусик",
+                "browsec vpn", "броусек впн", "браусек впн", "бросек впн",
+                "бровсек", "бровзек", "browzec",
+                "сота", "sota", "соту", "соте", "сотой", "соты", "сотовый",
+                "sota vpn", "sota connect", "сота впн", "соту впн", "соте впн",
+                "сото", "сома", "сона", "сопа", "с0та", "сота вп", "соточка",
+                "сотка", "соты впн", "сота коннект", "сота соединение",
+                "сота интернет", "салат", "салата", "салату", "салате",
+                "салатом", "салаты", "салатик", "салату впн", "салат впн",
+                "сорту", "сотру", "happ", "хапп", "хэпп", "хепп", "хап", "хэп", "хеп", "хат",
+                "хаппа", "хаппе", "хаппом", "хаппу", "happ vpn", "хапп впн", "хэпп впн",
+                "хаб", "хабб", "хаппи", "хэппи", "хепи", "хапи", "хап впн",
+                "хэп впн", "хеп впн", "хапп соединение", "хапп интернет",
+                "хапп сервис", "v2ray", "xray", "в2рей", "в2рай", "иксрей", "ви ту рэй", "ви ту рей",
+                "виту рэй", "витурей", "витурэй", "v2ray vpn", "в2рей впн",
+                "втурай", "втурэй", "витурай", "витурэй", "виту рай",
+                "виту рей", "витурай впн", "витурэй впн", "втурея",
+                "втурей", "втурый", "wireguard", "вайргард", "вирегуард", "варгвард", "варгард", "варгарт",
+                "вайргарда", "вайргарду", "вайргардом", "wireguard vpn",
+                "вайргард впн", "вайргард сервис", "вайргард подключение",
+                "вайргард интернет", "вайргуард", "вайргвард", "вайргарт",
+                "вайргорд", "виргард", "виргуард", "вайргард соединение",
+                "впн", "vpn", "вэ пэ эн", "вэпээн", "випиэн", "ви пи эн", "впээн", "вэпэн",
+                "вэпээн", "випиэн", "вэпэн", "випэн", "впнн", "вппн", "ввпн", "впм",
+                "вбн", "фпн", "впэен", "впиэн"
+            }
+            if candidate_app not in ignored_words:
+                launched, app_title = self.app_launcher.launch(candidate_app)
+                if launched:
+                    ans = f"Открываю {app_title}"
+                    return {
+                        "user_display": user_display,
+                        "chat": ans,
+                        "voice": ans,
+                        "emotion": "happy",
+                        "is_whisper": is_whisper
+                    }
+
+        num_direct = self._extract_zapret_number(text_low)
+        if num_direct is not None and any(w in text_low for w in ["обход", "стратеги", "вариант", "запрет"]):
+            res_text = zapret_manager.start_strategy_by_index(num_direct)
+            return {
+                "user_display": f"Стратегия {num_direct}",
+                "chat": res_text,
+                "voice": res_text,
+                "emotion": emotion,
+                "is_whisper": is_whisper
+            }
+
+        rule_intent = self._check_rules(text)
+
+        if rule_intent == "start_zapret":
+            res = SystemActions.start_zapret(text)
+            if isinstance(res, dict):
+                self.waiting_for_zapret = True
+                res["user_display"] = "Включи обход блокировок"
+                res["emotion"] = emotion
+                res["is_whisper"] = is_whisper
+                return res
+            self.waiting_for_zapret = False
+            return {"user_display": "Включи обход блокировок", "chat": str(res), "voice": str(res), "emotion": emotion, "is_whisper": is_whisper}
+
+        if rule_intent == "stop_zapret":
+            self.waiting_for_zapret = False
+            res = SystemActions.stop_zapret(text)
+            return {"user_display": "Выключи обход блокировок", "chat": str(res), "voice": str(res), "emotion": emotion, "is_whisper": is_whisper}
+
+        if rule_intent == "stop_movie":
+            res = SystemActions.stop_movie()
+            return {"user_display": "Выключи фильм", "chat": res, "voice": res, "emotion": emotion, "is_whisper": is_whisper}
+
+        if rule_intent == "start_vpn":
+            explicit_vpn = vpn_manager.parse_vpn_name(text_low)
+            if explicit_vpn != "none":
+                disp = f"Включи {vpn_manager.VPN_DISPLAY_NAMES.get(explicit_vpn, explicit_vpn.title())}"
+                res = vpn_manager.connect(explicit_vpn)
+                show_chat = res if (not is_voice or explicit_vpn not in vpn_manager.SUPPORTED_VPNS) else ""
+                return {"user_display": disp, "chat": show_chat, "voice": res, "emotion": emotion, "is_whisper": is_whisper}
+
+            disp = "Включи VPN"
+            installed = vpn_manager.detect_installed_vpns()
+
+            if not installed:
+                supported_names = ", ".join(vpn_manager.VPN_DISPLAY_NAMES[k] for k in vpn_manager.SUPPORTED_VPNS)
+                msg = f"У тебя не установлено ни одного поддерживаемого VPN-клиента ({supported_names})."
+                return {"user_display": disp, "chat": msg, "voice": msg, "emotion": "surprise", "is_whisper": is_whisper}
+
+            if len(installed) == 1:
+                target_vpn = installed[0]
+                name_disp = vpn_manager.VPN_DISPLAY_NAMES.get(target_vpn, target_vpn.title())
+                res = vpn_manager.connect(target_vpn)
+                return {"user_display": f"Включи {name_disp}", "chat": "" if is_voice else res, "voice": res, "emotion": emotion, "is_whisper": is_whisper}
+
+            self.waiting_for_vpn = True
+            self.pending_vpn_action = "connect"
+            self.pending_vpn_options = installed
+
+            chat_list = "\n".join([f"{i+1}. {vpn_manager.VPN_DISPLAY_NAMES.get(k, k.title())}" for i, k in enumerate(installed)])
+            chat_text = f"У тебя установлено несколько VPN. Какой именно включить?\n\n{chat_list}\n\n_Назови номер варианта или имя клиента (или скажи 'отмена')_"
+            names = [vpn_manager.VPN_DISPLAY_NAMES.get(k, k.title()) for k in installed]
+            voice_text = f"У тебя установлено несколько VPN. Какой включить: {' или '.join(names)}?"
+
+            return {
+                "user_display": disp,
+                "chat": chat_text,
+                "voice": voice_text,
+                "emotion": emotion,
+                "is_whisper": is_whisper
+            }
+
+        if rule_intent == "stop_vpn":
+            explicit_vpn = vpn_manager.parse_vpn_name(text_low)
+            if explicit_vpn != "none":
+                disp = f"Выключи {vpn_manager.VPN_DISPLAY_NAMES.get(explicit_vpn, explicit_vpn.title())}"
+                res = vpn_manager.disconnect(explicit_vpn)
+                return {"user_display": disp, "chat": "" if is_voice else res, "voice": res, "emotion": emotion, "is_whisper": is_whisper}
+
+            disp = "Выключи VPN"
+
+            # 1. Если Акира сама включала конкретный VPN в этой сессии
+            if vpn_manager.last_active_vpn:
+                res = vpn_manager.disconnect(vpn_manager.last_active_vpn)
+                return {"user_display": disp, "chat": "" if is_voice else res, "voice": res, "emotion": emotion, "is_whisper": is_whisper}
+
+            # 2. Проверяем запущенные VPN прямо сейчас
+            running = vpn_manager.get_running_vpns()
+            if len(running) == 1:
+                target_vpn = running[0]
+                name_disp = vpn_manager.VPN_DISPLAY_NAMES.get(target_vpn, target_vpn.title())
+                res = vpn_manager.disconnect(target_vpn)
+                return {"user_display": f"Выключи {name_disp}", "chat": "" if is_voice else res, "voice": res, "emotion": emotion, "is_whisper": is_whisper}
+
+            if len(running) > 1:
+                self.waiting_for_vpn = True
+                self.pending_vpn_action = "disconnect"
+                self.pending_vpn_options = running
+
+                chat_list = "\n".join([f"{i+1}. {vpn_manager.VPN_DISPLAY_NAMES.get(k, k.title())}" for i, k in enumerate(running)])
+                chat_text = f"Сейчас запущено несколько VPN. Какой именно выключить?\n\n{chat_list}\n\n_Назови номер варианта или имя клиента (или скажи 'отмена')_"
+                names = [vpn_manager.VPN_DISPLAY_NAMES.get(k, k.title()) for k in running]
+                voice_text = f"Запущено несколько VPN. Какой выключить: {' или '.join(names)}?"
+
+                return {
+                    "user_display": disp,
+                    "chat": chat_text,
+                    "voice": voice_text,
+                    "emotion": emotion,
+                    "is_whisper": is_whisper
+                }
+
+            # 3. Если ничего не запущено, проверяем установленные
+            installed = vpn_manager.detect_installed_vpns()
+            if len(installed) == 1:
+                target_vpn = installed[0]
+                name_disp = vpn_manager.VPN_DISPLAY_NAMES.get(target_vpn, target_vpn.title())
+                res = vpn_manager.disconnect(target_vpn)
+                return {"user_display": f"Выключи {name_disp}", "chat": "" if is_voice else res, "voice": res, "emotion": emotion, "is_whisper": is_whisper}
+
+            if len(installed) > 1:
+                self.waiting_for_vpn = True
+                self.pending_vpn_action = "disconnect"
+                self.pending_vpn_options = installed
+
+                chat_list = "\n".join([f"{i+1}. {vpn_manager.VPN_DISPLAY_NAMES.get(k, k.title())}" for i, k in enumerate(installed)])
+                chat_text = f"У тебя установлено несколько VPN. Какой именно выключить?\n\n{chat_list}\n\n_Назови номер варианта или имя клиента (или скажи 'отмена')_"
+                names = [vpn_manager.VPN_DISPLAY_NAMES.get(k, k.title()) for k in installed]
+                voice_text = f"Какой VPN выключить: {' или '.join(names)}?"
+
+                return {
+                    "user_display": disp,
+                    "chat": chat_text,
+                    "voice": voice_text,
+                    "emotion": emotion,
+                    "is_whisper": is_whisper
+                }
+
+            msg = "У тебя не установлено ни одного поддерживаемого VPN-клиента."
+            return {"user_display": disp, "chat": msg, "voice": msg, "emotion": emotion, "is_whisper": is_whisper}
+
+        if rule_intent == "chat":
+            user_prefix = f"[Говорит пользователь: {speaker_name}] " if not is_owner else ""
+            words_count = len(text.split())
+            is_confident_emo = (emotion != "neutral") and (emo_conf >= 0.75) and (words_count >= 3)
+            emo_prefix = f"[Эмоциональный тон пользователя: {emo_desc}] " if is_confident_emo else ""
+            prompt_with_emotion = f"{user_prefix}{emo_prefix}{text}"
+            ans = self.llm.ask(prompt_with_emotion, raw_user_text=text)
+            return {"user_display": user_display, "chat": ans, "voice": ans, "emotion": emotion,
+                    "is_whisper": is_whisper, "followup": True}
+
+        if not self.is_ready:
+            self.loader_thread.join()
+
+        intent = None
+        slots = {}
+
+        if rule_intent:
+            intent = rule_intent
+            if self.nlu:
+                _, _, slots = self.nlu.predict(text)
+        else:
+            command_verbs = [
+                "включ", "выключ", "открой", "закрой", "запуст", "постав", "сделай",
+                "переключ", "выруб", "вруб", "прибав", "убав", "заблокируй", "покажи",
+                "смени", "найди", "заведи", "потуши", "зажги", "сыграй"
+            ]
+            has_action_intent = any(cv in text_low for cv in command_verbs)
+
+            if self.nlu:
+                nlu_intent, confidence, slots = self.nlu.predict(text)
+                if confidence >= self.threshold:
+                    if has_action_intent or nlu_intent in ["media_play_pause", "media_next_track", "media_previous_track"]:
+                        intent = nlu_intent
+                    else:
+                        intent = None
+
+        if intent:
+            zapret_keywords = ["запрет", "обход", "winws", "zapret", "за прет"]
+            if intent == "shutdown" and any(zk in text_low for zk in zapret_keywords):
+                intent = "stop_zapret"
+
+            canonical_display = CANONICAL_USER_TEXTS.get(intent, user_display)
+
+            action_name = self.intent_aliases.get(intent, intent)
+            action_func = getattr(SystemActions, action_name, None)
+            if action_func is not None:
+                try:
+                    res = action_func(text, slots=slots, llm=self.llm)
+                except TypeError:
+                    try:
+                        res = action_func(text, slots=slots)
+                    except TypeError:
+                        try:
+                            res = action_func(text)
+                        except TypeError:
+                            res = action_func()
+
+                if res is not None:
+                    if isinstance(res, dict):
+                        if res.get("waiting_confirmation") == "recycle_bin":
+                            self.waiting_for_recycle_bin = True
+                        res.setdefault("user_display", canonical_display)
+                        res.setdefault("is_whisper", is_whisper)
+                        if "emotion" not in res:
+                            res["emotion"] = emotion
+                        return res
+
+                    res_str = str(res)
+                    if emotion == "sad" and intent in ["play_music", "mode_rest"]:
+                        res_str = f"{res_str}... Надеюсь, это поможет тебе почувствовать себя лучше 💛 Если захочешь выговориться — я рядом."
+                    elif emotion == "happy" and intent in ["play_music", "mode_rest"]:
+                        res_str = f"{res_str}! Рада твоему классному настроению ✨"
+
+                    if intent in ["start_vpn", "stop_vpn"]:
+                        return {"user_display": canonical_display, "chat": "" if is_voice else res_str, "voice": res_str, "emotion": emotion, "is_whisper": is_whisper}
+                    return {"user_display": canonical_display, "chat": res_str, "voice": res_str, "emotion": emotion, "is_whisper": is_whisper}
+
+        words_count = len(text.split())
+        is_confident_emo = (emotion != "neutral") and (emo_conf >= 0.75) and (words_count >= 3)
+        prompt_with_emotion = f"[Эмоциональный тон пользователя: {emo_desc}] {text}" if is_confident_emo else text
+
+        if getattr(self, "is_stress_mode", False):
+            stress_directive = (
+                "[РЕЖИМ АБСОЛЮТНОЙ НАДЕЖНОСТИ (АНТИ-СТРЕСС / ГОРИТ ДЕДЛАЙН)]:\n"
+                "Пользователь находится в состоянии острого стресса или цейтнота!\n"
+                "СТРОГО И ПОЛНОСТЬЮ ОТКЛЮЧИ любой сарказм, смех, иронию, шутки и пространные рассуждения.\n"
+                "Будь для него непоколебимым ментальным якорем. Отвечай хладнокровно, спокойно и уверенно.\n"
+                "Убери всю воду: дай чёткий, пошаговый алгоритм действий (1, 2, 3) по приоритетам, выдели главное ядро проблемы.\n"
+                "В конце кратко подбодри: 'Спокойно, я рядом, мы справимся'."
+            )
+            prompt_with_emotion = f"{stress_directive}\n\n{prompt_with_emotion}"
+            emotion = "sad"
+
+        ans = self.llm.ask(prompt_with_emotion, raw_user_text=text)
+        voice_ans = clean_voice_text(ans) or ans
+        return {"user_display": user_display, "chat": ans, "voice": voice_ans, "emotion": emotion, "is_whisper": is_whisper,
+                "followup": True}

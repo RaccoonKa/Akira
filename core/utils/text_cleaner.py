@@ -1,0 +1,119 @@
+import re
+
+# Регулярное выражение для поиска любых ремарок, эмоций и действий в тексте от LLM:
+# - *радостно хихикает*, *смеется*, *весело улыбается*, _подмигивает_
+# - [смеется и машет рукой]
+# - (тихо вздыхает), (смущенно улыбнулась)
+CHAT_ACTION_TAG_REGEX = re.compile(
+    r'(?:'
+    r'(?<![*_])[*_](?![*_])\s*[^*_\n]{1,120}\s*(?<![*_])[*_](?![*_])'
+    r'|'
+    r'\[\s*[^\d\]\n]*?(?:сме[еёх]|хихик|усме[хш]|хохо[тч]|хмык|улыб|вздох|вздых|подмиг|зева|смущ|задум|пауз|машет|молчит|шепч|кива|голос)[^\d\]\n]*?\]'
+    r'|'
+    r'\(\s*[^\)\n]*?(?:сме[еёх]|хихик|усме[хш]|хохо[тч]|хмык|улыб|вздох|вздых|подмиг|зева|смущ|задум|пауз|машет|молчит|шепч|кива)[^\)\n]*?\)'
+    r')',
+    re.IGNORECASE
+)
+
+
+def clean_voice_text(text: str) -> str:
+    """
+    Очищает текст ответа нейросети перед отправкой в модуль голосового синтеза (TTS):
+    - Полностью удаляет блоки кода (```...```) и названия языков программирования,
+      чтобы Акира не зачитывала синтаксис как бессвязный мусор.
+    - Если весь ответ состоял только из кода, подставляет лаконичную живую реплику («Готово! Код вывела на экран»).
+    - Убирает сценические ремарки (*улыбается*, [смеется] и т.д.).
+    - Снимает Markdown-разметку (обратные кавычки, звездочки, решетки, ссылки).
+    - Очищает лишние пробелы и артефакты форматирования.
+    """
+    if not text:
+        return ""
+
+    # Проверяем, содержал ли исходный текст блоки кода
+    has_code_blocks = bool(re.search(r'```[\s\S]*?```|```[a-zA-Z0-9_\-\+#\.]*[ \t]*\r?\n[\s\S]*$', text))
+
+    # 1. Полностью вырезаем блоки кода и медиа-теги (заменяем на точку с пробелом для плавной интонации)
+    text_clean = re.sub(r'```[\s\S]*?```', '. ', text)
+    text_clean = re.sub(r'```[a-zA-Z0-9_\-\+#\.]*[ \t]*\r?\n[\s\S]*$', '. ', text_clean)
+    text_clean = re.sub(r'\[AKIRA_(?:IMAGE|AUDIO):[^\]]+\]', '', text_clean)
+
+    # 2. Снимаем инлайн-код (убираем обратные кавычки, оставляя читаемый текст)
+    text_clean = re.sub(r'`([^`\n]+)`', r'\1', text_clean)
+
+    # 3. Удаляем сценические ремарки
+    text_clean = CHAT_ACTION_TAG_REGEX.sub(" ", text_clean)
+
+    # 4. Снимаем Markdown ссылки [текст](url) -> текст
+    text_clean = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text_clean)
+
+    # 5. Снимаем квадратные скобки у числовых списков для естественного произношения
+    text_clean = re.sub(r'\[([0-9,\s\-]+)\]', r'\1', text_clean)
+
+    # 6. Снимаем Markdown разметку заголовков, списков, жирности, курсива
+    text_clean = re.sub(r'^[ \t]*#{1,6}\s+', '', text_clean, flags=re.MULTILINE)
+    text_clean = re.sub(r'\*\*([^*]+)\*\*', r'\1', text_clean)
+    text_clean = re.sub(r'(?<!\*)\*([^*\n]+)\*(?!\*)', r'\1', text_clean)
+    text_clean = re.sub(r'__([^_]+)__', r'\1', text_clean)
+    text_clean = re.sub(r'^[ \t]*[-*•]\s+', '', text_clean, flags=re.MULTILINE)
+
+    # 7. Нормализуем знаки препинания и пробелы
+    text_clean = re.sub(r'[ \t]+', ' ', text_clean)
+    text_clean = re.sub(r'\s+([,.:!?])', r'\1', text_clean)
+    text_clean = re.sub(r'(\.\s*)+', '. ', text_clean)
+    text_clean = re.sub(r'^[,\s!?:;.\-]+', '', text_clean)
+    text_clean = text_clean.strip()
+
+    if "[AKIRA_IMAGE:" in text:
+        letters = re.findall(r'[a-zA-Zа-яА-ЯёЁ]', text_clean)
+        if len(letters) < 4:
+            return "Готово! Сгенерировала изображение."
+    elif "[AKIRA_AUDIO:" in text:
+        letters = re.findall(r'[a-zA-Zа-яА-ЯёЁ]', text_clean)
+        if len(letters) < 4:
+            return "Готово! Композиция создана."
+
+    if has_code_blocks:
+        letters = re.findall(r'[a-zA-Zа-яА-ЯёЁ]', text_clean)
+        if len(letters) < 4:
+            return "Готово! Код вывела на экран."
+
+    return text_clean
+
+
+def clean_chat_display_text(text: str) -> str:
+    """
+    Очищает текст ответа нейросети перед выводом в чат и мессенджеры:
+    - Полностью удаляет сценические ремарки и теги действий (*смеется*, *радостно хихикает* и т.д.)
+    - Сохраняет блоки кода (```...```) и инлайн-код (`...`) нетронутыми
+    - Сохраняет Markdown-жирность (**важно**) и пунктуацию
+    - Убирает лишние пробелы и пустые строки
+    """
+    if not text:
+        return ""
+
+    code_snippets = []
+
+    def _store_code(m):
+        idx = len(code_snippets)
+        code_snippets.append(m.group(0))
+        return f"@@@CODEBLOCK{idx}@@@"
+
+    # Защищаем блоки кода, инлайн-код и медиа-теги [AKIRA_IMAGE:...] / [AKIRA_AUDIO:...]
+    protected = re.sub(r'```[\s\S]*?```|`[^`\n]+`|\[AKIRA_(?:IMAGE|AUDIO):[^\]]+\]', _store_code, text)
+
+    lines = []
+    for line in protected.splitlines():
+        line_clean = CHAT_ACTION_TAG_REGEX.sub(" ", line)
+        line_clean = re.sub(r'^[,\s!?:;.\-]+', '', line_clean)
+        line_clean = re.sub(r'[ \t]+', ' ', line_clean)
+        line_clean = re.sub(r'\s+([,.:!?])', r'\1', line_clean).strip()
+        lines.append(line_clean)
+
+    cleaned = "\n".join(lines)
+    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+
+    # Восстанавливаем сохраненный код
+    for idx, snippet in enumerate(code_snippets):
+        cleaned = cleaned.replace(f"@@@CODEBLOCK{idx}@@@", snippet)
+
+    return cleaned.strip()

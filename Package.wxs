@@ -1,0 +1,74 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Akira"
+           Manufacturer="Svetozar (RaccoonKa)"
+           Version="5.1.0"
+           UpgradeCode="4F82C9E4-1B18-4E4D-B5F2-81D6C7892301"
+           Scope="perMachine">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Akira is already installed on your PC." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Akira" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="System64Folder" />
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="ApplicationShortcut" Guid="7B91F248-8C65-4C41-8930-5A3E92B1C840">
+        <Shortcut Id="ApplicationStartMenuShortcut"
+                  Name="Akira"
+                  Description="Akira"
+                  Target="[INSTALLFOLDER]Akira.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="AppIcon.ico" />
+        <RegistryValue Root="HKCU" Key="Software\Akira" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <StandardDirectory Id="DesktopFolder">
+      <Component Id="DesktopShortcut" Guid="2C8E1903-82BA-4F71-92D0-3D8F9A0B7C61">
+        <Shortcut Id="ApplicationDesktopShortcut"
+                  Name="Akira"
+                  Description="Akira"
+                  Target="[INSTALLFOLDER]Akira.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="AppIcon.ico" />
+        <RegistryValue Root="HKCU" Key="Software\Akira" Name="desktop_shortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <Icon Id="AppIcon.ico" SourceFile="assets\icon\ico\akira_icon.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
+
+    <ComponentGroup Id="ProductComponents">
+      <Files Include="dist\Akira\**" />
+    </ComponentGroup>
+
+    <Feature Id="MainApplication" Title="Akira" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+      <ComponentRef Id="ApplicationShortcut" />
+      <ComponentRef Id="DesktopShortcut" />
+    </Feature>
+
+    <CustomAction Id="AddDefenderExclusion"
+                  Directory="System64Folder"
+                  ExeCommand="WindowsPowerShell\v1.0\powershell.exe -WindowStyle Hidden -Command &quot;Add-MpPreference -ExclusionPath '[INSTALLFOLDER]' -ErrorAction SilentlyContinue&quot;"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore" />
+
+    <CustomAction Id="RemoveDefenderExclusion"
+                  Directory="System64Folder"
+                  ExeCommand="WindowsPowerShell\v1.0\powershell.exe -WindowStyle Hidden -Command &quot;Remove-MpPreference -ExclusionPath '[INSTALLFOLDER]' -ErrorAction SilentlyContinue&quot;"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore" />
+
+    <InstallExecuteSequence>
+      <Custom Action="AddDefenderExclusion" After="InstallFiles" Condition="NOT Installed" />
+      <Custom Action="RemoveDefenderExclusion" Before="RemoveFiles" Condition="Installed AND (REMOVE=&quot;ALL&quot;)" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>
