@@ -302,13 +302,12 @@ class TestStage6GuiCrossplatform(unittest.TestCase):
                     host.closing_anim.stop()
 
             with patch.object(cw_mod.sys, "platform", "win32"):
-                host._set_win32_acrylic_enabled = MagicMock()
                 host.invalidate_taskbar_thumbnail = MagicMock()
                 host.show_animated()
                 self.assertIsInstance(host.opening_anim, QPropertyAnimation)
                 self.assertEqual(host.opening_anim.propertyName(), b"pos")
                 avail = self.app.primaryScreen().availableGeometry()
-                self.assertEqual(host.opening_anim.endValue().x(), avail.x() + avail.width() - 380 - 20)
+                self.assertEqual(host.opening_anim.endValue().x(), avail.x() + avail.width() - 880 - 20)
                 host.opening_anim.stop()
         finally:
             host.close()
@@ -442,25 +441,12 @@ class TestStage6GuiCrossplatform(unittest.TestCase):
                         mw.shutdown()
                         mw.close()
 
-                # 5. Windows compact Normal mode (no acrylic void) + stationary Studio expand/collapse
+                # 5. Windows Zero-Move + stationary right_area inside fixed EXTENDED_WIDTH bg_frame (no acrylic void)
                 with patch.object(cw_mod, "CommandParser", return_value=MagicMock()), \
                         patch.object(cw_mod.sys, "platform", "win32"), \
-                        patch.object(cw_mod, "enable_window_acrylic") as mock_enable_acrylic, \
-                        patch.object(cw_mod, "disable_window_acrylic") as mock_disable_acrylic:
+                        patch.object(cw_mod, "enable_window_acrylic") as mock_enable_acrylic:
                     win_mw = cw_mod.MainWindow(dict(DEFAULT_CONFIG))
                     try:
-                        self.assertEqual(win_mw.width(), win_mw.NORMAL_WIDTH)
-                        self.assertEqual(win_mw.bg_frame.geometry(), QRect(0, 0, win_mw.NORMAL_WIDTH, win_mw.WINDOW_HEIGHT))
-                        self.assertIsNone(win_mw.bg_frame._reveal_width)
-                        self.assertEqual(win_mw.right_area.geometry(), QRect(2, 2, win_mw.NORMAL_WIDTH - 4, win_mw.WINDOW_HEIGHT - 4))
-                        self.assertTrue(win_mw.mask().isEmpty())
-                        mock_enable_acrylic.assert_called()
-
-                        win_mw.move(1000, 120)
-                        win_right_edge = win_mw.x() + win_mw.width()
-                        win_mw._prepare_win32_expand_window()
-                        mock_disable_acrylic.assert_called()
-
                         expected_right_geo = QRect(
                             win_mw.EXTENDED_WIDTH - win_mw.NORMAL_WIDTH + 2,
                             2,
@@ -468,10 +454,11 @@ class TestStage6GuiCrossplatform(unittest.TestCase):
                             win_mw.WINDOW_HEIGHT - 4,
                         )
                         self.assertEqual(win_mw.width(), win_mw.EXTENDED_WIDTH)
-                        self.assertEqual(win_mw.x() + win_mw.width(), win_right_edge)
                         self.assertEqual(win_mw.bg_frame.geometry(), QRect(0, 0, win_mw.EXTENDED_WIDTH, win_mw.WINDOW_HEIGHT))
-                        self.assertEqual(win_mw.right_area.geometry(), expected_right_geo)
                         self.assertEqual(win_mw.bg_frame.visible_rect().width(), win_mw.NORMAL_WIDTH)
+                        self.assertEqual(win_mw.right_area.geometry(), expected_right_geo)
+                        self.assertFalse(win_mw.mask().isEmpty())
+                        mock_enable_acrylic.assert_not_called()
 
                         for w_step in (win_mw.NORMAL_WIDTH, 550, 720, win_mw.EXTENDED_WIDTH):
                             win_mw._on_expand_step(w_step)
@@ -479,21 +466,14 @@ class TestStage6GuiCrossplatform(unittest.TestCase):
                             self.assertEqual(win_mw.right_area.geometry(), expected_right_geo)
                             self.assertEqual(win_mw.bg_frame.visible_rect().width(), w_step)
 
-                        mock_enable_acrylic.reset_mock()
                         win_mw._apply_expanded_geometry()
                         self.assertTrue(win_mw.mask().isEmpty())
                         self.assertEqual(win_mw.bg_frame.visible_rect().width(), win_mw.EXTENDED_WIDTH)
-                        mock_enable_acrylic.assert_called_once()
 
-                        mock_enable_acrylic.reset_mock()
                         win_mw._apply_collapsed_geometry()
-                        self.assertEqual(win_mw.width(), win_mw.NORMAL_WIDTH)
-                        self.assertEqual(win_mw.x() + win_mw.width(), win_right_edge)
-                        self.assertEqual(win_mw.bg_frame.geometry(), QRect(0, 0, win_mw.NORMAL_WIDTH, win_mw.WINDOW_HEIGHT))
-                        self.assertEqual(win_mw.right_area.geometry(), QRect(2, 2, win_mw.NORMAL_WIDTH - 4, win_mw.WINDOW_HEIGHT - 4))
-                        self.assertIsNone(win_mw.bg_frame._reveal_width)
-                        self.assertTrue(win_mw.mask().isEmpty())
-                        mock_enable_acrylic.assert_called_once()
+                        self.assertFalse(win_mw.mask().isEmpty())
+                        self.assertEqual(win_mw.bg_frame.visible_rect().width(), win_mw.NORMAL_WIDTH)
+                        self.assertEqual(win_mw.right_area.geometry(), expected_right_geo)
                     finally:
                         win_mw.shutdown()
                         win_mw.close()

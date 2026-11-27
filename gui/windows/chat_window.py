@@ -2240,9 +2240,9 @@ class MainWindow(QWidget):
         self.current_theme = self.config.get("theme", "dark") if isinstance(self.config, dict) else "dark"
         self.is_mini_mode = self.config.get("is_mini_mode", False) if isinstance(self.config, dict) else False
 
-        # Константы геометрии: в обычном режиме окно на всех платформах компактное (NORMAL_WIDTH, без пустой области);
-        # при открытии Студии на Windows временно отключается DWM-акрил и раскрывается стационарный контейнер до EXTENDED_WIDTH,
-        # а на Linux X11 окно расширяется с NorthEastGravity + XcbConfigureNotifyGate без дёргания.
+        # Константы геометрии: окно ОС на Windows зафиксировано на EXTENDED_WIDTH (Zero-Move + DwmSetIconicThumbnail, без DWM-акрила
+        # поверх прозрачной области, чтобы не возникал чёрный фон слева и сфера стояла неподвижно без моргания при открытии Студии);
+        # на Linux в обычном режиме окно равно NORMAL_WIDTH, а на X11 расширяется без дёргания за счёт reveal-слоя.
         self.window_mode = "mini" if self.is_mini_mode else "normal"
         self.NORMAL_WIDTH = 380
         self.EXTENDED_WIDTH = 880
@@ -2442,11 +2442,7 @@ class MainWindow(QWidget):
         self.mini_window.set_theme(theme)
         self.update_title_icons()
 
-        if sys.platform == "win32":
-            # Не включаем DWM-акрил поверх невидимой области во время анимации раскрытия/сворачивания
-            if not getattr(self, "_is_mode_animating", False) and self.bg_frame.visible_rect().width() == self.width():
-                self._set_win32_acrylic_enabled(True)
-        elif enable_window_acrylic:
+        if sys.platform != "win32" and enable_window_acrylic:
             try:
                 tint = "20E8EEF5" if theme == "light" else "25080805"
                 enable_window_acrylic(int(self.winId()), tint)
@@ -2513,30 +2509,6 @@ class MainWindow(QWidget):
 
     def _uses_stationary_expand_linux(self) -> bool:
         return sys.platform != "win32" and not is_wayland()
-
-    def _uses_stationary_expand_win32(self) -> bool:
-        return sys.platform == "win32"
-
-    def _set_win32_acrylic_enabled(self, enabled: bool):
-        if sys.platform != "win32":
-            return
-        try:
-            hwnd = int(self.winId())
-        except Exception:
-            return
-        if enabled:
-            if enable_window_acrylic:
-                tint = "20E8EEF5" if getattr(self, "current_theme", "dark") == "light" else "25080805"
-                try:
-                    enable_window_acrylic(hwnd, tint)
-                except Exception:
-                    pass
-        else:
-            if disable_window_acrylic:
-                try:
-                    disable_window_acrylic(hwnd)
-                except Exception:
-                    pass
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -2754,11 +2726,14 @@ class MainWindow(QWidget):
         screen = QGuiApplication.primaryScreen()
         avail = screen.availableGeometry()
 
-        w = (
-            self.EXTENDED_WIDTH
-            if getattr(self, "window_mode", "normal") == "extended"
-            else getattr(self, "NORMAL_WIDTH", 380)
-        )
+        if sys.platform == "win32":
+            w = self.EXTENDED_WIDTH
+        else:
+            w = (
+                self.EXTENDED_WIDTH
+                if getattr(self, "window_mode", "normal") == "extended"
+                else getattr(self, "NORMAL_WIDTH", 380)
+            )
         h = self.WINDOW_HEIGHT
         x = avail.x() + avail.width() - w - 20
         y = avail.y() + avail.height() - h - 20
@@ -2766,8 +2741,6 @@ class MainWindow(QWidget):
         def _on_opened():
             if sys.platform != "win32":
                 self.setWindowOpacity(1.0)
-            elif not getattr(self, "_is_mode_animating", False) and self.bg_frame.visible_rect().width() == self.width():
-                self._set_win32_acrylic_enabled(True)
             self._is_animating_window = False
             self._window_ready = True
             self._check_and_reveal()
@@ -3009,36 +2982,6 @@ class MainWindow(QWidget):
             target_x, cur_y, self.EXTENDED_WIDTH, _apply_children, on_done=on_ready
         )
 
-    def _prepare_win32_expand_window(self, on_ready=None):
-        """На Windows временно отключает DWM-акрил и расширяет контейнер до EXTENDED_WIDTH без сдвига правой панели."""
-        screen = QGuiApplication.primaryScreen()
-        avail = screen.availableGeometry() if screen else QRect(0, 0, 1920, 1080)
-        cur_right = self.x() + self.width()
-        target_x = max(avail.left(), cur_right - self.EXTENDED_WIDTH)
-        cur_y = self.y()
-
-        self._set_win32_acrylic_enabled(False)
-        self.setUpdatesEnabled(False)
-        try:
-            self.setGeometry(target_x, cur_y, self.EXTENDED_WIDTH, self.WINDOW_HEIGHT)
-            self.bg_frame.set_reveal_width(self.NORMAL_WIDTH, anchor_right=True)
-            self.bg_frame.setGeometry(0, 0, self.EXTENDED_WIDTH, self.WINDOW_HEIGHT)
-            if hasattr(self, "studio_panel"):
-                self.studio_panel.setGeometry(
-                    2, 2, self.EXTENDED_WIDTH - self.NORMAL_WIDTH - 2, self.WINDOW_HEIGHT - 4
-                )
-            if hasattr(self, "right_area"):
-                self.right_area.setGeometry(
-                    self.EXTENDED_WIDTH - self.NORMAL_WIDTH + 2, 2,
-                    self.NORMAL_WIDTH - 4, self.WINDOW_HEIGHT - 4,
-                )
-            self._update_click_mask(self.NORMAL_WIDTH)
-        finally:
-            self.setUpdatesEnabled(True)
-        self.repaint()
-        if on_ready is not None:
-            on_ready()
-
     def _on_expand_step(self, val):
         w = int(round(val))
         if sys.platform == "win32":
@@ -3061,22 +3004,8 @@ class MainWindow(QWidget):
 
     def _apply_collapsed_geometry(self, on_done=None):
         if sys.platform == "win32":
-            cur_right = self.x() + self.width()
-            cur_y = self.y()
-            target_x = cur_right - self.NORMAL_WIDTH
-
-            self.setUpdatesEnabled(False)
-            try:
-                self.bg_frame.set_reveal_width(None)
-                self.bg_frame.setGeometry(0, 0, self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
-                if hasattr(self, "right_area"):
-                    self.right_area.setGeometry(2, 2, self.NORMAL_WIDTH - 4, self.WINDOW_HEIGHT - 4)
-                self.clearMask()
-                self.setGeometry(target_x, cur_y, self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
-            finally:
-                self.setUpdatesEnabled(True)
-            self.repaint()
-            self._set_win32_acrylic_enabled(True)
+            self.bg_frame.set_reveal_width(self.NORMAL_WIDTH, anchor_right=True)
+            self._update_click_mask(self.NORMAL_WIDTH)
             if on_done is not None:
                 on_done()
         elif self._uses_stationary_expand_linux():
@@ -3101,11 +3030,8 @@ class MainWindow(QWidget):
 
     def _apply_expanded_geometry(self):
         if sys.platform == "win32":
-            if self.width() != self.EXTENDED_WIDTH:
-                self._prepare_win32_expand_window()
             self.bg_frame.set_reveal_width(self.EXTENDED_WIDTH, anchor_right=True)
             self.clearMask()
-            self._set_win32_acrylic_enabled(True)
         elif self._uses_stationary_expand_linux():
             if self.width() != self.EXTENDED_WIDTH:
                 self._prepare_linux_expand_window()
@@ -3168,8 +3094,6 @@ class MainWindow(QWidget):
             self.expand_anim.finished.connect(on_expand_finished)
             if self._uses_stationary_expand_linux():
                 self._prepare_linux_expand_window(on_ready=self.expand_anim.start)
-            elif self._uses_stationary_expand_win32():
-                self._prepare_win32_expand_window(on_ready=self.expand_anim.start)
             else:
                 self.expand_anim.start()
 
@@ -3188,8 +3112,6 @@ class MainWindow(QWidget):
 
             def on_fade_out_finished():
                 self.studio_panel.hide()
-                if self._uses_stationary_expand_win32():
-                    self._set_win32_acrylic_enabled(False)
 
                 try:
                     self.expand_anim.finished.disconnect()
@@ -3249,8 +3171,6 @@ class MainWindow(QWidget):
 
             def _after_studio_fade():
                 self.studio_panel.hide()
-                if self._uses_stationary_expand_win32():
-                    self._set_win32_acrylic_enabled(False)
                 try:
                     self.expand_anim.finished.disconnect()
                 except Exception:
@@ -3360,7 +3280,7 @@ class MainWindow(QWidget):
         screen = QGuiApplication.primaryScreen().availableGeometry()
         mini_pos = self.mini_window.pos()
 
-        target_w = self.NORMAL_WIDTH
+        target_w = self.EXTENDED_WIDTH if sys.platform == "win32" else self.NORMAL_WIDTH
         target_x = mini_pos.x() + 460 - target_w
         target_y = mini_pos.y() + 56 - self.WINDOW_HEIGHT
 
@@ -3403,7 +3323,7 @@ class MainWindow(QWidget):
             self.raise_()
             self.activateWindow()
 
-            if enable_window_acrylic:
+            if sys.platform != "win32" and enable_window_acrylic:
                 try:
                     tint = "20E8EEF5" if self.current_theme == "light" else "25080805"
                     enable_window_acrylic(int(self.winId()), tint)
@@ -3580,18 +3500,25 @@ class MainWindow(QWidget):
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
-        # В обычном режиме окно имеет компактную ширину NORMAL_WIDTH на всех платформах (без пустой области);
-        # на Windows и X11 раскрытие Студии до EXTENDED_WIDTH выполняется без дёргания за счёт reveal-слоя.
+        # На Windows окно ОС зафиксировано на EXTENDED_WIDTH (Zero-Move + DwmSetIconicThumbnail, без перестройки layout и без моргания);
+        # на Linux единое окно имеет компактную ширину NORMAL_WIDTH и на X11 раскрывается без дёргания за счёт reveal-слоя.
         self.bg_frame = BackgroundFrame(self)
         self.bg_frame.setObjectName("CentralWidget")
 
-        self.setMinimumSize(self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
-        self.setMaximumSize(self.EXTENDED_WIDTH, self.WINDOW_HEIGHT)
-        self.resize(self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
-        self.bg_frame.setGeometry(0, 0, self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
-        self.bg_frame.set_reveal_width(None)
-        self.clearMask()
-        right_x = 2
+        if sys.platform == "win32":
+            self.setFixedSize(self.EXTENDED_WIDTH, self.WINDOW_HEIGHT)
+            self.bg_frame.setGeometry(0, 0, self.EXTENDED_WIDTH, self.WINDOW_HEIGHT)
+            self.bg_frame.set_reveal_width(self.NORMAL_WIDTH, anchor_right=True)
+            self._update_click_mask(self.NORMAL_WIDTH)
+            right_x = self.EXTENDED_WIDTH - self.NORMAL_WIDTH + 2
+        else:
+            self.setMinimumSize(self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
+            self.setMaximumSize(self.EXTENDED_WIDTH, self.WINDOW_HEIGHT)
+            self.resize(self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
+            self.bg_frame.setGeometry(0, 0, self.NORMAL_WIDTH, self.WINDOW_HEIGHT)
+            self.bg_frame.set_reveal_width(None)
+            self.clearMask()
+            right_x = 2
 
         self.studio_panel = StudioFrame(self.bg_frame, main_window=self)
         self.studio_panel.setGeometry(
