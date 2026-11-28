@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/readme/hero_v2.svg" alt="Akira — AI Voice Assistant & Desktop Studio" width="100%"/>
+  <img src="docs/readme/hero_v3.svg" alt="Akira — AI Voice Assistant & Desktop Studio" width="100%"/>
 </p>
 
 <p align="center">
