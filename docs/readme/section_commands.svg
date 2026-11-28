@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 58" width="1200" height="58" role="img" aria-label="Voice Command Matrix">
+  <defs>
+    <linearGradient id="secGrad2" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#67e8f9" stop-opacity="0.2"/>
+      <stop offset="45%" stop-color="#a78bfa" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#090b12" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="barGrad2" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#67e8f9"/>
+      <stop offset="100%" stop-color="#a78bfa"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="4" width="1196" height="50" rx="12" fill="url(#secGrad2)" stroke="#67e8f9" stroke-opacity="0.35" stroke-width="1.2"/>
+  <rect x="2" y="4" width="7" height="50" rx="3.5" fill="url(#barGrad2)"/>
+  <text x="26" y="36" font-family="Inter, Segoe UI, sans-serif" font-size="20" font-weight="800" letter-spacing="1.2" fill="#cffafe">
+    🗣️ VOICE COMMAND MATRIX
+  </text>
+  <text x="1172" y="35" text-anchor="end" font-family="monospace" font-size="14" font-weight="700" fill="#a78bfa">
+    ▸▸▸ NATURAL LANGUAGE
+  </text>
+</svg>

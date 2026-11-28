@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 28" width="1200" height="28" role="presentation">
+  <defs>
+    <linearGradient id="divGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#090b12" stop-opacity="0"/>
+      <stop offset="20%" stop-color="#facc15" stop-opacity="0.85"/>
+      <stop offset="50%" stop-color="#fb923c" stop-opacity="1"/>
+      <stop offset="80%" stop-color="#67e8f9" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#090b12" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <line x1="40" y1="14" x2="555" y2="14" stroke="url(#divGrad)" stroke-width="2" stroke-linecap="round"/>
+  <path d="M568 14 L578 9 L578 19 Z" fill="#facc15"/>
+  <polygon points="600,5 609,14 600,23 591,14" fill="#fb923c"/>
+  <path d="M632 14 L622 9 L622 19 Z" fill="#67e8f9"/>
+  <line x1="645" y1="14" x2="1160" y2="14" stroke="url(#divGrad)" stroke-width="2" stroke-linecap="round"/>
+</svg>

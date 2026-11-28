@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 220" width="1200" height="220" role="img" aria-label="Akira Hybrid Processing Pipeline">
+  <defs>
+    <linearGradient id="pipeBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#090c14"/>
+      <stop offset="100%" stop-color="#111624"/>
+    </linearGradient>
+    <linearGradient id="arrowGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#facc15"/>
+      <stop offset="50%" stop-color="#fb923c"/>
+      <stop offset="100%" stop-color="#67e8f9"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="4" y="4" width="1192" height="212" rx="18" fill="url(#pipeBg)" stroke="#ffffff" stroke-opacity="0.09" stroke-width="1.5"/>
+  <text x="28" y="34" font-family="Inter, Segoe UI, sans-serif" font-size="13" font-weight="700" letter-spacing="1.8" fill="#cbd5e1">
+    ⚙️ HYBRID PROCESSING PIPELINE — LOCAL PRIVACY + CLOUD INTELLIGENCE
+  </text>
+
+  <g font-family="Inter, Segoe UI, sans-serif">
+    <!-- Step 1 -->
+    <rect x="28" y="56" width="246" height="136" rx="14" fill="#151a28" stroke="#facc15" stroke-opacity="0.6" stroke-width="1.6"/>
+    <text x="48" y="86" fill="#facc15" font-size="15" font-weight="800">1. MULTIMODAL INPUT</text>
+    <text x="48" y="114" fill="#e2e8f0" font-size="13">🎙️ Voice (Mic + Wake Word)</text>
+    <text x="48" y="138" fill="#e2e8f0" font-size="13">👁️ Webcam (Face ID / Gestures)</text>
+    <text x="48" y="162" fill="#e2e8f0" font-size="13">📎 Studio (Up to 10 Files) &amp; TG</text>
+
+    <!-- Arrow 1 -->
+    <line x1="282" y1="124" x2="318" y2="124" stroke="url(#arrowGrad)" stroke-width="3" stroke-linecap="round"/>
+    <polygon points="326,124 314,117 314,131" fill="#fb923c"/>
+
+    <!-- Step 2 -->
+    <rect x="332" y="56" width="250" height="136" rx="14" fill="#151a28" stroke="#fb923c" stroke-opacity="0.6" stroke-width="1.6"/>
+    <text x="352" y="86" fill="#fb923c" font-size="15" font-weight="800">2. LOCAL ONNX CORE</text>
+    <text x="352" y="114" fill="#e2e8f0" font-size="13">⚡ Vosk STT + ASR Corrector</text>
+    <text x="352" y="138" fill="#e2e8f0" font-size="13">🛡️ Prefix Gate &amp; Voiceprint</text>
+    <text x="352" y="162" fill="#e2e8f0" font-size="13">🎭 JointNLU + Emotion ONNX</text>
+
+    <!-- Arrow 2 -->
+    <line x1="590" y1="124" x2="626" y2="124" stroke="url(#arrowGrad)" stroke-width="3" stroke-linecap="round"/>
+    <polygon points="634,124 622,117 622,131" fill="#67e8f9"/>
+
+    <!-- Step 3 -->
+    <rect x="640" y="56" width="250" height="136" rx="14" fill="#151a28" stroke="#67e8f9" stroke-opacity="0.6" stroke-width="1.6"/>
+    <text x="660" y="86" fill="#67e8f9" font-size="15" font-weight="800">3. SMART ROUTER</text>
+    <text x="660" y="114" fill="#e2e8f0" font-size="13">🎬 TorrServer, VLC, Yandex</text>
+    <text x="660" y="138" fill="#e2e8f0" font-size="13">🌐 VPN, Zapret, IoT, Power</text>
+    <text x="660" y="162" fill="#e2e8f0" font-size="13">🧠 Gemini / DeepSeek / GigaChat</text>
+
+    <!-- Arrow 3 -->
+    <line x1="898" y1="124" x2="934" y2="124" stroke="url(#arrowGrad)" stroke-width="3" stroke-linecap="round"/>
+    <polygon points="942,124 930,117 930,131" fill="#f43f5e"/>
+
+    <!-- Step 4 -->
+    <rect x="948" y="56" width="224" height="136" rx="14" fill="#151a28" stroke="#f43f5e" stroke-opacity="0.6" stroke-width="1.6"/>
+    <text x="968" y="86" fill="#fda4af" font-size="15" font-weight="800">4. VOICE &amp; AURA</text>
+    <text x="968" y="114" fill="#e2e8f0" font-size="13">🔊 Piper INT8 GPU TTS</text>
+    <text x="968" y="138" fill="#e2e8f0" font-size="13">🌙 Night Whisper Mode</text>
+    <text x="968" y="162" fill="#e2e8f0" font-size="13">✨ Dynamic Sphere Glow</text>
+  </g>
+</svg>

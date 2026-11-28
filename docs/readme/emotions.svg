@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 170" width="1200" height="170" role="img" aria-label="Akira Emotional Aura Spectrum">
+  <defs>
+    <linearGradient id="cardBg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#111521"/>
+      <stop offset="100%" stop-color="#0a0c13"/>
+    </linearGradient>
+    <linearGradient id="spectrumBar" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="20%" stop-color="#facc15"/>
+      <stop offset="40%" stop-color="#fb923c"/>
+      <stop offset="60%" stop-color="#a78bfa"/>
+      <stop offset="80%" stop-color="#67e8f9"/>
+      <stop offset="100%" stop-color="#f43f5e"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="4" y="4" width="1192" height="162" rx="18" fill="url(#cardBg)" stroke="#ffffff" stroke-opacity="0.09" stroke-width="1.5"/>
+  <text x="28" y="34" font-family="Inter, Segoe UI, sans-serif" font-size="13" font-weight="700" letter-spacing="1.8" fill="#cbd5e1">
+    ✨ EMOTIONAL AURA SPECTRUM — REAL-TIME SPHERE &amp; STUDIO THEME ADAPTATION
+  </text>
+
+  <!-- Continuous gradient wave -->
+  <rect x="28" y="48" width="1144" height="6" rx="3" fill="url(#spectrumBar)"/>
+
+  <!-- 6 Emotion cards -->
+  <g font-family="Inter, Segoe UI, sans-serif">
+    <!-- Neutral -->
+    <rect x="28" y="70" width="176" height="78" rx="12" fill="#181c29" stroke="#fbbf24" stroke-opacity="0.55" stroke-width="1.4"/>
+    <circle cx="52" cy="96" r="9" fill="#fbbf24"/>
+    <text x="70" y="100" fill="#fef3c7" font-size="14" font-weight="700">Neutral</text>
+    <text x="44" y="128" fill="#94a3b8" font-size="11.5">Warm Amber • Ready</text>
+
+    <!-- Happy -->
+    <rect x="221" y="70" width="176" height="78" rx="12" fill="#181c29" stroke="#facc15" stroke-opacity="0.6" stroke-width="1.4"/>
+    <circle cx="245" cy="96" r="9" fill="#facc15"/>
+    <text x="263" y="100" fill="#fef08a" font-size="14" font-weight="700">Happy</text>
+    <text x="237" y="128" fill="#94a3b8" font-size="11.5">Solar Gold • Upbeat</text>
+
+    <!-- Surprise -->
+    <rect x="414" y="70" width="176" height="78" rx="12" fill="#181c29" stroke="#fb923c" stroke-opacity="0.6" stroke-width="1.4"/>
+    <circle cx="438" cy="96" r="9" fill="#fb923c"/>
+    <text x="456" y="100" fill="#fed7aa" font-size="14" font-weight="700">Surprise</text>
+    <text x="430" y="128" fill="#94a3b8" font-size="11.5">Electric Orange • Alert</text>
+
+    <!-- Thinking -->
+    <rect x="607" y="70" width="176" height="78" rx="12" fill="#181c29" stroke="#a78bfa" stroke-opacity="0.6" stroke-width="1.4"/>
+    <circle cx="631" cy="96" r="9" fill="#a78bfa"/>
+    <text x="649" y="100" fill="#ddd6fe" font-size="14" font-weight="700">Thinking</text>
+    <text x="623" y="128" fill="#94a3b8" font-size="11.5">Neural Violet • Deep</text>
+
+    <!-- Sad -->
+    <rect x="800" y="70" width="176" height="78" rx="12" fill="#181c29" stroke="#67e8f9" stroke-opacity="0.6" stroke-width="1.4"/>
+    <circle cx="824" cy="96" r="9" fill="#67e8f9"/>
+    <text x="842" y="100" fill="#cffafe" font-size="14" font-weight="700">Sad</text>
+    <text x="816" y="128" fill="#94a3b8" font-size="11.5">Cyan Mist • Empathy</text>
+
+    <!-- Angry -->
+    <rect x="993" y="70" width="179" height="78" rx="12" fill="#181c29" stroke="#f43f5e" stroke-opacity="0.6" stroke-width="1.4"/>
+    <circle cx="1017" cy="96" r="9" fill="#f43f5e"/>
+    <text x="1035" y="100" fill="#fecdd3" font-size="14" font-weight="700">Angry</text>
+    <text x="1009" y="128" fill="#94a3b8" font-size="11.5">Crimson Pulse • Sharp</text>
+  </g>
+</svg>
