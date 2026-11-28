@@ -1,13 +1,6 @@
-<table align="center">
-  <tr>
-    <td align="center" valign="middle" width="210">
-      <img src="assets/icon/png/akira_icon.png" alt="Akira Icon" width="175"/>
-    </td>
-    <td valign="middle">
-      <img src="docs/readme/hero.svg" alt="Akira — AI Voice Assistant & Desktop Studio" width="100%"/>
-    </td>
-  </tr>
-</table>
+<p align="center">
+  <img src="docs/readme/hero_v2.svg" alt="Akira — AI Voice Assistant & Desktop Studio" width="100%"/>
+</p>
 
 <p align="center">
   <a href="https://github.com/RaccoonKa/Akira/releases"><img src="https://img.shields.io/badge/RELEASE-v5.1.0-facc15?style=for-the-badge&logo=github&logoColor=090b12&labelColor=181c29" alt="Release v5.1.0"/></a>
